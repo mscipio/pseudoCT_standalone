@@ -26,6 +26,23 @@ end
 orig_warn = warning;
 warning('off', 'all');
 
+[pathp, ~, ~] = fileparts(mfilename('fullpath'));
+addpath(pathp, '-begin');
+if exist(fullfile(pathp, 'spm8-r6313'), 'dir') == 7
+    addpath(genpath(fullfile(pathp, 'spm8-r6313')), '-begin');
+end
+if exist(fullfile(pathp, 'imgaussian'), 'dir') == 7
+    addpath(genpath(fullfile(pathp, 'imgaussian')), '-begin');
+end
+if exist(fullfile(pathp, 'ssh2_v2_m1_r5'), 'dir') == 7
+    addpath(genpath(fullfile(pathp, 'ssh2_v2_m1_r5')), '-begin');
+end
+if exist(fullfile(pathp, 'vers'), 'dir') == 7
+    addpath(fullfile(pathp, 'vers'), '-begin');
+end
+clear spm_vol_nifti spm_preproc_write8
+rehash;
+
 [mprage_fn, ute_fn, umap_fn, correct_aliasing] = load_mr_4_AC('mMR');
 
 if mprage_fn == 0
@@ -37,11 +54,20 @@ if ~isstr(mprage_fn) | ~isstr(ute_fn) | ~isstr(umap_fn)
 end
 
 [pathr, fnr, extr] = fileparts(deblank(mprage_fn));
-str = strfind(pathr, filesep);
-working_dir = pathr(1:str(end));
+[working_dir, temp_dir, save_dir] = local_resolve_output_dirs(pathr);
+dir_list = {working_dir, temp_dir, save_dir};
+for ii=1:length(dir_list)
+    if exist(dir_list{ii}, 'dir') ~= 7
+        [success, msg] = mkdir(dir_list{ii});
+        if success == 0
+            warning(orig_warn);
+            disp(sprintf('There was an error creating the directory %s\n%s', dir_list{ii}, msg));
+            return;
+        end
+    end
+end
 
 % Get where the Templates are:
-[pathp, fnp, extp] = fileparts(mfilename('fullpath'));
 dir_batch_templates = fullfile(pathp, 'Batch_atlas');
 if isdeployed
     dir_batch_templates = fullfile(defaults.deployed_folder, 'Batch_atlas');
@@ -60,9 +86,20 @@ HOSTNAME = defaults_pseudo_CT('HOSTNAME'); % Address of Launchpad computer!
 if isdeployed
     HOSTNAME = defaults.HOSTNAME;
 end
-[PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
-    'WindowName', sprintf('Login for: %s', HOSTNAME));
-ssh_log = {USERNAME, PASSWORD, HOSTNAME};
+if strcmp(HOSTNAME, '127.0.0.1') || strcmpi(HOSTNAME, 'localhost')
+    USERNAME = getenv('USER');
+    if isempty(USERNAME)
+        USERNAME = getenv('LOGNAME');
+    end
+    if isempty(USERNAME)
+        USERNAME = 'local';
+    end
+    ssh_log = struct('username', USERNAME, 'password', '', 'hostname', HOSTNAME, 'autoreconnect', 0);
+else
+    [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
+        'WindowName', sprintf('Login for: %s', HOSTNAME));
+    ssh_log = struct('username', USERNAME, 'password', PASSWORD, 'hostname', HOSTNAME, 'autoreconnect', 0);
+end
 
 clear USERNAME PASSWORD HOSTNAME
 
@@ -70,18 +107,14 @@ P = convert_dicom_i_2_nii(mprage_fn, 'mprage.nii', working_dir); % To convert th
 
 [working_dir, fnr, extr] = fileparts(deblank(P));
 disp(sprintf('\n\nThis is the working directory were all the results will be saved:\n%s\n', working_dir));
-save_dir = fullfile(working_dir, 'pseudo_muMAP');
-if exist(save_dir) ~= 7
-    % Create the directory:
-    [success] = mkdir(save_dir);
-    if success == 0
-        disp(sprintf('There was an error creating the directory %s', save_dir));
-        return;
-    end
-end
 
 % For the reference image (4th input argument):
 [Pf] = atlas_based_attenuation_map(P, dir_batch_templates, ssh_log, correct_aliasing, defaults); % Run the pseudo-ct code!
+if ~ischar(Pf) || isempty(strtrim(Pf))
+    warning(orig_warn);
+    disp('Pseudo-CT processing stopped before generating atlas outputs.');
+    return;
+end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Now convert the att_map.nii into Dicom (using Spencer's code):
@@ -90,9 +123,14 @@ FWHM    = 0; % In mm, the FWHM of the Gaussian filter to apply before registrati
 interp_f = 1;
 scale_val= 1;
 [pathr, fnr, extr] = fileparts(deblank(Pf(end, :)));
+if exist(fullfile(pathr, 'att_map.nii'), 'file') ~= 2
+    warning(orig_warn);
+    disp(sprintf('Pseudo-CT processing finished without creating:\n%s', fullfile(pathr, 'att_map.nii')));
+    return;
+end
 
 % Run the conversion to Dicom!
-mMR_nii2mu_dicom_blur_david(fullfile(pathr, 'att_map.nii'), save_dir, umap_fn, interp_f, scale_val, FWHM);
+mMR_nii2mu_dicom_blur_david(fullfile(pathr, 'att_map.nii'), save_dir, umap_fn, interp_f, scale_val, FWHM, temp_dir);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -116,3 +154,33 @@ if ~isdeployed
 end
 
 return
+
+function [processing_dir, temp_dir, save_dir] = local_resolve_output_dirs(series_dir)
+
+mr_dir = '';
+search_dir = series_dir;
+while ~isempty(search_dir)
+    [parent_dir, dir_name] = fileparts(search_dir);
+    if strcmpi(dir_name, 'MR')
+        mr_dir = search_dir;
+        break;
+    end
+    if strcmp(parent_dir, search_dir)
+        break;
+    end
+    search_dir = parent_dir;
+end
+
+if isempty(mr_dir)
+    mr_dir = fileparts(series_dir);
+    if isempty(mr_dir)
+        mr_dir = series_dir;
+    end
+    subject_root = mr_dir;
+else
+    subject_root = fileparts(mr_dir);
+end
+
+processing_dir = fullfile(subject_root, 'MR_PET');
+temp_dir = fullfile(processing_dir, 'tmp');
+save_dir = fullfile(mr_dir, 'pseudo_muMAP');

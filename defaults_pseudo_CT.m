@@ -16,7 +16,8 @@ function out = defaults_pseudo_CT(defstr)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 HOSTNAME = '127.0.0.1'; %'172.27.25.134'; % Address of Launchpad computer!
-source_command = '/usr/local/freesurfer/8.2.0/SetUpFreeSurfer.sh'; %'source /usr/local/freesurfer/nmr-stable53-env; '; % To run FreeSurfer (if no source command is required, then '';
+%fshome_command = 'export FREESURFER_HOME=/usr/local/freesurfer/8.2.0';
+source_command = 'source /autofs/cluster/catanagp/users/mscipioni/Biograph_mMR/pseudo_CT_package_new_for_collab/fs_setenv_530_from_launchpad.sh'; %'source /usr/local/freesurfer/nmr-stable53-env; '; % To run FreeSurfer (if no source command is required, then '';
 cluster = 'No'; %'Yes'; % If the HOSTNAME is a cluster (then use it to run the FS commands!); otherwise 'No';
 host_folder = '/autofs/cluster/catanagp/users/mscipioni/tmp'; % %'/cluster/scratch/monday/'; % Path to folder in HOST computer (HOSTNAME) where temporary images will be created (in a subfolder under the user-name). All temporary images would be deleted when finishing (user folder will stay though!). It should be a folder where the user has access to read and write!! You could specify '~/' or './' for your default home folder
 

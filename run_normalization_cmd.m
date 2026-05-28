@@ -41,19 +41,60 @@ source_command = defaults_pseudo_CT('source_command'); % To run FreeSurfer!
 if isdeployed
     source_command = defaults.source_command;
 end
-disp('Starting FS command (be patient) ...');
-ssh2_conn = ssh2_command_david(ssh2_conn, sprintf('%s%s', source_command, cmd), 1);
 aa = strfind(cmd, ' ');
-% Check the status:
-norm_fn = cmd((aa(end)+1):end);
-[ssh2_conn, commando] = ssh2_command_david(ssh2_conn, sprintf('ls %s', norm_fn)); % Added the commando directly here and changed ssh_command by the David function that runs locally too!
-%commando = ssh2_command_response(ssh2_conn);
-if ~strcmp(norm_fn, commando)
-    disp(sprintf('Something has gone wrong and the normalized file was not creatd!!'));
-    sts = -1;
-    return
+norm_fn = strtrim(cmd((aa(end)+1):end));
+is_local_host = strcmp(ssh2_conn.hostname, '127.0.0.1') || strcmpi(ssh2_conn.hostname, 'localhost');
+
+disp('Starting FS command (be patient) ...');
+if is_local_host
+    [status, command_result] = system(local_prepare_source_command(source_command, cmd));
+else
+    [ssh2_conn, command_result] = ssh2_command_david(ssh2_conn, sprintf('%s%s', source_command, cmd), 1);
+end
+
+if is_local_host
+    if exist(norm_fn, 'file') ~= 2
+        disp(sprintf('Something has gone wrong and the normalized file was not creatd!!'));
+        if ~isempty(command_result)
+            disp(command_result);
+        end
+        if exist('status', 'var') && status ~= 0
+            disp(sprintf('Local command exit status: %d', status));
+        end
+        sts = -1;
+        return
+    end
+else
+    [ssh2_conn, commando] = ssh2_command_david(ssh2_conn, sprintf('ls %s', norm_fn)); % Added the commando directly here and changed ssh_command by the David function that runs locally too!
+    if iscell(commando)
+        commando = commando{end};
+    end
+    commando = strtrim(commando);
+    if ~strcmp(norm_fn, commando)
+        disp(sprintf('Something has gone wrong and the normalized file was not creatd!!'));
+        sts = -1;
+        return
+    end
 end
     
 disp('Good News Everyone!! The command ran properly!');
 
 return
+
+function local_cmd = local_prepare_source_command(source_command, cmd)
+
+source_command = strtrim(source_command);
+if isempty(source_command)
+    local_cmd = cmd;
+    return;
+end
+
+if source_command(end) == ';'
+    source_command = strtrim(source_command(1:end-1));
+end
+
+if length(source_command) >= 6 && strcmpi(source_command(1:6), 'source')
+    local_cmd = sprintf('tcsh -f -c "%s; %s"', source_command, cmd);
+else
+    local_cmd = sprintf('/bin/sh -c "%s; %s"', source_command, cmd);
+end

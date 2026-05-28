@@ -5,6 +5,23 @@ if nargin > 0
 end
 ssh2_conn_exist = evalin('caller','exist(''ssh2_conn'',''var'')');
 if ssh2_conn_exist; ssh2_conn = evalin('caller','ssh2_conn'); end
+if strcmp(HOSTNAME, '127.0.0.1') || strcmpi(HOSTNAME, 'localhost')
+    USERNAME = '';
+    if ssh2_conn_exist && isstruct(ssh2_conn) && isfield(ssh2_conn, 'username')
+        USERNAME = ssh2_conn.username;
+    end
+    if isempty(USERNAME)
+        USERNAME = getenv('USER');
+    end
+    if isempty(USERNAME)
+        USERNAME = getenv('LOGNAME');
+    end
+    if isempty(USERNAME)
+        USERNAME = 'local';
+    end
+    ssh2_conn = struct('hostname', HOSTNAME, 'username', USERNAME, 'password', '', 'autoreconnect', 0);
+    return;
+end
 if ~ssh2_conn_exist || ~isstruct(ssh2_conn) || (ssh2_conn_exist && ~strcmp(ssh2_conn.hostname, HOSTNAME))
     auth = 0;
     while auth == 0

@@ -72,7 +72,7 @@ rl_centre_t = mean([maxi mini]); % right-left centre in mm (should be zero, as i
 % On axial plane:
 [I] = find(slt_a == 1); [rt, ct] = ind2sub(size(mt), I);
 Mt = [rt, ct];
-[coef_t, score_t, latent_t] = princomp(Mt);
+[coef_t, score_t, latent_t] = local_princomp(Mt);
 
 
 
@@ -84,7 +84,6 @@ disp(sprintf('Opening file: %s and calculating the mask ... ', fn));
 
 [N, X] = hist(Im(:), 100);
 params = nlinfit(X, N, func_h, [max(N(:)), 0, 100, 1000]);
-params(3)
 %keyboard
 if isPET == 0
     thres = 20; % 400 for non-normalized images!
@@ -136,8 +135,8 @@ for jj=1:3
     end
     [rt, ct] = find(slt == 1); Mt = [rt, ct];
     [r, c] = find(sl == 1); M = [r, c];
-    [coef_t, score_t, latent_t] = princomp(Mt); coef_t;
-    [coef, score, latent] = princomp(M); coef;
+    [coef_t, score_t, latent_t] = local_princomp(Mt); coef_t;
+    [coef, score, latent] = local_princomp(M); coef;
     a = [coef_t(:, 1)];
     b = [coef(:, 1)];
     costheta = dot(a,b)/(norm(a)*norm(b));
@@ -222,8 +221,33 @@ for jj=2:size(Pout, 1)
 end
 job.eoptions = spm_get_defaults('coreg.estimate');
 job.eoptions.params = [0 0 0 0 0 0 1 1 1]; % Make sure the scaling is also included for the calculations;
-out = spm_run_coreg_estimate(job); % Estimate but don't reslice!
+evalc('spm_run_coreg_estimate(job);'); % Estimate but don't reslice!
 
 %close(fh);
 
 return
+
+function [coef, score, latent] = local_princomp(X)
+
+X = double(X);
+if isempty(X)
+    coef = eye(2);
+    score = [];
+    latent = zeros(2, 1);
+    return;
+end
+
+mu = mean(X, 1);
+X0 = bsxfun(@minus, X, mu);
+
+if size(X0, 1) < 2
+    coef = eye(size(X0, 2));
+    score = X0;
+    latent = zeros(size(X0, 2), 1);
+    return;
+end
+
+[~, S, V] = svd(X0, 'econ');
+coef = V;
+score = X0*coef;
+latent = (diag(S).^2) ./ (size(X0, 1) - 1);

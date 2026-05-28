@@ -19,7 +19,7 @@
 % final Dicom images;
 %
 %  mMR_nii2mu_dicom_blur_david(nifti_in,dir_out,tfm_file,tfm_file,mu_ref,interp_flag, scale_vali, sigma, ssh_log)
-function mMR_nii2mu_dicom_blur_david(nifti_in,dir_out,mu_ref,interp_flag, scale_val, sigma)
+function mMR_nii2mu_dicom_blur_david(nifti_in,dir_out,mu_ref,interp_flag, scale_val, sigma, temp_dir)
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % load the input file
@@ -37,10 +37,24 @@ end
 
 if nargin<2
     dir_out=uigetdir(current_dir,'Select folder to write mu-map dicom series');
-    out_path= dir_out;
-else
-    [out_path,out_file,out_ext]=fileparts(fullfile(dir_out, filesep));
-    if isempty(out_path), out_path = pwd; end
+end
+if isempty(dir_out)
+    dir_out = pwd;
+end
+if nargin<7 || ~ischar(temp_dir) || isempty(strtrim(temp_dir))
+    temp_dir = dir_out;
+end
+if exist(dir_out, 'dir') ~= 7
+    [success, msg] = mkdir(dir_out);
+    if success == 0
+        error('mMR_nii2mu_dicom_blur_david:CreateOutputDirFailed', 'Could not create output folder %s: %s', dir_out, msg);
+    end
+end
+if exist(temp_dir, 'dir') ~= 7
+    [success, msg] = mkdir(temp_dir);
+    if success == 0
+        error('mMR_nii2mu_dicom_blur_david:CreateTempDirFailed', 'Could not create temp folder %s: %s', temp_dir, msg);
+    end
 end
  
 if nargin<4
@@ -89,7 +103,7 @@ if smooth_image
 end
 
 % write to temporary file
-nifti_16bit = fullfile(out_path,'nifti_16bit_temp.nii');
+nifti_16bit = fullfile(temp_dir,'nifti_16bit_temp.nii');
 V_scale = V;
 V_scale.fname = nifti_16bit;
 V_scale.dt(1) = 4; % int16;
@@ -97,19 +111,19 @@ spm_write_vol(V_scale, Im_scale);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%
 % Convert the ref_file into nifti:
-[Pnew] = convert_dicom_i_2_nii(mu_ref, 'ref_file.nii', out_path);
+[Pnew] = convert_dicom_i_2_nii(mu_ref, 'ref_file.nii', temp_dir);
 
 %%%%%%%%%%%%%%%%%%%%%%%
 % Now reslice the V_scale into the ref_file:
 job.ref = {Pnew}; job.source = {nifti_16bit}; job.other = {''};
 job.roptions = spm_get_defaults('coreg.write');
 spm_run_coreg_reslice(job); % Coreg but not reslice into UTE2 space!
-nii_final_out = fullfile(out_path, 'rnifti_16bit_temp.nii');
+nii_final_out = fullfile(temp_dir, 'rnifti_16bit_temp.nii');
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % write the dicom series
 %nii2dcm_header_copyV2(anlz_final_out,mu_ref,out_path); % old version!
-nii2dcm_header_copy_vb20_david(nii_final_out,mu_ref,out_path);
+nii2dcm_header_copy_vb20_david(nii_final_out,mu_ref,dir_out);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % delete temporary files

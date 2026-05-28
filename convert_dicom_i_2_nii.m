@@ -9,6 +9,14 @@ function [Pnew, dcmnew] = convert_dicom_i_2_nii(P, nii_name, dir_final)
 fname = 1;% If there is a filename as input argument;
 if nargin < 3, dir_final = ''; end
 if (nargin < 2) | ~isstr(nii_name) | (length(nii_name) == 0) , nii_name = 'MPRAGE_spm.nii'; fname = 0; end
+has_dir_final = ischar(dir_final) & ~isempty(strtrim(dir_final));
+
+if has_dir_final & ~isdir(dir_final)
+    [success, msg] = mkdir(dir_final);
+    if success == 0
+        error('convert_dicom_i_2_nii:CreateOutputDirFailed', 'Could not create destination folder %s: %s', dir_final, msg);
+    end
+end
 
 Pnew = ''; % If image is already a *.nii!
 dcmnew = '';
@@ -53,7 +61,7 @@ for ii=1:nf
         if strcmp(di.Modality, 'PT') | strcmp(di.Modality, 'PET')
             [aux] = convert_4D_PET_dicom_2nii(deblank(P(ii, :)));
             %if (nargin < 2) | ~isstr(given_nii_name) | (length(given_nii_name) == 0), nii_name = 'PET_4D.nii'; end
-            if isdir(dir_final)
+            if has_dir_final
                 if fname
                     aux2 = fullfile(dir_final, nii_name);
                 else
@@ -75,7 +83,13 @@ for ii=1:nf
             aux = fullfile(pathd, 'Temp_spm.nii'); % Make sure spm_dicom_convert contains in line 483 the following: fname = fullfile(pwd, 'Temp_spm.nii');
         end
         aux2 = fullfile(pathd(1:str_f(end-1)), 'MR_PET');
-        if (isdir(dir_final))
+        if ~has_dir_final & ~length(strfind(aux, 'MR_PET')) & ~isdir(aux2)
+            [success, msg] = mkdir(aux2);
+            if success == 0
+                error('convert_dicom_i_2_nii:CreateImplicitMrPetFailed', 'Could not create implicit MR_PET folder %s: %s', aux2, msg);
+            end
+        end
+        if has_dir_final
             aux2 = fullfile(dir_final, nii_name);
             movefile(aux, aux2);
             Pnew(ii, 1:length(aux2)) = aux2;
@@ -95,7 +109,13 @@ for ii=1:nf
         gen_mr_anz_hdr(strcat(fnd, extd), 0, 'nii');
         aux = fullfile(pathd, strcat(fnd, '.nii'));
         aux2 = fullfile(pathd(1:str_f(end-1)), 'MR_PET');
-        if (isdir(dir_final))
+        if ~has_dir_final & ~length(strfind(aux, 'MR_PET')) & ~isdir(aux2)
+            [success, msg] = mkdir(aux2);
+            if success == 0
+                error('convert_dicom_i_2_nii:CreateImplicitMrPetFailed', 'Could not create implicit MR_PET folder %s: %s', aux2, msg);
+            end
+        end
+        if has_dir_final
             aux2 = fullfile(dir_final, nii_name);
             movefile(aux, aux2);
             Pnew(ii, 1:length(aux2)) = aux2;

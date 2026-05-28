@@ -1,4 +1,4 @@
-function ssh2_struct = scp_put(ssh2_struct, localFilename, remotePath, localPath, remoteFilename)
+function ssh2_struct = scp_put_david(ssh2_struct, localFilename, remotePath, localPath, remoteFilename)
 % SCP_PUT   Reuse configured ssh2_connection to SCP local files to remote host.
 %
 %   SCP_PUT(SSH2_CONN,LOCALFILENAME,[REMOTEPATH],[LOCALPATH],[REMOTEFILENAME])

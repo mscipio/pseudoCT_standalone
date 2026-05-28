@@ -44,8 +44,14 @@ dcm_ref_ext = char(regexp(dcm_ref,'.\w{3,3}$','match'));
 if nargin<3
     [dcm_out_path]=ugetdir(pwd, 'Choose output directory for new dicom series');
 else
-    [dcm_out_path, dcm_out_file, dcm_out_ext] = fileparts(fullfile(dcm_out,'/'));
-    if isempty(dcm_out_path), dcm_out_path = pwd; end
+	dcm_out_path = dcm_out;
+	if isempty(dcm_out_path), dcm_out_path = pwd; end
+	if exist(dcm_out_path, 'dir') ~= 7
+		[success, msg] = mkdir(dcm_out_path);
+		if success == 0
+			error('nii2dcm_header_copy_vb20_david:CreateOutputDirFailed', 'Could not create output folder %s: %s', dcm_out_path, msg);
+		end
+	end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%

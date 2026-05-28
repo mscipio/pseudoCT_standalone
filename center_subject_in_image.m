@@ -90,10 +90,10 @@ elseif abs(dist_back - dist_nose) > thres % Check if image needs recentering! On
     V_orig.mat = (spm_matrix(params, 'Z*S*R*T')*eye(4))*V_orig.mat; % New May/3/2017
     aux = spm_write_vol(V_orig, Im_out);
     disp(sprintf('Image has been recentered:\n%s!', new_fn));
-    [Y, aux] = max(Im_orig, [], ax);
-    [Y2, aux] = max(Im_out, [], ax);
-    figure, subplot(1,2,1), imagesc(squeeze(Y)); title('Original');
-    subplot(1,2,2), imagesc(squeeze(Y2)); title('After Recentering');
+    %[Y, aux] = max(Im_orig, [], ax);
+    %[Y2, aux] = max(Im_out, [], ax);
+    %figure, subplot(1,2,1), imagesc(squeeze(Y)); title('Original');
+    %subplot(1,2,2), imagesc(squeeze(Y2)); title('After Recentering');
     P_new = new_fn;
 else
     disp('Original image did not need to be recentered!!');

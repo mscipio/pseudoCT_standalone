@@ -43,7 +43,7 @@
 % Please, if you use this program (or parts of it), please, quote the
 % paper:
 %
-% D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.
+% D. Izquierdo-Garcia, A.E. Hansen, S. Fï¿½rster, D. Benoit, S. Schachoff, S. Fï¿½rst, K.T. Chen, D.B. Chonde, and C. Catana.
 % An SPM8-based Approach for Attenuation Correction Combining Segmentation and Non-rigid Template Formation: Application to Simultaneous PET/MR Brain Imaging. JNM. 2014. In press.
 %
 % By David Izquierdo-Garcia.
@@ -190,9 +190,14 @@ nf = size(P, 1); % nf = The total number of files to use.
 %fh=openfig(fullfile(spm('Dir'),'spm_Interactive.fig'),'new','visible'); % Open the spm figure window to see how things are going!
 if ~isdeployed
     fh = spm('CreateIntWin','on');
+    try
+        set(fh, 'Visible', 'off');
+    catch
+    end
 else
     try
         fh=openfig('spm_Interactive.fig','new','visible');
+        set(fh, 'Visible', 'off');
     catch
     end
 end
@@ -224,7 +229,7 @@ if resl & nf > 1
     end
     job.eoptions = spm_get_defaults('coreg.estimate'); job.roptions = spm_get_defaults('coreg.write');
     job.roptions.interp = 7; % 7th degree bspline;
-    spm_run_coreg_estwrite(job); % Estimate and reslice!
+    evalc('spm_run_coreg_estwrite(job);'); % Estimate and reslice!
     %spm_reslice(P, flg); % Reslice only!
     for ii=2:nf
         [pathr,fnr,extr] = fileparts(deblank(P(ii, :)));
@@ -279,13 +284,35 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
     else
         ssh2_conn = varargin{3};
     end
+    if ~isfield(ssh2_conn, 'hostname') || isempty(ssh2_conn.hostname)
+        ssh2_conn.hostname = defaults_pseudo_CT('HOSTNAME');
+        if isdeployed
+            ssh2_conn.hostname = defaults.HOSTNAME;
+        end
+    end
+    if ~isfield(ssh2_conn, 'username') || isempty(ssh2_conn.username)
+        ssh2_conn.username = getenv('USER');
+        if isempty(ssh2_conn.username)
+            ssh2_conn.username = getenv('LOGNAME');
+        end
+        if isempty(ssh2_conn.username)
+            ssh2_conn.username = 'local';
+        end
+    end
+    if ~isfield(ssh2_conn, 'password') || isempty(ssh2_conn.password)
+        ssh2_conn.password = '';
+    end
     USERNAME = ssh2_conn.username;
     PASSWORD = ssh2_conn.password;
     HOSTNAME = ssh2_conn.hostname;
-        
-        
-    disp('Starting the ssh connection to run the Normalization process  ... (be patient!)');
-    ssh2_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD);
+    is_local_host = strcmp(HOSTNAME, '127.0.0.1') || strcmpi(HOSTNAME, 'localhost');
+
+    if is_local_host
+        disp('Preparing local FreeSurfer normalization commands ...');
+    else
+        disp('Starting the ssh connection to run the Normalization process  ... (be patient!)');
+        ssh2_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD);
+    end
     host_fold = defaults_pseudo_CT('host_folder');
     if isdeployed
         host_fold = defaults.host_folder;
@@ -323,6 +350,14 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
                 [sts] = run_launchpad_cmd(cmd, ssh2_conn);
             end
         end
+        if sts ~= 0
+            disp(sprintf('Normalization failed for:\n%s', aux{ii}));
+            disp(sprintf('Temporary files were left in:\n%s', lc_path));
+            if ~is_local_host
+                ssh2_conn = ssh2_close(ssh2_conn);
+            end
+            return;
+        end
         %ssh2_conn = ssh2_command(ssh2_conn, sprintf('%s; mri_normalize %s %s', source_command, aux{ii}, aux_norm{ii}), 1);
     end
     % Let's transfer them back to the subject's folder:
@@ -337,7 +372,9 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
     end
     % Let's erase the random folder just created:
     ssh2_conn = ssh2_command_david(ssh2_conn, sprintf('rm -rf %s', lc_path));
-    ssh2_conn = ssh2_close(ssh2_conn);
+    if ~is_local_host
+        ssh2_conn = ssh2_close(ssh2_conn);
+    end
 end
 
 
@@ -400,7 +437,7 @@ clear matlabbatch;
 disp(sprintf('\n\nThe Segmentation step may take 20 to 30 minutes, depending on your computer ... Please be patient!!'));
 % Run the New Segment batch just created!:
 if ~isdeployed
-    cfg_util('run', fns_seg_batch);
+    evalc('cfg_util(''run'', fns_seg_batch);');
 else
     if ispc
         exe_cmd = strcat('!', fullfile(defaults.deployed_folder, 'spm8.exe'));
@@ -457,7 +494,7 @@ clear matlabbatch;
 %cfg_util('run', fns_dartel_exist_template_batch);
 disp(sprintf('\n\nThe Coreg step may take 5 minutes to run, depending on your computer ... Please be patient!!'));
 if ~isdeployed
-    cfg_util('run', fns_dartel_exist_template_batch);
+    evalc('cfg_util(''run'', fns_dartel_exist_template_batch);');
 else
     cmd=[exe_cmd  ' run ' fns_dartel_exist_template_batch];
     eval([cmd]);
@@ -481,7 +518,7 @@ save(fns_create_inverse_warped_batch, 'matlabbatch');
 % Run the Create Inverse Warped batch just created!:
 %cfg_util('run', fns_create_inverse_warped_batch);
 if ~isdeployed
-    cfg_util('run', fns_create_inverse_warped_batch);
+    evalc('cfg_util(''run'', fns_create_inverse_warped_batch);');
 else
     cmd=[exe_cmd  ' run ' fns_create_inverse_warped_batch];
     eval([cmd]);
@@ -599,11 +636,11 @@ disp(sprintf('Attenuation map file created:\n%s\n', deblank(Pf(num_atlas+1, :)))
 %pat_folder = home_dir(paths);
 composite = quick_fusion_pseudo_ct(paths);
 if ~isdeployed
-    hhh = figure; imagesc(composite);
+    hhh = figure('Visible', 'off'); imagesc(composite);
     drawnow;
     print(hhh, '-dtiff', '-r300', fullfile(paths, 'Fusion_MR_Pseudo_CT_validation.tiff'));
     pause(1);
-    close;
+    close(hhh);
 else
     imwrite(composite, fullfile(paths, 'Fusion_MR_Pseudo_CT_validation.tiff'), 'Resolution', 300);
 end
@@ -635,7 +672,7 @@ fprintf(fid, '\nVersion 2.3: Improving of subject mask with MPRAGE_normalized.ni
 fprintf(fid, '\nVersion 2.4: Allows local FS connections (on 127.0.0.1_ (Dec/17/2017)!');
 fprintf(fid, '\nGood News Everyone!! The paper has got accepted! (August/6/2014)!');
 fprintf(fid, '\nIf you use this method, or parts of it, please, quote this paper:');
-fprintf(fid, '\nD. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.');
+fprintf(fid, '\nD. Izquierdo-Garcia, A.E. Hansen, S. Fï¿½rster, D. Benoit, S. Schachoff, S. Fï¿½rst, K.T. Chen, D.B. Chonde, and C. Catana.');
 fprintf(fid, '\nAn SPM8-based Approach for Attenuation Correction Combining Segmentation and Non-rigid Template Formation: Application to Simultaneous PET/MR Brain Imaging. JNM. 2014. Nov;55(11):1825-30.');
 fprintf(fid, '\nEnjoy it ;)) !!!');
 fclose(fid);
