@@ -104,7 +104,7 @@ function ssh2_struct = ssh2_setup(ssh2_struct)
 % now includes custom ganymed library, auto download code is still default
 
 % 0 for standard lib, 1 for custom (SFTP-GET support) ganymed-ssh2 library
-USE_CUSTOM_GANYMED_LIB = 0; 
+USE_CUSTOM_GANYMED_LIB = 1; 
 % CHANGING THE VARIABLE USE_CUSTOM_GANYMED_LIB REQUIRES RESTARTING MATLAB OR 
 % CLEARING previous java DYNAMIC PATH if SSH2 has already been run this
 % session.
@@ -130,8 +130,8 @@ end
 
 
 ganymed_java_library_jar = [ganymed_java_library '.jar'];
-ganymed_java_library_jar_path = [ganymed_java_library ...
-                                    filesep() ganymed_java_library_jar];
+ssh2_base_dir = fileparts(mfilename('fullpath'));
+ganymed_java_library_jar_path = fullfile(ssh2_base_dir, ganymed_java_library, ganymed_java_library_jar);
 error_message = 0;
 if nargin == 0 %SETUP THE DEFAULT CONFIG
     ssh2_struct.ganymed_java_library = ganymed_java_library;
