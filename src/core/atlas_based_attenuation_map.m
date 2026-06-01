@@ -102,7 +102,7 @@ check_aliasing = 0;
 % end
 
 ssh_ask_login = 1;
-if nargin < 1 | ~ischar(varargin{1})
+if nargin < 1 || ~ischar(varargin{1})
     P = spm_select(Inf, 'image', 'Select the MPRAGE file to use to obtain an atlas-based attenuation map');
     autom_select_folder = 1;
     if size(P, 1) == 0
@@ -146,7 +146,7 @@ elseif nargin < 6
     check_aliasing = varargin{4};
     if isdeployed
         defaults = varargin{5};
-        if isstr(varargin{5})
+        if ischar(varargin{5})
             %defaults = load(varargin{5}); % Old (seems to save defaults.defaults)
             load(varargin{5});
         end
@@ -170,7 +170,7 @@ end
 
 if isdir(fullfile(dir_batch_templates, 'ganymed-ssh2-build250'))
     a = javaclasspath;
-    if (length(a) == 0) | (length(strfind(a{1}, 'ganymed-ssh2-build250')) == 0)
+    if (length(a) == 0) || (length(strfind(a{1}, 'ganymed-ssh2-build250')) == 0)
         javaaddpath(fullfile(dir_batch_templates, 'ganymed-ssh2-build250', 'ganymed-ssh2-build250.jar'));
     end
 end

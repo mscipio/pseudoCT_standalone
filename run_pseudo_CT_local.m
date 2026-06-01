@@ -62,24 +62,8 @@ orig_warn = warning;
 warning('off', 'all');
 
 [pathp, ~, ~] = fileparts(mfilename('fullpath'));
-addpath(pathp, '-begin');
-if exist(fullfile(pathp, 'src'), 'dir') == 7
-    addpath(genpath(fullfile(pathp, 'src')), '-begin');
-end
-if exist(fullfile(pathp, 'spm8-r6313'), 'dir') == 7
-    addpath(genpath(fullfile(pathp, 'spm8-r6313')), '-begin');
-end
-if exist(fullfile(pathp, 'imgaussian'), 'dir') == 7
-    addpath(genpath(fullfile(pathp, 'imgaussian')), '-begin');
-end
-if exist(fullfile(pathp, 'ssh2_v2_m1_r5'), 'dir') == 7
-    addpath(genpath(fullfile(pathp, 'ssh2_v2_m1_r5')), '-begin');
-end
-if exist(fullfile(pathp, 'vers'), 'dir') == 7
-    addpath(fullfile(pathp, 'vers'), '-begin');
-end
-clear spm_vol_nifti spm_preproc_write8
-rehash;
+addpath(fullfile(pathp, 'src', 'config'), '-begin');
+setup_pseudo_CT_paths(pathp);
 
 % Get where the Templates are:
 dir_batch_templates = fullfile(pathp, 'Batch_atlas');
@@ -146,7 +130,7 @@ end
 if mprage_fn == 0
     return;
 end
-if ~isstr(mprage_fn) | ~isstr(ute_fn) | ~isstr(umap_fn)
+if ~ischar(mprage_fn) || ~ischar(ute_fn) || ~ischar(umap_fn)
     warndlg('There are some of the filenames missing', 'Files missing!');
     return
 end
@@ -194,7 +178,7 @@ dir_list = {processing_dir, temp_dir, save_dir};
 for ii=1:length(dir_list)
     if exist(dir_list{ii}, 'dir') ~= 7
         [mkdir_success, msg] = mkdir(dir_list{ii});
-        if mkdir_success == 0
+        if ~mkdir_success
             disp(sprintf('There was an error creating the directory %s\n%s', dir_list{ii}, msg));
             return;
         end
@@ -256,7 +240,7 @@ if ~promotion_success
     disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', temp_working_dir));
 elseif strcmp(button, 'Yes')
     [remove_success, msg] = rmdir(temp_working_dir, 's');
-    if remove_success == 0
+    if ~remove_success
         disp(sprintf('There was an error removing the temporary directory %s\n%s', temp_working_dir, msg));
     end
 end

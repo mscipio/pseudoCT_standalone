@@ -14,6 +14,9 @@ if length(ss) > 0
         ute_fn = fullfile(dir_b, 'UTE_2', listi(1).name);
     elseif length(listi) > 1
         ute_fn = fullfile(dir_b, 'UTE_2', listi(1).name);
+        fprintf(1, 'WARNING: %d UTE candidates in %sUTE_2/, using %s\n', length(listi), dir_b, ute_fn);
+    else
+        fprintf(1, 'WARNING: No UTE found in %sUTE_2/\n', dir_b);
     end
 
     listi = dir(strcat(dir_b, 'UMAP', filesep, '*0001.*'));
@@ -21,6 +24,7 @@ if length(ss) > 0
         umap_fn = fullfile(dir_b, 'UMAP', listi(1).name);
     elseif length(listi) > 1
         umap_fn = fullfile(dir_b, 'UMAP', listi(1).name);
+        fprintf(1, 'WARNING: %d UMAP candidates in %sUMAP/, using %s\n', length(listi), dir_b, umap_fn);
     else
         aa = ls(fullfile(dir_b, '*UMAP*'));
         if size(aa, 1) ~= 0
@@ -32,8 +36,13 @@ if length(ss) > 0
             umap_fn = fullfile(dir_b, deblank(aa(1, :)), listi(1).name);
         elseif length(listi) > 1
             umap_fn = fullfile(dir_b, deblank(aa(1, :)), listi(1).name);
+            fprintf(1, 'WARNING: %d UMAP candidates in %s, using %s\n', length(listi), fullfile(dir_b, deblank(aa(1, :))), umap_fn);
+        else
+            fprintf(1, 'WARNING: No UMAP found in %s\n', dir_b);
         end
     end
+else
+    fprintf(1, 'WARNING: No MR/ parent in %s\n', patha);
 end
 
 return

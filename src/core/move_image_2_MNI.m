@@ -12,7 +12,7 @@ if nargin == 2
         Vt = [];
         Imt = varargin{1};
         autom_select_template = 0;
-    elseif isstr(varargin{1})
+    elseif ischar(varargin{1})
         Vt = spm_vol(varargin{1});
         Imt = spm_read_vols(Vt);
         autom_select_template = 0;
