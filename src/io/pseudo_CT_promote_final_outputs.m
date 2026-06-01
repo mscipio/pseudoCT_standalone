@@ -19,7 +19,6 @@ copy_specs = {
     fullfile(temp_dir, 'att_map.nii'), fullfile(processing_dir, 'att_map.nii'), 1;
     fullfile(temp_dir, 'Pseudo_CT_AC_Version.txt'), fullfile(processing_dir, 'Pseudo_CT_AC_Version.txt'), 0;
     fullfile(temp_dir, 'Fusion_MR_Pseudo_CT_validation.tiff'), fullfile(processing_dir, 'Fusion_MR_Pseudo_CT_validation.tiff'), 0;
-    fullfile(temp_dir, 'Fusion_MR_Pseudo_CT_validation.tiff'), fullfile(processing_dir, 'Composite_MR_Pseudo_CT_validation.tiff'), 0;
     };
 
 seed_source = local_find_seed_source(temp_dir, seed_nii);

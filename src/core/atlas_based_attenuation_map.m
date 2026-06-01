@@ -158,14 +158,11 @@ else
 end
 
 if autom_select_folder
-    if isdir('/Users/di219/Harvard/AC/Atlas/Batch_atlas/')
-        dir_batch_templates = '/Users/di219/Harvard/AC/Atlas/Batch_atlas/';
-    elseif isdir('F:\Users\David\AC\Atlas\Batch_atlas\')
-        dir_batch_templates = 'F:\Users\David\AC\Atlas\Batch_atlas\';
-    elseif isdir('D:\Users\David\AC\Atlas\Batch_atlas\')
-        dir_batch_templates = 'D:\Users\David\AC\Atlas\Batch_atlas\';
+    batch_dir = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'Batch_atlas');
+    if isdir(batch_dir)
+        dir_batch_templates = batch_dir;
     else
-        disp(sprintf('I don''t know where the Batch files and Templates are!!!'));
+        disp(sprintf('Batch_atlas folder not found at:\n%s', batch_dir));
         return;
     end
 end

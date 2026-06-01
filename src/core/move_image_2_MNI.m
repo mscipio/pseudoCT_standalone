@@ -26,16 +26,12 @@ if nargin == 2
 end
     
 if autom_select_template
-    if exist(which('ch2.nii'))
-        Vt = spm_vol(which('ch2.nii'));
-    elseif isdir('/Users/di219/Harvard/AC/Atlas/Batch_atlas/')
-        Vt = spm_vol('/Users/di219/Harvard/AC/Atlas/Batch_atlas/ch2.nii');
-    elseif isdir('P:\Users\David\AC\Atlas\Batch_atlas\')
-        Vt = spm_vol('P:\Users\David\AC\Atlas\Batch_atlas\ch2.nii');
-    elseif isdir('D:\Users\David\AC\Atlas\Batch_atlas')
-        Vt = spm_vol('D:\Users\David\AC\Atlas\Batch_atlas\ch2.nii');
+    batch_dir = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'Batch_atlas');
+    ch2_path = fullfile(batch_dir, 'ch2.nii');
+    if exist(ch2_path, 'file') == 2
+        Vt = spm_vol(ch2_path);
     else
-        disp(sprintf('I don''t know where the Templates are!!!'));
+        disp(sprintf('Template not found at:\n%s', ch2_path));
         return;
     end
     Imt = spm_read_vols(Vt);

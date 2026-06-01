@@ -126,7 +126,3 @@ Numbered releases:
 - Launchpad mode reads `src/config/defaults_pseudo_CT_launchpad.m`.
 
 The local defaults file resolves the bundled FreeSurfer setup script relative to its own folder so the configuration remains valid after reorganization.
-
-## Candidate Review Folder
-
-`candidates_for_review/` is reserved for files that are no longer part of the active runtime layout. It currently contains the legacy installation text file that has been superseded by this README.

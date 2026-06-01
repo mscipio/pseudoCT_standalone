@@ -1,0 +1,5 @@
+.DS_Store
+*.mexa64
+*.o
+*.obj
+*.log
