@@ -79,7 +79,7 @@ dicom_ref_meta= cell(1);
 pad_ref_meta  = cell(1);
 file_out_name = cell(1);
 slice_ref_total= 0;
-for m=1:size(dicom_ref_all)
+for m=1:numel(dicom_ref_all)
     test_info=dicominfo(fullfile(dcm_ref_path,dicom_ref_all(m).name));
     if  test_info.SeriesNumber==dicom_ref_info.SeriesNumber
         dicom_slice_number=test_info.InstanceNumber;
