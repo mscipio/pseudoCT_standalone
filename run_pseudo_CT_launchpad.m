@@ -51,6 +51,7 @@ function run_pseudo_CT_launchpad(varargin)
 %   Maintained by Michele Scipioni, PhD
 %   mscipioni@mgh.harvard.edu
 %   Updated: May 28, 2026.
+%   Minimum supported MATLAB: R2010b (matches cluster's compiled-app runtime, MCR 7.11)
 
 defaults = '';
 
@@ -129,6 +130,21 @@ for jj=1:length(jobs)
     try
         pseudo_CT_write_mu_map_dicom(fullfile(jobs(jj).temp_dir, 'att_map.nii'), jobs(jj).save_dir, jobs(jj).umap_fn, jobs(jj).temp_dir, 0);
     catch ME
+        fprintf(1, '[launchpad-debug] Failed to write mu-map DICOM for subject:\n%s\n', jobs(jj).mprage_fn);
+        tmp_list = dir(jobs(jj).temp_dir);
+        if ~isempty(tmp_list)
+            tmp_names = {tmp_list(~ismember({tmp_list.name}, {'.', '..'})).name};
+            if ~isempty(tmp_names)
+                tmp_str = '';
+                for ti = 1:length(tmp_names)
+                    if ti > 1
+                        tmp_str = [tmp_str ', ']; %#ok<AGROW>
+                    end
+                    tmp_str = [tmp_str tmp_names{ti}]; %#ok<AGROW>
+                end
+                fprintf(1, '[launchpad-debug] temp_dir (%s) contents: %s\n', jobs(jj).temp_dir, tmp_str);
+            end
+        end
         disp(ME.message);
         num_failed = num_failed + 1;
         continue;

@@ -57,9 +57,25 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 - `run_pseudo_CT_launchpad.m` supports a **deployed (compiled) mode** via `isdeployed`: if called with one arg pointing to a `.mat` defaults file, it loads that instead of hardcoded defaults.
 - Local mode has its deployed code path **commented out** (lines 48–59, 86–88, 206–208 in `run_pseudo_CT_local.m`).
 
-## No Tests, No CI
+## Testing & CI
 
-No test framework, CI config, linter, formatter, or typechecker exist. The repo has 3 git commits total. Verification is manual: run the pipeline and check the QC TIFF output.
+**CI** — `.github/workflows/ci.yml` runs on every push and PR with two jobs:
+- `lint` — `run('scripts/run_lint.m')`
+- `smoke-test` — `run('scripts/run_smoke_tests.m')`
+
+**Lint** — `scripts/run_lint.m` runs MATLAB's built-in `mlint` over `src/`, `vers/`, and the two entry scripts (`run_pseudo_CT_local.m`, `run_pseudo_CT_launchpad.m`).
+
+**Smoke tests** — `scripts/run_smoke_tests.m` checks:
+- Both entry scripts exist and parse
+- All `src/**/*.m` files parse
+- The 3 `vers/` SPM overrides parse
+- Key atlas assets exist (`Batch_atlas/TPM.nii`, `ch2.nii`, the 7 `Template_*.nii` DARTEL templates, `Batch_atlas/ganymed-ssh2-build250/ganymed-ssh2-build250.jar`)
+
+**Targeted TDD tests** — `scripts/test_auto_discover_messages.m` is a red-green style test for the `batch-discovery-messages` change. Not wired into CI; run manually when iterating on `pseudo_CT_auto_discover_ute_umap`.
+
+**What is NOT here** — no formal unit-test framework (MOxUnit, `matlab.unittest.TestCase`), no formatter, no typechecker, no coverage tool. `strict_tdd` resolves to `false` in SDD for this project (see `sdd-init-go/pseudo_ct_package_new_for_collab`).
+
+**Manual verification is still required** for end-to-end pipeline runs: the smoke tests cover file/parse integrity, not pipeline output. The QC TIFF is the ground truth.
 
 ## Versioning
 

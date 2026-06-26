@@ -3,6 +3,7 @@
 % Function that defines the default parameters required for the standalone
 % Launchpad execution path.
 % They can be edited if required.
+% Minimum supported local MATLAB: R2010b (matches the cluster's compiled app MCR 7.11)
 % Inputs: -defstr: One of the definitions: 'HOSTNAME' or 'source_command'
 %         for instance;
 %
