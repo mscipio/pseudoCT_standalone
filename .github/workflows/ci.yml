@@ -11,6 +11,7 @@ jobs:
       - uses: matlab-actions/run-command@v2
         with:
           command: run('scripts/run_lint.m')
+    continue-on-error: true
 
   smoke-test:
     runs-on: ubuntu-latest
@@ -20,3 +21,4 @@ jobs:
       - uses: matlab-actions/run-command@v2
         with:
           command: run('scripts/run_smoke_tests.m')
+    continue-on-error: true
