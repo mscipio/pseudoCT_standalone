@@ -1,20 +1,6 @@
-# batch-autodiscovery-observability Specification
+# Delta for batch-autodiscovery-observability
 
-## Purpose
-
-Console visibility into UTE/UMAP auto-discovery outcomes during batch execution. Operators need traceable messages naming the subject and reason when subjects are silently skipped.
-
-## Requirements
-
-### Requirement: Missing MR Parent Path Notification
-
-The system MUST print a message to stdout when the MPRAGE path lacks a recognizable `MR/` directory.
-
-#### Scenario: MR parent path not found
-
-- GIVEN an MPRAGE file at a path lacking an `MR/` directory
-- WHEN `pseudo_CT_auto_discover_ute_umap` cannot locate `MR/`
-- THEN stdout MUST contain the subject path and an indication that no MR parent was found
+## MODIFIED Requirements
 
 ### Requirement: Missing UTE Notification
 
@@ -27,16 +13,6 @@ The system MUST print a message to stdout when no UTE image is discovered in any
 - GIVEN a subject with `MR/` present but no sibling folder matching `ute` patterns contains `*0001*` files
 - WHEN shared-discovery searches sibling directories
 - THEN stdout MUST name the `MR/` path and state no UTE was found
-
-### Requirement: Ambiguous UTE Candidate Notification
-
-The system MUST print a message to stdout when multiple UTE candidates are found, identifying the chosen file.
-
-#### Scenario: Multiple UTE images in directory
-
-- GIVEN a subject with `UTE_2/` containing three `*0001.*` files
-- WHEN auto-discovery selects the first candidate
-- THEN stdout MUST identify the chosen file and note multiple candidates were present
 
 ### Requirement: Missing UMAP Notification
 
@@ -73,29 +49,3 @@ The system MUST print a message to stdout when multiple UMAP candidates are foun
 - GIVEN a subject with sibling `UMAP/` containing two `*0001*` files
 - WHEN auto-discovery selects the first candidate
 - THEN stdout MUST identify the chosen file, the `UMAP/` folder, and the ambiguity
-
-### Requirement: Return Value Preservation
-
-The function MUST preserve its existing return-value contract. No return value SHALL change: `ute_fn=0` when no UTE found, `umap_fn=0` when no UMAP found, first file path when candidates exist.
-
-#### Scenario: Return values unchanged for missing UTE
-
-- GIVEN a subject with no UTE images
-- WHEN the function completes with observability messages
-- THEN `ute_fn` MUST equal 0 and `umap_fn` MUST retain its existing value
-
-#### Scenario: Return values unchanged for ambiguous case
-
-- GIVEN a subject with two UTE candidates
-- WHEN the function completes with observability messages
-- THEN `ute_fn` MUST equal the full path of the first candidate (unchanged)
-
-### Requirement: Message Survivability Under Warning Suppression
-
-The system MUST use `fprintf` to stdout (not `warning()`) for all observability messages, so they survive global `warning('off','all')` in batch mode.
-
-#### Scenario: Messages visible when warnings suppressed
-
-- GIVEN a batch run with `warning('off','all')` active
-- WHEN auto-discovery emits a missing UMAP notification
-- THEN the message MUST appear in console output

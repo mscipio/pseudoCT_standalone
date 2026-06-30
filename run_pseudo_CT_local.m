@@ -66,10 +66,7 @@ addpath(fullfile(pathp, 'src', 'config'), '-begin');
 setup_pseudo_CT_paths(pathp);
 
 % Get where the Templates are:
-dir_batch_templates = fullfile(pathp, 'Batch_atlas');
-% if isdeployed
-%     dir_batch_templates = fullfile(defaults.deployed_folder, 'Batch_atlas');
-% end
+dir_batch_templates = pseudo_CT_resolve_batch_atlas_path(pathp);
 
 jobs = local_collect_jobs(varargin{:});
 if isempty(jobs)

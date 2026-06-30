@@ -123,7 +123,7 @@ end
 
 handles.mprage_fn = P;
 set(handles.load_mprage_edit, 'String', handles.mprage_fn);
-[handles.ute_fn, handles.umap_fn] = load_automatic_ute_umap(P);
+[handles.ute_fn, handles.umap_fn] = pseudo_CT_discover_ute_umap(P);
 
 if isstr(handles.ute_fn)
     set(handles.load_ute_edit, 'String', handles.ute_fn);
@@ -156,8 +156,8 @@ if ~ischar(fn) | exist(fn) ~= 2
     return;
 end
 
-handles.mprage_fn = P;
-[handles.ute_fn, handles.umap_fn] = load_automatic_ute_umap(P);
+handles.mprage_fn = fn;
+[handles.ute_fn, handles.umap_fn] = pseudo_CT_discover_ute_umap(fn);
 
 if isstr(handles.ute_fn)
     set(handles.load_ute_edit, 'String', handles.ute_fn);
@@ -289,60 +289,6 @@ if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgr
     set(hObject,'BackgroundColor','white');
 end
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-function [ute_fn, umap_fn] = load_automatic_ute_umap(mprage_fn)
-
-ute_fn = 0; % Initialize them
-umap_fn = 0;
-
-[patha, fna, exta] = fileparts(deblank(mprage_fn));
-
-ss = strfind(patha, strcat(filesep, 'MR', filesep));
-if length(ss) > 0
-    dir_b = patha(1:(ss + 3));
-    % For the UTE_2 file:
-    listi = dir(strcat(dir_b, 'UTE_2', filesep, '*0001.*'));
-    if length(listi) == 1
-        ute_fn = fullfile(dir_b, 'UTE_2', listi(1).name);
-    elseif length(listi) > 1
-        warndlg('There are more than 1 filename on the UTE_2 folder with *0001.*! Choosing the first one!', 'Filename conflict!');
-        ute_fn = fullfile(dir_b, 'UTE_2', listi(1).name);
-    else
-        %warndlg('There seems not to be any *0001.* filename or no UTE_2 folder! Check it!!', 'Filename of folder conflict!');
-    end
-    % For the UMAP file:
-    listi = dir(strcat(dir_b, 'UMAP', filesep, '*0001.*'));
-    if length(listi) == 1
-        umap_fn = fullfile(dir_b, 'UMAP', listi(1).name);
-    elseif length(listi) > 1
-        warndlg('There are more than 1 filename on the UMAP folder with *0001.*! Choosing the first one!', 'Filename conflict!');
-        umap_fn = fullfile(dir_b, 'UMAP', listi(1).name);
-    else
-        aa=ls(fullfile(dir_b, '*UMAP*'));
-        if size(aa, 1) > 1
-            warndlg('There are more than 1 *UMAP* folder! Choosing the first one!', 'UMAP Folder conflict!');
-        end
-        if size(aa, 1) == 0
-            
-        else
-            listi = dir(fullfile(dir_b, deblank(aa(1, :)), '*0001.*'));
-        end
-        if length(listi) == 1
-            umap_fn = fullfile(dir_b, deblank(aa(1, :)), listi(1).name);
-        elseif length(listi) > 1
-            warndlg('There are more than 1 filename on the *UMAP* folder with *0001.*! Choosing the first one!', 'Filename conflict!');
-            umap_fn = fullfile(dir_b, deblank(aa(1, :)), listi(1).name);
-        else
-            warndlg('There seems not to be any *0001.* filename or no UMAP folder! Check it!!', 'Filename of folder conflict!');
-        end
-    end
-else
-    %warndlg('There is no MR folder!!', 'MR folder not found!');
-end
-
-return
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

@@ -13,6 +13,7 @@ HOSTNAME = '127.0.0.1';
 source_command = sprintf('source %s', fullfile(config_dir, 'fs_setenv_530_from_launchpad.sh')); %'source /usr/local/freesurfer/nmr-stable53-env; '; % To run FreeSurfer 
 cluster = 'No'; 
 recenter_before_normalization = 'Yes'; % Use 'Yes' to restore the legacy local normalization behavior of recentering the MPRAGE to the origin before normalization.
+batch_atlas_path = ''; % Path to Batch_atlas directory; overridden by PSEUDOCT_BATCH_ATLAS env var
 out = -1; % Initialize it!
 try
     eval(['out = ' defstr ';']);

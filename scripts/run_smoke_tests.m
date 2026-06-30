@@ -60,18 +60,28 @@ for name = {'spm_vol_nifti.m', 'spm_preproc_write8.m', 'spm_dicom_convert.m'}
     end
 end
 
-%% 4. Key assets exist
+%% 4. Key assets exist (with configurable atlas path)
+atlas_env = getenv('PSEUDOCT_BATCH_ATLAS');
+batch_atlas_path = fullfile(root_dir, 'Batch_atlas');
+atlas_configured = false;
+if ~isempty(atlas_env)
+    batch_atlas_path = atlas_env;
+    atlas_configured = true;
+    fprintf('\n  Using PSEUDOCT_BATCH_ATLAS: %s\n', batch_atlas_path);
+end
+
 check('Batch_atlas/ directory', ...
-    exist(fullfile(root_dir, 'Batch_atlas'), 'dir') == 7, '');
+    exist(batch_atlas_path, 'dir') == 7, ...
+    sprintf('expected at %s', batch_atlas_path));
 check('TPM.nii exists', ...
-    exist(fullfile(root_dir, 'Batch_atlas', 'TPM.nii'), 'file') == 2, '');
+    exist(fullfile(batch_atlas_path, 'TPM.nii'), 'file') == 2, '');
 check('ch2.nii exists', ...
-    exist(fullfile(root_dir, 'Batch_atlas', 'ch2.nii'), 'file') == 2, '');
+    exist(fullfile(batch_atlas_path, 'ch2.nii'), 'file') == 2, '');
 
 templates_ok = true;
 for i = 0:6
     fn = sprintf('Template_%d.nii', i);
-    if exist(fullfile(root_dir, 'Batch_atlas', fn), 'file') ~= 2
+    if exist(fullfile(batch_atlas_path, fn), 'file') ~= 2
         templates_ok = false;
     end
 end
@@ -79,7 +89,7 @@ check('7 DARTEL templates exist', templates_ok, '');
 
 %% 5. SSH JAR exists
 check('ganymed-ssh2-build250.jar', ...
-    exist(fullfile(root_dir, 'Batch_atlas', 'ganymed-ssh2-build250', ...
+    exist(fullfile(batch_atlas_path, 'ganymed-ssh2-build250', ...
     'ganymed-ssh2-build250.jar'), 'file') == 2, '');
 
 %% Summary

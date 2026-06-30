@@ -1,48 +1,11 @@
 function [ute_fn, umap_fn] = pseudo_CT_auto_discover_ute_umap(mprage_fn)
+% PSEUDO_CT_AUTO_DISCOVER_UTE_UMAP  Auto-discover UTE/UMAP for batch execution.
+%   [UTE_FN, UMAP_FN] = PSEUDO_CT_AUTO_DISCOVER_UTE_UMAP(MPRAGE_FN) wraps
+%   the shared pseudo_CT_discover_ute_umap helper.  Identical call signature
+%   to the original function; all sibling-folder logic is in the shared helper.
+%
+%   See also pseudo_CT_discover_ute_umap.
 
-ute_fn = 0;
-umap_fn = 0;
-
-[patha, ~, ~] = fileparts(deblank(mprage_fn));
-
-ss = strfind(patha, strcat(filesep, 'MR', filesep));
-if length(ss) > 0
-    dir_b = patha(1:(ss + 3));
-
-    listi = dir(strcat(dir_b, 'UTE_2', filesep, '*0001.*'));
-    if length(listi) == 1
-        ute_fn = fullfile(dir_b, 'UTE_2', listi(1).name);
-    elseif length(listi) > 1
-        ute_fn = fullfile(dir_b, 'UTE_2', listi(1).name);
-        fprintf(1, 'WARNING: %d UTE candidates in %sUTE_2/, using %s\n', length(listi), dir_b, ute_fn);
-    else
-        fprintf(1, 'WARNING: No UTE found in %sUTE_2/\n', dir_b);
-    end
-
-    listi = dir(strcat(dir_b, 'UMAP', filesep, '*0001.*'));
-    if length(listi) == 1
-        umap_fn = fullfile(dir_b, 'UMAP', listi(1).name);
-    elseif length(listi) > 1
-        umap_fn = fullfile(dir_b, 'UMAP', listi(1).name);
-        fprintf(1, 'WARNING: %d UMAP candidates in %sUMAP/, using %s\n', length(listi), dir_b, umap_fn);
-    else
-        aa = ls(fullfile(dir_b, '*UMAP*'));
-        if size(aa, 1) ~= 0
-            listi = dir(fullfile(dir_b, deblank(aa(1, :)), '*0001.*'));
-        else
-            listi = [];
-        end
-        if length(listi) == 1
-            umap_fn = fullfile(dir_b, deblank(aa(1, :)), listi(1).name);
-        elseif length(listi) > 1
-            umap_fn = fullfile(dir_b, deblank(aa(1, :)), listi(1).name);
-            fprintf(1, 'WARNING: %d UMAP candidates in %s, using %s\n', length(listi), fullfile(dir_b, deblank(aa(1, :))), umap_fn);
-        else
-            fprintf(1, 'WARNING: No UMAP found in %s\n', dir_b);
-        end
-    end
-else
-    fprintf(1, 'WARNING: No MR/ parent in %s\n', patha);
-end
+[ute_fn, umap_fn] = pseudo_CT_discover_ute_umap(mprage_fn);
 
 return

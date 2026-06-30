@@ -87,7 +87,21 @@
 
 function [Pf] = atlas_based_attenuation_map(varargin)
 
-code_version = '2.5';
+% Resolve code version from version.txt at the repo root; fall back to
+% hardcoded value if the file cannot be read.
+code_version = '2.6.0';  % fallback
+try
+    root_dir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
+    fid = fopen(fullfile(root_dir, 'version.txt'), 'r');
+    if fid ~= -1
+        v = strtrim(fgetl(fid));
+        fclose(fid);
+        if ~isempty(v) && ischar(v)
+            code_version = v;
+        end
+    end
+catch  %#ok<CTCH>
+end
 
 Pf = ''; % In case program quits before finishing!
 check_aliasing = 0;
@@ -158,13 +172,9 @@ else
 end
 
 if autom_select_folder
-    batch_dir = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'Batch_atlas');
-    if isdir(batch_dir)
-        dir_batch_templates = batch_dir;
-    else
-        disp(sprintf('Batch_atlas folder not found at:\n%s', batch_dir));
-        return;
-    end
+    repo_root = fileparts(fileparts(mfilename('fullpath')));
+    batch_dir = pseudo_CT_resolve_batch_atlas_path(repo_root);
+    dir_batch_templates = batch_dir;
 end
 
 
