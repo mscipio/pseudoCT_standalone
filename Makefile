@@ -14,19 +14,24 @@ tag:
 	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
 	@echo "Tagged v$(VERSION)"
 
+DIST_DIR = dist
+PKG_DIR  = $(DIST_DIR)/pseudoCT_v$(VERSION)
+
 package:
 	@[ -n "$(VERSION)" ] || (echo "ERROR: version.txt is empty or missing" && exit 1)
-	rm -rf "pseudoCT_v$(VERSION)"
-	mkdir -p "pseudoCT_v$(VERSION)"
-	cp run_pseudo_CT_local.m "pseudoCT_v$(VERSION)/"
-	cp run_pseudo_CT_launchpad.m "pseudoCT_v$(VERSION)/"
-	cp version.txt "pseudoCT_v$(VERSION)/"
-	cp -r src "pseudoCT_v$(VERSION)/"
-	cp -r vers "pseudoCT_v$(VERSION)/"
-	cp -r spm8-r6313 "pseudoCT_v$(VERSION)/"
-	cp -r imgaussian "pseudoCT_v$(VERSION)/"
-	cp -r ssh2_v2_m1_r5 "pseudoCT_v$(VERSION)/"
-	cp Makefile "pseudoCT_v$(VERSION)/"
-	cp -r scripts "pseudoCT_v$(VERSION)/"
-	rm -f "pseudoCT_v$(VERSION)/scripts/test_auto_discover_messages.m"
-	@echo "Package assembled: pseudoCT_v$(VERSION)/"
+	rm -rf "$(PKG_DIR)"
+	mkdir -p "$(PKG_DIR)"
+	cp run_pseudo_CT_local.m "$(PKG_DIR)/"
+	cp run_pseudo_CT_launchpad.m "$(PKG_DIR)/"
+	cp version.txt "$(PKG_DIR)/"
+	cp -r src "$(PKG_DIR)/"
+	cp -r vers "$(PKG_DIR)/"
+	cp -r spm8-r6313 "$(PKG_DIR)/"
+	cp -r imgaussian "$(PKG_DIR)/"
+	cp -r ssh2_v2_m1_r5 "$(PKG_DIR)/"
+	cp Makefile "$(PKG_DIR)/"
+	cp -r scripts "$(PKG_DIR)/"
+	rm -f "$(PKG_DIR)/scripts/test_auto_discover_messages.m"
+	cd "$(DIST_DIR)" && tar -czf "pseudoCT_v$(VERSION).tar.gz" "pseudoCT_v$(VERSION)"
+	@echo "Package assembled: $(PKG_DIR)/"
+	@echo "Archive created:   $(DIST_DIR)/pseudoCT_v$(VERSION).tar.gz"
