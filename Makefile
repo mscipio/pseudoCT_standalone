@@ -1,7 +1,7 @@
 .PHONY: lint test tag package
 
 MATLAB = matlab -nodisplay -batch
-VERSION = $(shell cat version.txt | tr -d '[:space:]')
+VERSION = $(shell head -n 1 version.txt | tr -d '[:space:]')
 
 lint:
 	$(MATLAB) "run('scripts/run_lint.m')"

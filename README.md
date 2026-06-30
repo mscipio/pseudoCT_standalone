@@ -119,6 +119,7 @@ Numbered releases:
 - 2.3: improved subject masking using `MPRAGE_normalized.nii` on Sep 23, 2016.
 - 2.4: allowed local FreeSurfer execution through `127.0.0.1` on Dec 17, 2017.
 - 2.5: repackaged the workflow as a standalone, redistributable package for local execution while preserving the historical compiled `v2.0` Launchpad backend path.
+- 2.6.0: unified UMAP discovery, configurable Batch_atlas resolution, and standalone release packaging.
 
 ## Defaults
 
