@@ -658,21 +658,14 @@ disp(sprintf('Attenuation map file created:\n%s\n', deblank(Pf(num_atlas+1, :)))
 %pat_folder = paths(1:ss(end)-1);
 %pat_folder = home_dir(paths);
 composite = quick_fusion_pseudo_ct(paths);
-if ~isdeployed
-    hhh = figure('Visible', 'off'); imagesc(composite);
-    drawnow;
-    print(hhh, '-dtiff', '-r300', fullfile(paths, 'Fusion_MR_Pseudo_CT_validation.tiff'));
-    pause(1);
-    close(hhh);
-else
-    imwrite(composite, fullfile(paths, 'Fusion_MR_Pseudo_CT_validation.tiff'), 'Resolution', 300);
-end
+imwrite(composite, fullfile(paths, 'Fusion_MR_Pseudo_CT_validation.tiff'), 'Resolution', 300);
 
 try
     close(fh);
 catch
 end
 disp('Whole process finished!!!!');
+
 % Write a txt file with the code version!
 fid = fopen(fullfile(paths, 'Pseudo_CT_AC_Version.txt'), 'wt');
 s = sprintf('Pseudo-CT code version: %s\nDate: %s', code_version, date);
