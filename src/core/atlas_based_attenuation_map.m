@@ -87,12 +87,12 @@
 
 function [Pf] = atlas_based_attenuation_map(varargin)
 
-% Resolve code version from version.txt at the repo root; fall back to
+% Resolve code version from CHANGELOG.md line 1 at the repo root; fall back to
 % hardcoded value if the file cannot be read.
-code_version = '2.6.0';  % fallback
+code_version = '2.6.1';  % fallback
 try
     root_dir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
-    fid = fopen(fullfile(root_dir, 'version.txt'), 'r');
+    fid = fopen(fullfile(root_dir, 'CHANGELOG.md'), 'r');
     if fid ~= -1
         v = strtrim(fgetl(fid));
         fclose(fid);
@@ -666,33 +666,11 @@ catch
 end
 disp('Whole process finished!!!!');
 
-% Write a txt file with the code version!
-fid = fopen(fullfile(paths, 'Pseudo_CT_AC_Version.txt'), 'wt');
-s = sprintf('Pseudo-CT code version: %s\nDate: %s', code_version, date);
-fprintf(fid, '%s', s);
-fprintf(fid, '\nVersion 1.1: we fill the head with soft-tissue when no atlas is present!');
-fprintf(fid, '\nVersion 1.2: New FreeSufer version 5.3!');
-fprintf(fid, '\nVersion 1.3: New Larger atlas (May/16/2013)!');
-fprintf(fid, '\nVersion 1.4: Using Launchpad to run FreeSurfer commands (Jun/21/2013)!');
-fprintf(fid, '\nVersion 1.5: Solving bug when running parallel sessions (Aug/26/2013)!');
-fprintf(fid, '\nVersion 1.6: Increasing the attenuation mask to reduce Nose-job problems (Feb/7/2014)!');
-fprintf(fid, '\nVersion 1.6.1: Improving the Nose-job solution (Mar/13/2014)!');
-fprintf(fid, '\nVersion 1.6.2: Including username in /cluster/scratch/monday folder (Apr/21/2014)!');
-fprintf(fid, '\nVersion 1.7: One big blob allowed on MPRAGE mask (July/22/2014)!');
-fprintf(fid, '\nVersion 1.8: Centering subject in MPRAGE before normalization (Sept/03/2014)!');
-fprintf(fid, '\nVersion 1.8.1: Including automatic nose-back anti-aliasing (Sept/11/2014)!');
-fprintf(fid, '\nVersion 2.0: Allowing Deployed version (Dec/9/2014)!');
-fprintf(fid, '\nVersion 2.1: Printing a validation image in tiff (Jun/25/2016)!');
-fprintf(fid, '\nVersion 2.2: Integration of ssh_login() (Jul/28/2016)!');
-fprintf(fid, '\nVersion 2.3: Improving of subject mask with MPRAGE_normalized.nii (Sept/23/2016)!');
-fprintf(fid, '\nVersion 2.4: Allows local FS connections (on 127.0.0.1_ (Dec/17/2017)!');
-fprintf(fid, '\nVersion 2.5: Repackaged as a standalone redistributable workflow for local execution while preserving the compiled v2.0 Launchpad backend option (May/28/2026)!');
-fprintf(fid, '\nGood News Everyone!! The paper has got accepted! (August/6/2014)!');
-fprintf(fid, '\nIf you use this method, or parts of it, please, quote this paper:');
-fprintf(fid, '\nD. Izquierdo-Garcia, A.E. Hansen, S. F�rster, D. Benoit, S. Schachoff, S. F�rst, K.T. Chen, D.B. Chonde, and C. Catana.');
-fprintf(fid, '\nAn SPM8-based Approach for Attenuation Correction Combining Segmentation and Non-rigid Template Formation: Application to Simultaneous PET/MR Brain Imaging. JNM. 2014. Nov;55(11):1825-30.');
-fprintf(fid, '\nEnjoy it ;)) !!!');
-fclose(fid);
+% Write Pseudo_CT_AC_Version.txt with changelog content
+status = pseudo_CT_write_version_log(code_version, paths);
+if status ~= 1
+    disp('WARNING: Pseudo_CT_AC_Version.txt was written in fallback mode — CHANGELOG.md could not be copied.');
+end
 
 
 return
