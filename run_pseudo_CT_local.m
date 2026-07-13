@@ -231,11 +231,15 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%% Clean the folder! %%%%%%
-button = 'Yes'; % By default, erase all the intermediate files!
+keep_temp = pseudo_CT_keep_temp_enabled(@defaults_pseudo_CT);
+should_cleanup = true;  % default: remove intermediate temp files
+if strcmp(keep_temp, 'Yes')
+    should_cleanup = false;  % operator requested preservation
+end
 promotion_success = pseudo_CT_promote_final_outputs(temp_working_dir, processing_dir, P);
 if ~promotion_success
     disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', temp_working_dir));
-elseif strcmp(button, 'Yes')
+elseif should_cleanup
     [remove_success, msg] = rmdir(temp_working_dir, 's');
     if ~remove_success
         disp(sprintf('There was an error removing the temporary directory %s\n%s', temp_working_dir, msg));

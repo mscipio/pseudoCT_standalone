@@ -4,5 +4,7 @@
 *.obj
 *.log
 Batch_atlas/
+spm8-dan/
 dist/
 .codegraph/
+opencode-quota/

@@ -8,9 +8,16 @@ function setup_pseudo_CT_paths(root_dir)
     if exist(fullfile(root_dir, 'src'), 'dir') == 7
         addpath(genpath(fullfile(root_dir, 'src')), '-begin');
     end
-    if exist(fullfile(root_dir, 'spm8-r6313'), 'dir') == 7
-        addpath(genpath(fullfile(root_dir, 'spm8-r6313')), '-begin');
+
+    [spm_dir, spm_label] = pseudo_CT_resolve_spm_root(root_dir);
+    if exist(spm_dir, 'dir') ~= 7
+        error('setup_pseudo_CT_paths:SPMNotFound', ...
+              'SPM tree not found: %s\nSet PSEUDOCT_SPM_ROOT or PSEUDOCT_SPM_VARIANT to point to a valid SPM tree.', ...
+              spm_dir);
     end
+    disp(sprintf('pseudo-CT: SPM tree = %s', spm_label));
+    addpath(genpath(spm_dir), '-begin');
+
     if exist(fullfile(root_dir, 'imgaussian'), 'dir') == 7
         addpath(genpath(fullfile(root_dir, 'imgaussian')), '-begin');
     end

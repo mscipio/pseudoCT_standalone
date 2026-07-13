@@ -1,4 +1,16 @@
-2.6.1
+2.6.2
+
+## 2.6.2 — Investigation Cleanup Release
+- **Coregistration-parity finding (qualitative):** MATLAB R2010b (7.11) / MCR 7.11 matches the compiled Launchpad v2.0 at `spm_run_coreg_estimate` for byte-identical input.
+- **Divergence caveat:** Modern MATLAB (R2013b+, including R2026a) may produce divergent optimizer results even with identical input, SPM sources, and MEX.
+- **Deferred-validation warning:** R2026a local E2E validation is deferred pending operator run; the compiled Launchpad v2.0 binary is unchanged.
+- **Compatibility:** A legacy-compatible PCA shim (`pseudo_ct_princomp_legacy.m`) restores pre-coreg geometry under `PSEUDOCT_USE_PRINCOMP=1`. It is documented as legacy-compatible and does not claim to fix optimizer divergence.
+- **Cleanup — removed transient artifacts:**
+  - `package-lock.json` (accidental 6-line bare lockfile; no Node.js toolchain in project)
+  - `openspec/changes/extract-version-changelog/archive-report.md` (stray archive output; duplicative of existing OpenSpec artifacts)
+- **Cleanup — gitignored:** `spm8-dan/` (1.1 GB parity-testing SPM reference tree; stays on disk, operator-managed removal)
+- **Reusable investigation diagnostics** remain tracked: `diff_entrypoint_runs.m`, `compare_nifti_data.m`, `compare_hash_strings.m`, `restart_from_repos_checkpoint.m`, `sweep_smoothing_fwhm.m`, `normalized_2_att_map.m`, `pseudo_ct_princomp_legacy.m`. Each carries an `% Investigation tool — investigation-cleanup-release.` banner.
+- **Compatibility helpers:** `pseudo_CT_keep_temp_enabled.m`, `pseudo_CT_resolve_spm_root.m`, `TODO.md` (operator investigation notes).
 
 ## 2.6.1
 - Centralized release version/history in `CHANGELOG.md`, exported `Pseudo_CT_AC_Version.txt` from the changelog source, and excluded `version.txt`, `Makefile`, and `scripts/` from packaged runtime releases.

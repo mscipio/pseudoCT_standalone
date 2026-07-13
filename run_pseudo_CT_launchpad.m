@@ -6,6 +6,9 @@ function run_pseudo_CT_launchpad(varargin)
 %   compiled Launchpad pseudo-CT workflow, then writes the final DICOM
 %   pseudo-muMAP locally.
 %
+%   Minimum supported MATLAB: R2010b (7.11).  Modern MATLAB (R2013b+)
+%   MAY produce divergent optimizer results.
+%
 %   RUN_PSEUDO_CT_LAUNCHPAD('batch') opens a multi-select file picker for
 %   MPRAGE files, submits all selected subjects through the Launchpad
 %   backend, then finalizes each successful subject locally.
@@ -111,11 +114,19 @@ end
 ssh_log = {USERNAME, PASSWORD, HOSTNAME};
 clear USERNAME PASSWORD HOSTNAME
 
-[ssh2_conn, jobname, rand_fold, ss_tot] = batch_pseudo_CT_launchpad(P, ssh_log, 'clean_folder', 0, 'check_aliasing', jobs(1).correct_aliasing); %#ok<ASGLU>
+keep_temp = pseudo_CT_keep_temp_enabled(@defaults_pseudo_CT_launchpad);
+keep_tmp_val = 0;
+if strcmp(keep_temp, 'Yes')
+    keep_tmp_val = 1;
+end
+[ssh2_conn, jobname, rand_fold, ss_tot] = batch_pseudo_CT_launchpad(P, ssh_log, 'clean_folder', 0, 'keep_tmp', keep_tmp_val, 'check_aliasing', jobs(1).correct_aliasing); %#ok<ASGLU>
 
 num_success = 0;
 num_failed = 0;
-button = 'Yes';
+should_cleanup = true;  % default: remove intermediate temp files
+if strcmp(keep_temp, 'Yes')
+    should_cleanup = false;  % operator requested preservation
+end
 for jj=1:length(jobs)
     if ss_tot(jj) ~= 0
         disp(sprintf('Pseudo-CT Launchpad processing failed for:\n%s\n', jobs(jj).mprage_fn));
@@ -153,7 +164,7 @@ for jj=1:length(jobs)
     promotion_success = pseudo_CT_promote_final_outputs(jobs(jj).temp_dir, jobs(jj).processing_dir, deblank(P(jj, :)));
     if ~promotion_success
         disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', jobs(jj).temp_dir));
-    elseif strcmp(button, 'Yes')
+    elseif should_cleanup
         [remove_success, msg] = rmdir(jobs(jj).temp_dir, 's');
         if ~remove_success
             disp(sprintf('There was an error removing the temporary directory %s\n%s', jobs(jj).temp_dir, msg));

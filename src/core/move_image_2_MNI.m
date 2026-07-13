@@ -68,7 +68,7 @@ rl_centre_t = mean([maxi mini]); % right-left centre in mm (should be zero, as i
 % On axial plane:
 [I] = find(slt_a == 1); [rt, ct] = ind2sub(size(mt), I);
 Mt = [rt, ct];
-[coef_t, score_t, latent_t] = local_princomp(Mt);
+[coef_t, score_t, latent_t] = pseudo_ct_princomp(Mt);
 
 
 
@@ -131,8 +131,8 @@ for jj=1:3
     end
     [rt, ct] = find(slt == 1); Mt = [rt, ct];
     [r, c] = find(sl == 1); M = [r, c];
-    [coef_t, score_t, latent_t] = local_princomp(Mt); coef_t;
-    [coef, score, latent] = local_princomp(M); coef;
+    [coef_t, score_t, latent_t] = pseudo_ct_princomp(Mt); coef_t;
+    [coef, score, latent] = pseudo_ct_princomp(M); coef;
     a = [coef_t(:, 1)];
     b = [coef(:, 1)];
     costheta = dot(a,b)/(norm(a)*norm(b));
@@ -180,6 +180,8 @@ disp(sprintf('Translations (in mm):\nRight: %.3f\nForward: %.3f\nUp: %.3f\n', t(
 param = [t(1) t(2) t(3) theta(3) theta(2) theta(1) 1 1 1];
 M = spm_matrix(param);
 
+debug_move2mni = getenv('PSEUDOCT_DEBUG_MOVE2MNI');
+
 
 % We could now save it with a different name:
 for jj=1:size(Pin, 1)
@@ -187,7 +189,8 @@ for jj=1:size(Pin, 1)
     V = spm_vol(fn);
     Im = spm_read_vols(V);
     [paths,fns,exts] = fileparts(fn);
-    fns = fullfile(paths, strcat(fns, '_repos.nii'));
+    out_stem = strcat(fns, '_repos');
+    fns = fullfile(paths, strcat(out_stem, '.nii'));
     % The new transformation matrix would be then:
     Mnew = M*V.mat;
     V_new = V;
@@ -195,6 +198,21 @@ for jj=1:size(Pin, 1)
     %ok = savenifti(fns, Im, Mnew, V.hdr.pixdim(2:4), spm_type(V.dt(1)));
     aux = spm_write_vol(V_new, Im);
     Pout(jj, 1:length(fns)) = fns;
+
+    if ~isempty(debug_move2mni)
+        debug_struct = struct('input_file', fn, ...
+                              'output_file', fns, ...
+                              'template_file', Vt.fname, ...
+                              'theta', theta, ...
+                              'translation_mm', t, ...
+                              'param', param, ...
+                              'input_mat', V.mat, ...
+                              'output_mat', Mnew, ...
+                              'template_mat', Vt.mat, ...
+                              'isPET', isPET, ...
+                              'autom_select_template', autom_select_template);
+        save(fullfile(paths, sprintf('%s_move2mni_debug.mat', out_stem)), 'debug_struct');
+    end
 
 %     if ok
 %         disp(sprintf('Image saved succesfully:\n%s\n\n', fns));
@@ -247,3 +265,37 @@ end
 coef = V;
 score = X0*coef;
 latent = (diag(S).^2) ./ (size(X0, 1) - 1);
+
+function [coef, score, latent] = pseudo_ct_princomp(X)
+
+% 1. Legacy path requested via env var PSEUDOCT_USE_PRINCOMP
+%    - if old MATLAB princomp exists, use it
+%    - otherwise use the repo-local legacy-compatible shim
+use_builtin = getenv('PSEUDOCT_USE_PRINCOMP');
+use_legacy = ~isempty(use_builtin) && (strcmpi(use_builtin, '1') || strcmpi(use_builtin, 'true') || strcmpi(use_builtin, 'yes'));
+if use_legacy
+    if exist('princomp', 'file') == 2
+        fprintf(1, 'pseudo-CT PCA path = legacy princomp\n');
+        [coef, score, latent] = princomp(X);
+        return;
+    else
+        fprintf(1, 'pseudo-CT PCA path = repo-local legacy princomp shim\n');
+        [coef, score, latent] = pseudo_ct_princomp_legacy(X);
+        return;
+    end
+end
+
+% 2. Modern path: MATLAB pca(...) (R2013b+) when legacy behavior is NOT requested
+if exist('pca', 'file') == 2 && size(X, 1) >= 2
+    try
+        fprintf(1, 'pseudo-CT PCA path = modern pca\n');
+        [coef, score, latent] = pca(X, 'Algorithm', 'svd', 'Economy', false);
+        return;
+    catch ME_pca
+        fprintf(1, 'Modern pca path failed (%s); falling back to local_princomp.\n', ME_pca.message);
+    end
+end
+
+% 3. Last-resort: bare SVD PCA (no sign convention)
+fprintf(1, 'pseudo-CT PCA path = local_princomp fallback\n');
+[coef, score, latent] = local_princomp(X);

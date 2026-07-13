@@ -4,6 +4,7 @@
 function [ssh2_conn, jobname, rand_fold, ss_tot] = batch_pseudo_CT_launchpad(P, ssh_log, varargin)
 
 clean_folder = 1;
+keep_tmp = 0;
 check_aliasing = 1;
 
 if length(P) == 0
@@ -23,6 +24,8 @@ if nargin > fix_args && rem(nargin-fix_args, 2) == 0
         switch varargin{ii}
             case 'clean_folder'
                 clean_folder = varargin{ii+1};
+            case 'keep_tmp'
+                keep_tmp = varargin{ii+1};
             case 'check_aliasing'
                 check_aliasing = varargin{ii+1};
             otherwise
@@ -83,50 +86,73 @@ end
 ss_tot = check_launchpad_command_status(jobname, ssh2_conn, 10*60, 60, jobnum);
 
 for jj=1:size(P, 1)
+    [pathn, fn, extn] = fileparts(deblank(P(jj, :))); %#ok<ASGLU>
+
+    % --- Diagnostic: capture PBS job logs from cluster (always) ---
+    % The compiled Launchpad binary is opaque — PBS stdout/stderr are
+    % the only runtime evidence for both successes and failures.
+    % Martinos cluster writes PBS logs to /pbs/<user>/ as
+    % <jobname>.o<N> (stdout) and <jobname>.e<N> (stderr).
+    try
+        pbs_cmd = sprintf('ls /pbs/%s/*o%d /pbs/%s/*e%d 2>/dev/null', ...
+            ssh2_conn.username, jobnum(jj), ssh2_conn.username, jobnum(jj));
+        [ssh2_conn, pbs_result] = ssh2_command(ssh2_conn, pbs_cmd);
+        if ~isempty(pbs_result)
+            ssh2_conn = scp_get(ssh2_conn, pbs_result.', pathn);
+            for kk = 1:length(pbs_result)
+                [~, pbs_fn, pbs_ext] = fileparts(pbs_result{kk});
+                src = fullfile(pathn, [pbs_fn pbs_ext]);
+                dst = fullfile(pathn, sprintf('%s_launchpad_%s%s', fn, pbs_fn, pbs_ext));
+                if exist(src, 'file') == 2
+                    try
+                        movefile(src, dst);
+                    catch  %#ok<CTCH>
+                        fprintf(1, '[launchpad-diag] Could not rename PBS log %s (may already exist)\n', [pbs_fn pbs_ext]);
+                    end
+                end
+            end
+            fprintf(1, '[launchpad-diag] Saved PBS job logs for subject %s in %s\n', fn, pathn);
+        end
+    catch ME_pbs  %#ok<CTCH>
+        fprintf(1, '[launchpad-diag] Could not fetch PBS logs for subject %s: %s\n', fn, ME_pbs.message);
+    end
+
     if ss_tot(jj) == 0
         disp(sprintf('\nCopying Back images for subject %d of %d: %s\n', jj, size(P, 1), deblank(P(jj, :))));
-        [pathn, fn, extn] = fileparts(deblank(P(jj, :))); %#ok<ASGLU>
         lc_path = strcat(lc_path_parent, num2str(rand_fold(jj)));
         [ssh2_conn, comm_result] = ssh2_command(ssh2_conn, sprintf('ls %s/*', lc_path)); %#ok<ASGLU>
         ssh2_conn = scp_get(ssh2_conn, comm_result.', pathn);
         % Check that att_map.nii was produced on the cluster side.
         % A cluster job exiting 0 with no att_map.nii is a known failure mode
         % (e.g. subject-specific issues in the compiled Pseudo_CT_launchpad).
+        % PBS logs were already captured above — see pathn.
         if exist(fullfile(pathn, att_map_filename), 'file') ~= 2
-            fprintf(1, '[launchpad-debug] att_map.nii missing for subject %s. Attempting PBS log fetch...\n', deblank(P(jj, :)));
-            try
-                % Martinos cluster writes PBS stdout/stderr logs to /pbs/<user>/
-                % as <jobname>.o<N> and <jobname>.e<N>. Match both by job number.
-                pbs_cmd = sprintf('ls /pbs/%s/*o%d /pbs/%s/*e%d 2>/dev/null', ...
-                    ssh2_conn.username, jobnum(jj), ssh2_conn.username, jobnum(jj));
-                [ssh2_conn, pbs_result] = ssh2_command(ssh2_conn, pbs_cmd);
-                if ~isempty(pbs_result)
-                    ssh2_conn = scp_get(ssh2_conn, pbs_result.', pathn);
-                    for kk = 1:length(pbs_result)
-                        [~, pbs_fn, pbs_ext] = fileparts(pbs_result{kk});
-                        local_pbs = fullfile(pathn, [pbs_fn pbs_ext]);
-                        if exist(local_pbs, 'file') == 2
-                            fid = fopen(local_pbs, 'r');
-                            if fid ~= -1
-                                log_txt = fread(fid, 4096, '*char')';
-                                fclose(fid);
-                                fprintf(1, '[launchpad-debug] PBS log %s (head):\n%s\n', ...
-                                    [pbs_fn pbs_ext], log_txt);
-                            end
-                        end
-                    end
+            fprintf(1, '[launchpad-debug] att_map.nii missing for subject %s despite job exit 0.\nSee PBS logs in: %s\n', deblank(P(jj, :)), pathn);
+            % Print PBS log heads for immediate console feedback
+            log_files = dir(fullfile(pathn, sprintf('%s_launchpad_*', fn)));
+            for kk = 1:min(length(log_files), 2)
+                fid = fopen(fullfile(pathn, log_files(kk).name), 'r');
+                if fid ~= -1
+                    log_txt = fread(fid, 4096, '*char')';
+                    fclose(fid);
+                    fprintf(1, '[launchpad-debug] PBS log %s (head):\n%s\n', log_files(kk).name, log_txt);
                 end
-            catch  %#ok<CTCH>
-                % PBS logs unreachable — fall through silently.
-                % The entry script (run_pseudo_CT_launchpad.m) will still
-                % surface the subject and temp_dir contents in its own
-                % diagnostic block.
             end
         end
     else
         disp(sprintf('\nSubject FAILED: %s\n', deblank(P(jj, :))));
+        fprintf(1, '[launchpad-debug] Job %d failed with exit code %d — see PBS logs in %s\n', ...
+            jobnum(jj), ss_tot(jj), pathn);
     end
-    ssh2_conn = ssh2_command(ssh2_conn, sprintf('rm -rf %s', strcat(lc_path_parent, num2str(rand_fold(jj)))));
+    if keep_tmp == 0
+        ssh2_conn = ssh2_command(ssh2_conn, sprintf('rm -rf %s', strcat(lc_path_parent, num2str(rand_fold(jj)))));
+    else
+        preserved_path = strcat(lc_path_parent, num2str(rand_fold(jj)));
+        fprintf(1, ['[keep-tmp] Preserved cluster scratch: %s\n', ...
+                    '[keep-tmp] To clean up later, run:\n', ...
+                    '           ssh %s ''rm -rf %s''\n'], ...
+                preserved_path, ssh2_conn.hostname, preserved_path);
+    end
 end
 
 ssh2_conn = ssh2_close(ssh2_conn);

@@ -93,8 +93,28 @@ if source_command(end) == ';'
     source_command = strtrim(source_command(1:end-1));
 end
 
+fs_lib = getenv('PSEUDOCT_FS_LIBSTDCPP_ROOT');
+if isempty(fs_lib)
+    fs_lib = '/autofs/cluster/matlab/current/sys/os/glnxa64';
+end
+
+% --- Shell-safe input validation for ALL interpolated command strings ---
+% fs_lib, source_command, and cmd are all interpolated into tcsh/sh
+% command strings below.  Validate each for shell metacharacters before
+% ANY interpolation, not just fs_lib.  (R1-001 full remediation.)
+shell_meta = '[;&|`$(){}\[\]<>!\\''"]';
+if ~isempty(regexp(fs_lib, shell_meta, 'once'))
+    error('PSEUDOCT_FS_LIBSTDCPP_ROOT contains shell metacharacters: %s', fs_lib);
+end
+if ~isempty(regexp(source_command, shell_meta, 'once'))
+    error('source_command contains shell metacharacters: %s', source_command);
+end
+if ~isempty(regexp(cmd, shell_meta, 'once'))
+    error('Normalization command contains shell metacharacters: %s', cmd);
+end
+
 if length(source_command) >= 6 && strcmpi(source_command(1:6), 'source')
-    local_cmd = sprintf('tcsh -f -c "%s; %s"', source_command, cmd);
+    local_cmd = sprintf('tcsh -f -c "setenv LD_LIBRARY_PATH %s:$LD_LIBRARY_PATH; %s; %s"', fs_lib, source_command, cmd);
 else
-    local_cmd = sprintf('/bin/sh -c "%s; %s"', source_command, cmd);
+    local_cmd = sprintf('/bin/sh -c "LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; export LD_LIBRARY_PATH; %s; %s"', fs_lib, source_command, cmd);
 end

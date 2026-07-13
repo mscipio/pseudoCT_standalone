@@ -3,7 +3,7 @@
 % Function that defines the default parameters required for the standalone
 % Launchpad execution path.
 % They can be edited if required.
-% Minimum supported local MATLAB: R2010b (matches the cluster's compiled app MCR 7.11)
+% Minimum supported local MATLAB: R2010b (matches the cluster's compiled app MCR 7.11).  Modern MATLAB (R2013b+) MAY produce divergent optimizer results.
 % Inputs: -defstr: One of the definitions: 'HOSTNAME' or 'source_command'
 %         for instance;
 %
@@ -21,6 +21,7 @@ source_command = 'source /usr/local/freesurfer/nmr-stable53-env; '; % To run Fre
 cluster = 'Yes'; % If the HOSTNAME is a cluster (then use it to run the FS commands!); otherwise 'No';
 host_folder = '/cluster/scratch/monday/'; % Used only for non-local hosts. On localhost, normalization staging now happens under the subject MR_PET/tmp folder.
 recenter_before_normalization = 'Yes';
+keep_temp_files = 'No'; % 'Yes' to preserve MR_PET/tmp/ after successful completion; overridden by PSEUDOCT_KEEP_TMP env var
 
 %%%% For deployed applications only:
 launchpad_root = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad';
