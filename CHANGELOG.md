@@ -1,4 +1,8 @@
-2.6.2
+2.6.3
+
+## 2.6.3 — Local Validation Policy
+- Removed the GitHub Actions MATLAB workflow because this private repository cannot provide a MATLAB batch license token to GitHub-hosted runners.
+- Validation remains local: run `scripts/run_lint.m` and `scripts/run_smoke_tests.m` before release.
 
 ## 2.6.2 — Investigation Cleanup Release
 - **Coregistration-parity finding (qualitative):** MATLAB R2010b (7.11) / MCR 7.11 matches the compiled Launchpad v2.0 at `spm_run_coreg_estimate` for byte-identical input.

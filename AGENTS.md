@@ -59,9 +59,7 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 ## Testing & CI
 
-**CI** — `.github/workflows/ci.yml` runs on every push and PR with two jobs:
-- `lint` — `run('scripts/run_lint.m')`
-- `smoke-test` — `run('scripts/run_smoke_tests.m')`
+**CI** — No GitHub Actions workflow is configured because this private repository cannot provide a MATLAB batch license token to GitHub-hosted runners. Run lint and smoke tests locally before release.
 
 **Lint** — `scripts/run_lint.m` runs MATLAB's built-in `mlint` over `src/`, `vers/`, and the two entry scripts (`run_pseudo_CT_local.m`, `run_pseudo_CT_launchpad.m`).
 
