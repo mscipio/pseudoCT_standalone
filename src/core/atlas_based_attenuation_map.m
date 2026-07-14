@@ -89,7 +89,7 @@ function [Pf] = atlas_based_attenuation_map(varargin)
 
 % Resolve code version from CHANGELOG.md line 1 at the repo root; fall back to
 % hardcoded value if the file cannot be read.
-code_version = '2.6.1';  % fallback
+code_version = '2.6.4';  % fallback
 try
     root_dir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
     fid = fopen(fullfile(root_dir, 'CHANGELOG.md'), 'r');

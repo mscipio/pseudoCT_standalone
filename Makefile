@@ -24,6 +24,7 @@ package:
 	cp run_pseudo_CT_local.m "$(PKG_DIR)/"
 	cp run_pseudo_CT_launchpad.m "$(PKG_DIR)/"
 	cp CHANGELOG.md "$(PKG_DIR)/"
+	cp README.md "$(PKG_DIR)/"
 	cp -r src "$(PKG_DIR)/"
 	cp -r vers "$(PKG_DIR)/"
 	cp -r spm8-r6313 "$(PKG_DIR)/"

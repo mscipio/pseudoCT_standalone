@@ -2,7 +2,7 @@
 
 Maintained by Michele Scipioni, PhD  
 mscipioni@mgh.harvard.edu  
-Last updated: May 28, 2026.
+Last updated: July 14, 2026.
 
 If you use this method, or parts of it, please, quote this paper:
 >D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.
@@ -120,6 +120,7 @@ Numbered releases:
 - 2.4: allowed local FreeSurfer execution through `127.0.0.1` on Dec 17, 2017.
 - 2.5: repackaged the workflow as a standalone, redistributable package for local execution while preserving the historical compiled `v2.0` Launchpad backend path.
 - 2.6.0: unified UMAP discovery, configurable Batch_atlas resolution, and standalone release packaging.
+- 2.6.4: re-established NIfTI MPRAGE input support for both local and Launchpad pipelines; configurable PBS queue priority.
 
 ## Defaults
 

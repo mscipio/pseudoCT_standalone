@@ -276,13 +276,16 @@ use_legacy = ~isempty(use_builtin) && (strcmpi(use_builtin, '1') || strcmpi(use_
 if use_legacy
     if exist('princomp', 'file') == 2
         fprintf(1, 'pseudo-CT PCA path = legacy princomp\n');
-        [coef, score, latent] = princomp(X);
-        return;
-    else
-        fprintf(1, 'pseudo-CT PCA path = repo-local legacy princomp shim\n');
-        [coef, score, latent] = pseudo_ct_princomp_legacy(X);
-        return;
+        try
+            [coef, score, latent] = princomp(X);
+            return;
+        catch ME
+            fprintf(1, 'Legacy princomp exists but failed (%s); falling back to repo-local shim.\n', ME.message);
+        end
     end
+    fprintf(1, 'pseudo-CT PCA path = repo-local legacy princomp shim\n');
+    [coef, score, latent] = pseudo_ct_princomp_legacy(X);
+    return;
 end
 
 % 2. Modern path: MATLAB pca(...) (R2013b+) when legacy behavior is NOT requested

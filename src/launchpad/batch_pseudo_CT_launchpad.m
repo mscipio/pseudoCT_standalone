@@ -39,7 +39,13 @@ elseif rem(nargin-fix_args, 2) ~= 0
 end
 
 FS = 1;
-if size(P, 1) > 100
+% Queue selection: defaults_pseudo_CT_launchpad('queue_name') takes
+% priority (e.g. 'p60' for faster scheduling). If empty, fall back to
+% the hardcoded heuristic (-q max100 for >100 subjects, default otherwise).
+queue_override = defaults_pseudo_CT_launchpad('queue_name');
+if ~isempty(queue_override)
+    queue_com = ['-q ', queue_override];
+elseif size(P, 1) > 100
     queue_com = '-q max100';
 else
     queue_com = '';

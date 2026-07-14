@@ -1,4 +1,11 @@
-2.6.3
+2.6.4
+
+## 2.6.4 — NIfTI MPRAGE Input Workflow
+- **NIfTI input staging:** `convert_dicom_i_2_nii.m` now copies `.nii` inputs into `MR_PET/tmp/mprage.nii` at entry time, matching the DICOM branch behavior. Downstream `temp_dir` lookups (att_map.nii, DICOM write, promotion) now work correctly for NIfTI inputs.
+- **Output directory resolution:** `pseudo_CT_resolve_output_dirs.m` now checks for `MR/` as a sibling directory when the up-walk fails, fixing `pseudo_muMAP` location for NIfTI inputs in `MR_PET/`.
+- **R2018b+ princomp fallback:** added try-catch guard in `move_image_2_MNI.m` for MATLAB versions where `princomp` exists as a removed-function error stub.
+- **Configurable PBS queue:** added `queue_name` to `defaults_pseudo_CT_launchpad.m` — set to `'p60'` for higher priority scheduling on Launchpad, or `''` for the default queue.
+- **SDD cycle completed:** `launchpad-denoised-mprage-investigation` change planned, implemented, verified, and archived.
 
 ## 2.6.3 — Local Validation Policy
 - Removed the GitHub Actions MATLAB workflow because this private repository cannot provide a MATLAB batch license token to GitHub-hosted runners.

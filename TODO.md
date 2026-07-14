@@ -19,8 +19,3 @@
   - Goal: persist the complete run transcript (warnings, progress messages, external tool output, errors) as a `.txt` artifact alongside the generated pseudo-CT outputs.
   - Reason to revisit: this would make divergence debugging and run-to-run auditing much easier, especially when comparing local vs Launchpad behavior.
 
-- Investigate Launchpad support for denoised NIfTI MPRAGE inputs.
-  - User report: when a denoised MPRAGE NIfTI is provided as input to `run_pseudo_CT_launchpad.m`, the program appears to run but stalls / never produces the final pseudo-CT output, even though similar denoised NIfTI inputs work in the older `piano_mMR` workflow and in Tom's version of the tool.
-  - Context: users sometimes must denoise noisy MPRAGE images (either automatically with David's MATLAB script or manually on `MPRAGE_spm.nii`) to avoid pseudo-CT leakage outside the head.
-  - Question to answer: does the current standalone Launchpad path fully support NIfTI MPRAGE inputs, or did the extraction miss helper logic that existed in the larger legacy `piano_mMR` application?
-  - Likely follow-up areas: NIfTI-vs-DICOM input handling in `run_pseudo_CT_launchpad.m`, `convert_dicom_i_2_nii.m`, legacy `piano_mMR` call path, and any denoising-related assumptions in the Launchpad batch flow.

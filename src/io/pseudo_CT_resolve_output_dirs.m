@@ -15,11 +15,22 @@ while ~isempty(search_dir)
 end
 
 if isempty(mr_dir)
-    mr_dir = fileparts(series_dir);
-    if isempty(mr_dir)
-        mr_dir = series_dir;
+    % The up-walk didn't find an MR/ ancestor, but MR/ may be a sibling
+    % of the input directory (e.g., NIfTI in MR_PET/, MR/ next to it).
+    mr_parent = fileparts(series_dir);
+    potential_mr = fullfile(mr_parent, 'MR');
+    if isdir(potential_mr)
+        mr_dir = potential_mr;
+        subject_root = mr_parent;
+    else
+        if isempty(mr_parent)
+            mr_dir = series_dir;
+            subject_root = mr_dir;
+        else
+            mr_dir = mr_parent;
+            subject_root = mr_dir;
+        end
     end
-    subject_root = mr_dir;
 else
     subject_root = fileparts(mr_dir);
 end

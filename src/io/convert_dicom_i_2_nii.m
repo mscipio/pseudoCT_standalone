@@ -130,8 +130,19 @@ for ii=1:nf
         end
     end
     if length(strfind(extd, '.nii'))
-        aux = P(ii, :);
-        Pnew(ii, 1:length(aux)) = aux;
+        if has_dir_final
+            % Stage the NIfTI into temp_dir with standardized name (mprage.nii)
+            % to match DICOM branch behavior and keep all downstream
+            % lookups (att_map.nii in temp_dir, promotion, DICOM write)
+            % consistent regardless of input type.
+            % Use copyfile (not movefile) to preserve the original input.
+            aux2 = fullfile(dir_final, nii_name);
+            copyfile(strtrim(P(ii, :)), aux2);
+            Pnew(ii, 1:length(aux2)) = aux2;
+        else
+            aux = P(ii, :);
+            Pnew(ii, 1:length(aux)) = aux;
+        end
     end
 end
 
