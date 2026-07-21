@@ -51,6 +51,8 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 - **UMAP auto-discovery** — `pseudo_CT_auto_discover_ute_umap.m` looks for `MR/UMAP/*0001.*` or `MR/*UMAP*/*0001.*` relative to the MPRAGE path. Subjects without a detected UMAP are silently skipped in batch mode.
 - **Anti-aliasing** — second positional arg controls nose/back aliasing correction. Defaults to `1` in batch/explicit-list modes. In GUI mode, set via checkbox in `load_mr_4_AC.fig`.
 - **Defaults are `eval`'d** — `defaults_pseudo_CT.m` and `defaults_pseudo_CT_launchpad.m` use `eval([defstr ';'])`. Setting names must match the variable name in the file (e.g. `'HOSTNAME'`, `'source_command'`).
+- **Historical output settings** — both defaults use `recenter_before_normalization = 'No'` and `zero_background = 'No'`. Launchpad runs `mri_normalize` first and passes `_normalized.nii`, so recentering is bypassed. Bone reduction remains enabled.
+- **New Segment host boundary** — one controlled subject matched the historical New Segment result on legacy PBS E5472/RHEL7/glibc 2.17. Celer R2010 compiled and interpreted runs matched each other but followed a different iterative numerical path. CPU dispatch and system-math effects were not isolated independently; this is not universal parity proof.
 
 ## Shell Mode & Compiled App
 
@@ -77,4 +79,4 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 ## Versioning
 
-Code version is hardcoded as `code_version = '2.5'` in `atlas_based_attenuation_map.m:90`. A `Pseudo_CT_AC_Version.txt` is written to the processing dir with full version history.
+Code version falls back to `2.6.5` in `atlas_based_attenuation_map.m` and otherwise reads line 1 of `CHANGELOG.md`. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.

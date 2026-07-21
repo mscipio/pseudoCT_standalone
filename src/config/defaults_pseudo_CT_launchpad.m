@@ -20,7 +20,10 @@ HOSTNAME = '172.27.25.134'; % Address of Launchpad computer!
 source_command = 'source /usr/local/freesurfer/nmr-stable53-env; '; % To run FreeSurfer on launchpad
 cluster = 'Yes'; % If the HOSTNAME is a cluster (then use it to run the FS commands!); otherwise 'No';
 host_folder = '/cluster/scratch/monday/'; % Used only for non-local hosts. On localhost, normalization staging now happens under the subject MR_PET/tmp folder.
-recenter_before_normalization = 'Yes';
+% Launchpad normalizes first and passes an _normalized.nii input to the
+% compiled workflow, so its recenter branch is bypassed.
+recenter_before_normalization = 'No';
+zero_background = 'No'; % 'Yes' applies a local post-fetch subject mask.
 keep_temp_files = 'No'; % 'Yes' to preserve MR_PET/tmp/ after successful completion; overridden by PSEUDOCT_KEEP_TMP env var
 queue_name =  'p60'; % PBS queue for pbsubmit (e.g. 'p60' for high priority, 'max100' for large batches, '' for default)
 

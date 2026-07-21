@@ -89,7 +89,7 @@ function [Pf] = atlas_based_attenuation_map(varargin)
 
 % Resolve code version from CHANGELOG.md line 1 at the repo root; fall back to
 % hardcoded value if the file cannot be read.
-code_version = '2.6.4';  % fallback
+code_version = '2.6.5';  % fallback
 try
     root_dir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
     fid = fopen(fullfile(root_dir, 'CHANGELOG.md'), 'r');
@@ -640,8 +640,15 @@ subj_mask_dil = imdilate(subj_mask, ones(7,7,7));
 subj_mask_eroded = imerode(subj_mask, ones(13,13,13)); % For version 1.6;
 diff = (subj_mask_dil - subj_mask_eroded).* (att_map < 0.08).* (orig_mprage > 20); % For version 1.6
 I = find(diff); att_map(I) = 0.096;
-% Let's multiply by the subject_mask: Sept/23/2016;
-att_map = att_map.*((subj_mask_dil + (orig_mprage > 20)) > 0);
+% Optionally multiply by the subject mask. Historical Launchpad output keeps
+% these background values, so the compatibility default is 'No'.
+zero_background_defaults = @defaults_pseudo_CT;
+if isdeployed && exist('defaults', 'var') && isstruct(defaults)
+    zero_background_defaults = @(defstr) defaults.(defstr);
+end
+if strcmp(pseudo_CT_zero_background_enabled(zero_background_defaults), 'Yes')
+    att_map = att_map.*((subj_mask_dil + (orig_mprage > 20)) > 0);
+end
 % Rename the filename to save it!
 fn_att_map = fullfile(paths, 'att_map.nii');
 V_att_map.fname = fn_att_map;

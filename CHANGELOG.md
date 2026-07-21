@@ -1,4 +1,15 @@
-2.6.4
+2.6.5
+
+## 2.6.5 - Configurable Background Policy and Bounded Launchpad Parity
+- Added `zero_background` to `defaults_pseudo_CT.m` and `defaults_pseudo_CT_launchpad.m`. The default is `'No'`, which preserves historical background values; `'Yes'` opts into the final subject-mask multiplication and may alter PET attenuation-correction results.
+- `pseudo_CT_zero_background_enabled` resolves through the supplied defaults function and safely returns `'No'` for older deployed defaults that do not define the key. `PSEUDOCT_ZERO_BACKGROUND=1|true|yes` remains an explicit opt-in.
+- The local pipeline gates only the final subject-mask multiplication. Bone-segmentation reduction remains enabled and unchanged.
+- The Launchpad entry point can apply the same optional mask after fetching `att_map.nii` and before DICOM conversion and output promotion. If `mprage_normalized.nii` is unavailable, it warns and preserves the fetched map.
+- Corrected the recenter compatibility setting to `'No'`: actual Launchpad orchestration runs `mri_normalize` first and passes `_normalized.nii`, which bypasses recentering.
+- A controlled one-subject comparison found New Segment to be host-environment sensitive. The legacy PBS E5472/RHEL7/glibc 2.17 environment matched the historical result exactly; celer R2010 compiled and interpreted runs matched each other but followed a slightly different iterative numerical path. CPU dispatch and system-math effects were not independently isolated.
+- From exact cleaned `rc*` inputs, celer R2010 DARTEL, inverse warp, reslice, and final attenuation-map outputs were byte-identical. Final SHA-256: `dc7f0e49016c6cf034b12df04eba78dd346b816f9976da63b8dfd792fdf255cb`.
+- Removed superseded parity-investigation runners while retaining the reusable entrypoint/NIfTI/hash comparators and two generic exact semantic comparators.
+- The compiled Launchpad binary is unchanged. The finding is bounded to one controlled subject; manual end-to-end execution and QC review remain required.
 
 ## 2.6.4 — NIfTI MPRAGE Input Workflow
 - **NIfTI input staging:** `convert_dicom_i_2_nii.m` now copies `.nii` inputs into `MR_PET/tmp/mprage.nii` at entry time, matching the DICOM branch behavior. Downstream `temp_dir` lookups (att_map.nii, DICOM write, promotion) now work correctly for NIfTI inputs.
@@ -15,12 +26,12 @@
 - **Coregistration-parity finding (qualitative):** MATLAB R2010b (7.11) / MCR 7.11 matches the compiled Launchpad v2.0 at `spm_run_coreg_estimate` for byte-identical input.
 - **Divergence caveat:** Modern MATLAB (R2013b+, including R2026a) may produce divergent optimizer results even with identical input, SPM sources, and MEX.
 - **Deferred-validation warning:** R2026a local E2E validation is deferred pending operator run; the compiled Launchpad v2.0 binary is unchanged.
-- **Compatibility:** A legacy-compatible PCA shim (`pseudo_ct_princomp_legacy.m`) restores pre-coreg geometry under `PSEUDOCT_USE_PRINCOMP=1`. It is documented as legacy-compatible and does not claim to fix optimizer divergence.
+- **Compatibility:** A legacy-compatible PCA shim (`pseudo_ct_princomp_legacy.m`) restores pre-coreg geometry when the legacy PCA path is selected. It does not claim to fix optimizer divergence.
 - **Cleanup — removed transient artifacts:**
   - `package-lock.json` (accidental 6-line bare lockfile; no Node.js toolchain in project)
   - `openspec/changes/extract-version-changelog/archive-report.md` (stray archive output; duplicative of existing OpenSpec artifacts)
 - **Cleanup — gitignored:** `spm8-dan/` (1.1 GB parity-testing SPM reference tree; stays on disk, operator-managed removal)
-- **Reusable investigation diagnostics** remain tracked: `diff_entrypoint_runs.m`, `compare_nifti_data.m`, `compare_hash_strings.m`, `restart_from_repos_checkpoint.m`, `sweep_smoothing_fwhm.m`, `normalized_2_att_map.m`, `pseudo_ct_princomp_legacy.m`. Each carries an `% Investigation tool — investigation-cleanup-release.` banner.
+- **Reusable verification tools** remain tracked: `diff_entrypoint_runs.m`, `compare_nifti_data.m`, `compare_hash_strings.m`, and `pseudo_ct_princomp_legacy.m`.
 - **Compatibility helpers:** `pseudo_CT_keep_temp_enabled.m`, `pseudo_CT_resolve_spm_root.m`, `TODO.md` (operator investigation notes).
 
 ## 2.6.1

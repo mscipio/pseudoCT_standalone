@@ -2,7 +2,7 @@
 
 Maintained by Michele Scipioni, PhD  
 mscipioni@mgh.harvard.edu  
-Last updated: July 14, 2026.
+Last updated: July 21, 2026.
 
 If you use this method, or parts of it, please, quote this paper:
 >D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.
@@ -93,38 +93,56 @@ run_pseudo_CT_launchpad(subject_list)
 run_pseudo_CT_launchpad(subject_list, 0)
 ```
 
-## Version History
+## Launchpad and Local Numerical Compatibility
 
-Historical notes before numbered releases:
+The final controlled comparison places the practical compatibility boundary at
+SPM New Segment, and specifically at the host environment used to execute the
+same package, input, and job. The legacy PBS E5472/RHEL7/glibc 2.17 environment
+matched the historical result exactly. On celer, R2010 compiled and interpreted
+runs matched each other but followed a slightly different iterative numerical
+path. The experiment did not independently isolate CPU dispatch from glibc or
+other system-math behavior.
 
-- 04/09/2013: added the FreeSurfer intensity-normalization step so the workflow runs from MPRAGE inputs before atlas processing.
-- 05/28/2013: added a third input argument for SSH login reuse so subjects could be processed in batches.
+From exact cleaned `rc*` inputs, the compared celer R2010 DARTEL, inverse-warp,
+reslice, and final attenuation-map outputs were byte-identical at every stage.
+This is evidence from one controlled subject, not universal end-to-end parity.
+Manual pipeline execution and review of the generated QC TIFF remain required.
 
-Numbered releases:
+For historical output compatibility:
 
-- 1.1: fill missing atlas-covered head regions with soft tissue.
-- 1.2: moved to FreeSurfer 5.3.
-- 1.3: updated to the larger atlas set from May 16, 2013.
-- 1.4: switched FreeSurfer execution to Launchpad on Jun 21, 2013.
-- 1.5: fixed parallel-session issues on Aug 26, 2013.
-- 1.6: expanded the attenuation mask to reduce nose-job artifacts on Feb 7, 2014.
-- 1.6.1: improved the nose-job correction on Mar 13, 2014.
-- 1.6.2: included the username in `/cluster/scratch/monday` staging on Apr 21, 2014.
-- 1.7: restricted the MPRAGE mask to the largest connected component on Jul 22, 2014.
-- 1.8: added pre-normalization recentering of the MPRAGE to reduce nose/back cropping on Sep 3, 2014.
-- 1.8.1: added automatic nose-back anti-aliasing on Sep 11, 2014.
-- 2.0: added deployed execution on Dec 9, 2014. <-- VERSION RUNNING ON AETHER (probably!)
-- 2.1: added fused QC TIFF output on Jun 25, 2016.
-- 2.2: integrated `ssh_login()` to standardize SSH handling on Jul 28, 2016.
-- 2.3: improved subject masking using `MPRAGE_normalized.nii` on Sep 23, 2016.
-- 2.4: allowed local FreeSurfer execution through `127.0.0.1` on Dec 17, 2017.
-- 2.5: repackaged the workflow as a standalone, redistributable package for local execution while preserving the historical compiled `v2.0` Launchpad backend path.
-- 2.6.0: unified UMAP discovery, configurable Batch_atlas resolution, and standalone release packaging.
-- 2.6.4: re-established NIfTI MPRAGE input support for both local and Launchpad pipelines; configurable PBS queue priority.
+- Keep `recenter_before_normalization = 'No'`. Launchpad runs `mri_normalize`
+  first and passes `_normalized.nii`, so the recenter branch is bypassed.
+- Keep production bone reduction enabled.
+- Keep `zero_background = 'No'`.
+- Keep the production New Segment settings unchanged: `affreg = ''`,
+  `biasfwhm = 30`, and `warp.reg = 10`.
+
+The local entry point continues to load the supported `vers/` compatibility
+overrides. The controlled host-boundary result does not attribute New Segment
+parity to those writer overrides.
+
+See [Legacy Launchpad Parity](docs/legacy-launchpad-parity.md) for the controlled
+provenance, exact stage results, final hash, and limits of the finding.
 
 ## Defaults
 
-- Local mode reads `src/config/defaults_pseudo_CT.m`.
-- Launchpad mode reads `src/config/defaults_pseudo_CT_launchpad.m`.
+Configuration remains in the two legacy defaults functions:
 
-The local defaults file resolves the bundled FreeSurfer setup script relative to its own folder so the configuration remains valid after reorganization.
+- `src/config/defaults_pseudo_CT.m` controls local execution.
+- `src/config/defaults_pseudo_CT_launchpad.m` controls Launchpad execution.
+
+Both define `recenter_before_normalization = 'No'` and
+`zero_background = 'No'`. Setting `zero_background` to `'Yes'` opts into final
+subject-mask background zeroing. On the Launchpad path this is a local
+post-fetch operation performed before DICOM conversion; the compiled backend is
+unchanged. Older deployed defaults without the key safely retain `'No'`.
+
+The existing environment overrides remain available for maintainer workflows:
+`PSEUDOCT_BATCH_ATLAS`, `PSEUDOCT_KEEP_TMP`, `PSEUDOCT_SPM_ROOT`,
+`PSEUDOCT_SPM_VARIANT`, and `PSEUDOCT_ZERO_BACKGROUND`.
+
+## Version History
+
+See [CHANGELOG.md](CHANGELOG.md) for release history. Version 2.6.5 adds the
+configurable background policy, records the bounded Launchpad parity finding,
+and removes superseded investigation tooling while keeping generic comparators.

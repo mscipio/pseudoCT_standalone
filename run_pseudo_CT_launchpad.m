@@ -115,6 +115,11 @@ ssh_log = {USERNAME, PASSWORD, HOSTNAME};
 clear USERNAME PASSWORD HOSTNAME
 
 keep_temp = pseudo_CT_keep_temp_enabled(@defaults_pseudo_CT_launchpad);
+zero_background_defaults = @defaults_pseudo_CT_launchpad;
+if isdeployed && isstruct(defaults)
+    zero_background_defaults = @(defstr) defaults.(defstr);
+end
+zero_background = pseudo_CT_zero_background_enabled(zero_background_defaults);
 keep_tmp_val = 0;
 if strcmp(keep_temp, 'Yes')
     keep_tmp_val = 1;
@@ -139,6 +144,9 @@ for jj=1:length(jobs)
     end
 
     try
+        if strcmp(zero_background, 'Yes')
+            launchpad_apply_background_mask(jobs(jj).temp_dir);
+        end
         pseudo_CT_write_mu_map_dicom(fullfile(jobs(jj).temp_dir, 'att_map.nii'), jobs(jj).save_dir, jobs(jj).umap_fn, jobs(jj).temp_dir, 0);
     catch ME
         fprintf(1, '[launchpad-debug] Failed to write mu-map DICOM for subject:\n%s\n', jobs(jj).mprage_fn);
@@ -186,6 +194,48 @@ end
 
 if ~isdeployed && length(jobs) == 1
     warndlg('Pseudo-CT image finished!!', 'Pseudo-CT finished!!');
+end
+
+return
+
+function launchpad_apply_background_mask(temp_dir)
+
+att_map_path = fullfile(temp_dir, 'att_map.nii');
+normalized_path = fullfile(temp_dir, 'mprage_normalized.nii');
+if exist(normalized_path, 'file') ~= 2
+    fprintf(1, ['WARNING: zero_background was requested, but %s is missing.\n', ...
+                'The fetched Launchpad attenuation map will remain unmasked.\n'], normalized_path);
+    return;
+end
+
+try
+    V_att_map = spm_vol(att_map_path);
+    att_map = spm_read_vols(V_att_map);
+    V_orig = spm_vol(normalized_path);
+    orig_mprage = spm_read_vols(V_orig);
+    if ~isequal(size(att_map), size(orig_mprage))
+        fprintf(1, ['WARNING: zero_background could not be applied because att_map.nii ', ...
+                    'and mprage_normalized.nii have different dimensions.\n', ...
+                    'The fetched Launchpad attenuation map will remain unmasked.\n']);
+        return;
+    end
+
+    [~, subj_mask] = head_mask_mprage(orig_mprage, 20);
+    [L, num] = bwlabeln(subj_mask);
+    if num > 1
+        component_sizes = zeros(1, num);
+        for ii=1:num
+            component_sizes(ii) = sum(L(:) == ii);
+        end
+        [~, pos_max] = max(component_sizes);
+        subj_mask = L == pos_max;
+    end
+    subj_mask_dil = imdilate(subj_mask, ones(7,7,7));
+    att_map = att_map.*((subj_mask_dil + (orig_mprage > 20)) > 0);
+    spm_write_vol(V_att_map, att_map);
+catch ME_mask
+    fprintf(1, ['WARNING: zero_background could not be applied: %s\n', ...
+                'The fetched Launchpad attenuation map will remain unmasked.\n'], ME_mask.message);
 end
 
 return
