@@ -477,11 +477,19 @@ else
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% Once finished, we are going to reduce the bone segmentation to clean up a
-% little bit the results.
+% Manifest-owned bone reduction and cleanup policy.
+% Bone reduction is mandatory; cleanup/retention is manifest-owned and
+% PSEUDOCT_KEEP_TMP cannot alter it.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-cleanup = 1;
-if cleanup
+[cleanup_policy, ignored_keep_tmp] = cleanup_owner();
+if ~isempty(ignored_keep_tmp)
+    fprintf(1, '[atlas_based_attenuation_map] cleanup policy = %s (ignored env)\n', cleanup_policy);
+else
+    fprintf(1, '[atlas_based_attenuation_map] cleanup policy = %s\n', cleanup_policy);
+end
+
+[bone_cleanup_enabled, ~] = fixed_bone_cleanup();
+if bone_cleanup_enabled
     for ii=1:6
         aux = strcat(paths, filesep, 'rc', num2str(ii), fns, exts);
         %copyfile(aux, strcat(paths, filesep, 'rc', num2str(ii), fns, '_orig', exts))

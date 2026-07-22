@@ -5,6 +5,8 @@
 % Inputs: - cmd: the command to run on the external machine;
 %         - ssh2_conn: (optional) if available, the ssh connection to a
 %         host;
+%         - defaults: (optional, deployed only) defaults struct;
+%         - manifest: (optional) profile-resource-authority manifest;
 %
 % Output: - sts: the exit status of the command (from the external machine). If 0 then
 %           command finshed properly, otherwise there was some problem.
@@ -18,6 +20,7 @@
 function [sts] = run_normalization_cmd(cmd, varargin)
 
 sts = 0;
+manifest = [];
 
 if nargin > 1
     ssh2_conn = varargin{1};
@@ -32,22 +35,43 @@ else
 %     ssh2_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD);
     ssh2_conn = ssh_login_pseudo_CT();
 end
-if nargin > 2 & isdeployed
-    defaults = varargin{2};
-end 
 
-%source_command = 'source /usr/local/freesurfer/nmr-stable53-env'; % To run FreeSurfer!
-source_command = defaults_pseudo_CT('source_command'); % To run FreeSurfer!
-if isdeployed
-    source_command = defaults.source_command;
+if nargin > 2
+    if isdeployed
+        defaults = varargin{2};
+    else
+        manifest = varargin{2};
+    end
 end
+
+if nargin > 3 && isdeployed
+    manifest = varargin{3};
+end
+
+% Resolve manifest-owned or legacy normalization resources.
+if ~isempty(manifest)
+    [source_command, child_lib_path, ignored_fs_lib] = pseudo_CT_normalization_runtime(manifest);
+    if ~isempty(ignored_fs_lib)
+        fprintf(1, '[run_normalization_cmd] source_command from manifest (ignored %s)\n', ignored_fs_lib);
+    end
+else
+    source_command = defaults_pseudo_CT('source_command'); % To run FreeSurfer!
+    if isdeployed
+        source_command = defaults.source_command;
+    end
+    child_lib_path = getenv('PSEUDOCT_FS_LIBSTDCPP_ROOT');
+    if isempty(child_lib_path)
+        child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
+    end
+end
+
 aa = strfind(cmd, ' ');
 norm_fn = strtrim(cmd((aa(end)+1):end));
 is_local_host = strcmp(ssh2_conn.hostname, '127.0.0.1') || strcmpi(ssh2_conn.hostname, 'localhost');
 
 disp('Starting FS command (be patient) ...');
 if is_local_host
-    [status, command_result] = system(local_prepare_source_command(source_command, cmd));
+    [status, command_result] = system(local_prepare_source_command(source_command, cmd, child_lib_path));
 else
     [ssh2_conn, command_result] = ssh2_command_david(ssh2_conn, sprintf('%s%s', source_command, cmd), 1);
 end
@@ -81,7 +105,9 @@ disp('Good News Everyone!! The command ran properly!');
 
 return
 
-function local_cmd = local_prepare_source_command(source_command, cmd)
+function local_cmd = local_prepare_source_command(source_command, cmd, child_lib_path)
+
+ids = pseudo_CT_error_ids();
 
 source_command = strtrim(source_command);
 if isempty(source_command)
@@ -93,28 +119,30 @@ if source_command(end) == ';'
     source_command = strtrim(source_command(1:end-1));
 end
 
-fs_lib = getenv('PSEUDOCT_FS_LIBSTDCPP_ROOT');
-if isempty(fs_lib)
-    fs_lib = '/autofs/cluster/matlab/current/sys/os/glnxa64';
+if isempty(child_lib_path)
+    child_lib_path = getenv('PSEUDOCT_FS_LIBSTDCPP_ROOT');
+    if isempty(child_lib_path)
+        child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
+    end
 end
 
 % --- Shell-safe input validation for ALL interpolated command strings ---
-% fs_lib, source_command, and cmd are all interpolated into tcsh/sh
+% child_lib_path, source_command, and cmd are all interpolated into tcsh/sh
 % command strings below.  Validate each for shell metacharacters before
-% ANY interpolation, not just fs_lib.  (R1-001 full remediation.)
-shell_meta = '[;&|`$(){}\[\]<>!\\''"]';
-if ~isempty(regexp(fs_lib, shell_meta, 'once'))
-    error('PSEUDOCT_FS_LIBSTDCPP_ROOT contains shell metacharacters: %s', fs_lib);
+% ANY interpolation, not just child_lib_path.  (R1-001 full remediation.)
+shell_meta = '[;&|`$(){\}\[\]<>!\\''"]';
+if ~isempty(regexp(child_lib_path, shell_meta, 'once'))
+    error(ids.NORMALIZATION.ShellMetachar, 'PSEUDOCT_FS_LIBSTDCPP_ROOT contains shell metacharacters: %s', child_lib_path);
 end
 if ~isempty(regexp(source_command, shell_meta, 'once'))
-    error('source_command contains shell metacharacters: %s', source_command);
+    error(ids.NORMALIZATION.ShellMetachar, 'source_command contains shell metacharacters: %s', source_command);
 end
 if ~isempty(regexp(cmd, shell_meta, 'once'))
-    error('Normalization command contains shell metacharacters: %s', cmd);
+    error(ids.NORMALIZATION.ShellMetachar, 'Normalization command contains shell metacharacters: %s', cmd);
 end
 
 if length(source_command) >= 6 && strcmpi(source_command(1:6), 'source')
-    local_cmd = sprintf('tcsh -f -c "setenv LD_LIBRARY_PATH %s:$LD_LIBRARY_PATH; %s; %s"', fs_lib, source_command, cmd);
+    local_cmd = sprintf('tcsh -f -c "setenv LD_LIBRARY_PATH %s:$LD_LIBRARY_PATH; %s; %s"', child_lib_path, source_command, cmd);
 else
-    local_cmd = sprintf('/bin/sh -c "LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; export LD_LIBRARY_PATH; %s; %s"', fs_lib, source_command, cmd);
+    local_cmd = sprintf('/bin/sh -c "LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; export LD_LIBRARY_PATH; %s; %s"', child_lib_path, source_command, cmd);
 end

@@ -59,6 +59,7 @@ manifest.runtime_guard     = 'supported_matlab';
 manifest.recenter          = 'No';
 manifest.zero_background   = 'Yes';
 manifest.cleanup_policy    = 'remove_on_success';
+manifest.normalization_resource.child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
 manifest.provenance.expected_spm_version = 'r6313';
 manifest.provenance.record_path = fullfile(repo_root, 'spm8-r6313', 'INVENTORY.json');
 

@@ -253,6 +253,9 @@ end
 if ~islogical(manifest.bone_enabled) || ~isscalar(manifest.bone_enabled)
     error(ids.PROFILE.InvalidValue, 'bone_enabled must be a scalar logical.');
 end
+if ~manifest.bone_enabled
+    error(ids.BONE.CleanupFixed, 'Bone reduction must remain enabled; manifest disabled it.');
+end
 if ~isnumeric(manifest.fwhm) || ~isscalar(manifest.fwhm) || manifest.fwhm < 0
     error(ids.PROFILE.InvalidValue, 'fwhm must be a non-negative scalar.');
 end

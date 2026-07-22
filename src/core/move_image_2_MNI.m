@@ -66,9 +66,10 @@ maxi = max(mm(1,:)); mini = min(mm(1,:));
 rl_centre_t = mean([maxi mini]); % right-left centre in mm (should be zero, as is in AP centre);
 
 % On axial plane:
+pca_fn = pseudo_CT_pca_resolver();
 [I] = find(slt_a == 1); [rt, ct] = ind2sub(size(mt), I);
 Mt = [rt, ct];
-[coef_t, score_t, latent_t] = pseudo_ct_princomp(Mt);
+[coef_t, score_t, latent_t] = pca_fn(Mt);
 
 
 
@@ -131,8 +132,8 @@ for jj=1:3
     end
     [rt, ct] = find(slt == 1); Mt = [rt, ct];
     [r, c] = find(sl == 1); M = [r, c];
-    [coef_t, score_t, latent_t] = pseudo_ct_princomp(Mt); coef_t;
-    [coef, score, latent] = pseudo_ct_princomp(M); coef;
+    [coef_t, score_t, latent_t] = pca_fn(Mt); coef_t;
+    [coef, score, latent] = pca_fn(M); coef;
     a = [coef_t(:, 1)];
     b = [coef(:, 1)];
     costheta = dot(a,b)/(norm(a)*norm(b));
@@ -241,64 +242,3 @@ evalc('spm_run_coreg_estimate(job);'); % Estimate but don't reslice!
 
 return
 
-function [coef, score, latent] = local_princomp(X)
-
-X = double(X);
-if isempty(X)
-    coef = eye(2);
-    score = [];
-    latent = zeros(2, 1);
-    return;
-end
-
-mu = mean(X, 1);
-X0 = bsxfun(@minus, X, mu);
-
-if size(X0, 1) < 2
-    coef = eye(size(X0, 2));
-    score = X0;
-    latent = zeros(size(X0, 2), 1);
-    return;
-end
-
-[~, S, V] = svd(X0, 'econ');
-coef = V;
-score = X0*coef;
-latent = (diag(S).^2) ./ (size(X0, 1) - 1);
-
-function [coef, score, latent] = pseudo_ct_princomp(X)
-
-% 1. Legacy path requested via env var PSEUDOCT_USE_PRINCOMP
-%    - if old MATLAB princomp exists, use it
-%    - otherwise use the repo-local legacy-compatible shim
-use_builtin = getenv('PSEUDOCT_USE_PRINCOMP');
-use_legacy = ~isempty(use_builtin) && (strcmpi(use_builtin, '1') || strcmpi(use_builtin, 'true') || strcmpi(use_builtin, 'yes'));
-if use_legacy
-    if exist('princomp', 'file') == 2
-        fprintf(1, 'pseudo-CT PCA path = legacy princomp\n');
-        try
-            [coef, score, latent] = princomp(X);
-            return;
-        catch ME
-            fprintf(1, 'Legacy princomp exists but failed (%s); falling back to repo-local shim.\n', ME.message);
-        end
-    end
-    fprintf(1, 'pseudo-CT PCA path = repo-local legacy princomp shim\n');
-    [coef, score, latent] = pseudo_ct_princomp_legacy(X);
-    return;
-end
-
-% 2. Modern path: MATLAB pca(...) (R2013b+) when legacy behavior is NOT requested
-if exist('pca', 'file') == 2 && size(X, 1) >= 2
-    try
-        fprintf(1, 'pseudo-CT PCA path = modern pca\n');
-        [coef, score, latent] = pca(X, 'Algorithm', 'svd', 'Economy', false);
-        return;
-    catch ME_pca
-        fprintf(1, 'Modern pca path failed (%s); falling back to local_princomp.\n', ME_pca.message);
-    end
-end
-
-% 3. Last-resort: bare SVD PCA (no sign convention)
-fprintf(1, 'pseudo-CT PCA path = local_princomp fallback\n');
-[coef, score, latent] = local_princomp(X);
