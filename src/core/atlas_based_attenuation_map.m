@@ -388,9 +388,9 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
         if (~isdeployed & ~strcmp(lower(defaults_pseudo_CT('cluster')), 'yes')) | (isdeployed & ~strcmp(lower(defaults.cluster), 'yes'))
             cmd = cmd(2:end-1); % Cut the " ";
             if isdeployed
-                [sts] = run_normalization_cmd(cmd, ssh2_conn, defaults);
+                [sts] = run_normalization_cmd(cmd, ssh2_conn, defaults, processing_policy);
             else
-                [sts] = run_normalization_cmd(cmd, ssh2_conn);
+                [sts] = run_normalization_cmd(cmd, ssh2_conn, processing_policy);
             end
         else
             if isdeployed

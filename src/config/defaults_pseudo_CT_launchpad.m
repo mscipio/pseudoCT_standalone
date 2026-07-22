@@ -24,7 +24,7 @@ host_folder = '/cluster/scratch/monday/'; % Used only for non-local hosts. On lo
 % compiled workflow, so its recenter branch is bypassed.
 recenter_before_normalization = 'No';
 zero_background = 'No'; % 'Yes' applies a local post-fetch subject mask.
-keep_temp_files = 'No'; % 'Yes' to preserve MR_PET/tmp/ after successful completion; overridden by PSEUDOCT_KEEP_TMP env var
+keep_temp_files = 'No'; % Legacy field; supported profiles own cleanup/retention.
 queue_name =  'p60'; % PBS queue for pbsubmit (e.g. 'p60' for high priority, 'max100' for large batches, '' for default)
 
 %%%% For deployed applications only:

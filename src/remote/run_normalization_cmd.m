@@ -59,10 +59,7 @@ else
     if isdeployed
         source_command = defaults.source_command;
     end
-    child_lib_path = getenv('PSEUDOCT_FS_LIBSTDCPP_ROOT');
-    if isempty(child_lib_path)
-        child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
-    end
+    child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
 end
 
 aa = strfind(cmd, ' ');
@@ -120,10 +117,7 @@ if source_command(end) == ';'
 end
 
 if isempty(child_lib_path)
-    child_lib_path = getenv('PSEUDOCT_FS_LIBSTDCPP_ROOT');
-    if isempty(child_lib_path)
-        child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
-    end
+    child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
 end
 
 % --- Shell-safe input validation for ALL interpolated command strings ---
