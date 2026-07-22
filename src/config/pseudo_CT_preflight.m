@@ -207,6 +207,11 @@ if ~strcmpi(manifest.provenance.expected_spm_version, manifest.spm_version)
           manifest.provenance.expected_spm_version, manifest.spm_version);
 end
 
+if strcmp(manifest.name, 'launchpad') && ~strcmp(manifest.spm_version, 'r6313')
+    error(ids.PROVENANCE.ChecksumMismatch, ...
+          'Launchpad local support provenance must be r6313.');
+end
+
 % PR1 foundation: do not require the physical record file to exist for
 % local-current or launchpad. The helper pseudo_CT_provenance_record is
 % fail-closed when called directly; full enforcement arrives with r6313/r4667

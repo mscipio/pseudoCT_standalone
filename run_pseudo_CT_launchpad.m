@@ -58,20 +58,25 @@ function run_pseudo_CT_launchpad(varargin)
 
 defaults = '';
 
+[orig_warn] = warning;
+warning('off', 'all');
+warn_cleanup = onCleanup(@() warning(orig_warn));
+
+[pathp, ~, ~] = fileparts(mfilename('fullpath'));
+addpath(fullfile(pathp, 'src', 'config'), '-begin');
+manifest = pseudo_CT_resolve_profile('launchpad', pathp);
+
 if isdeployed
     if nargin == 1
         load(varargin{1}); % Load variable defaults!
     end
 end
 
-orig_warn = warning;
-warning('off', 'all');
+manifest = pseudo_CT_preflight(manifest, pathp);
 
-[pathp, ~, ~] = fileparts(mfilename('fullpath'));
-addpath(fullfile(pathp, 'src', 'config'), '-begin');
-setup_pseudo_CT_paths(pathp);
+setup_pseudo_CT_paths(pathp, manifest);
 
-jobs = launchpad_collect_jobs(varargin{:});
+jobs = launchpad_collect_jobs(manifest, varargin{:});
 if isempty(jobs)
     warning(orig_warn);
     return;
@@ -114,24 +119,19 @@ end
 ssh_log = {USERNAME, PASSWORD, HOSTNAME};
 clear USERNAME PASSWORD HOSTNAME
 
-keep_temp = pseudo_CT_keep_temp_enabled(@defaults_pseudo_CT_launchpad);
-zero_background_defaults = @defaults_pseudo_CT_launchpad;
-if isdeployed && isstruct(defaults)
-    zero_background_defaults = @(defstr) defaults.(defstr);
+[cleanup_policy, ignored_keep_tmp] = cleanup_owner(manifest);
+if ~isempty(ignored_keep_tmp)
+    fprintf(1, '[profile-resource-authority] cleanup policy = %s (ignored env)\n', cleanup_policy);
+else
+    fprintf(1, '[profile-resource-authority] cleanup policy = %s\n', cleanup_policy);
 end
-zero_background = pseudo_CT_zero_background_enabled(zero_background_defaults);
-keep_tmp_val = 0;
-if strcmp(keep_temp, 'Yes')
-    keep_tmp_val = 1;
-end
+zero_background = pseudo_CT_zero_background_enabled(manifest);
+keep_tmp_val = strcmp(cleanup_policy, 'keep_on_success');
 [ssh2_conn, jobname, rand_fold, ss_tot] = batch_pseudo_CT_launchpad(P, ssh_log, 'clean_folder', 0, 'keep_tmp', keep_tmp_val, 'check_aliasing', jobs(1).correct_aliasing); %#ok<ASGLU>
 
 num_success = 0;
 num_failed = 0;
-should_cleanup = true;  % default: remove intermediate temp files
-if strcmp(keep_temp, 'Yes')
-    should_cleanup = false;  % operator requested preservation
-end
+should_cleanup = strcmp(cleanup_policy, 'remove_on_success');
 for jj=1:length(jobs)
     if ss_tot(jj) ~= 0
         disp(sprintf('Pseudo-CT Launchpad processing failed for:\n%s\n', jobs(jj).mprage_fn));
@@ -240,11 +240,11 @@ end
 
 return
 
-function jobs = launchpad_collect_jobs(varargin)
+function jobs = launchpad_collect_jobs(manifest, varargin)
 
 jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {});
 
-if ~isdeployed && nargin > 0
+if ~isdeployed && ~isempty(varargin)
     subject_list = '';
     if ischar(varargin{1}) && strcmpi(strtrim(varargin{1}), 'batch')
         subject_list = spm_select(Inf, '*', 'Select the MPRAGE files to use to obtain atlas-based attenuation maps');
@@ -257,10 +257,11 @@ if ~isdeployed && nargin > 0
     end
 
     if ~isempty(subject_list)
-        correct_aliasing = 1;
-        if nargin > 1 && (isnumeric(varargin{2}) || islogical(varargin{2}))
+        correct_aliasing = manifest.aliasing_default;
+        if numel(varargin) > 1
             correct_aliasing = varargin{2};
         end
+        correct_aliasing = pseudo_CT_validate_aliasing(correct_aliasing, manifest);
         jobs = launchpad_build_jobs_from_subject_list(subject_list, correct_aliasing);
         return;
     end
@@ -275,6 +276,8 @@ if ~ischar(mprage_fn) || ~ischar(ute_fn) || ~ischar(umap_fn)
     warndlg('There are some of the filenames missing', 'Files missing!');
     return
 end
+
+correct_aliasing = pseudo_CT_validate_aliasing(correct_aliasing, manifest);
 
 jobs(1).mprage_fn = mprage_fn;
 jobs(1).umap_fn = umap_fn;

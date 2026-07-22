@@ -94,8 +94,8 @@ manifest.runtime_guard     = 'launchpad_opaque';
 manifest.recenter          = 'No';
 manifest.zero_background   = 'No';
 manifest.cleanup_policy    = 'remove_on_success';
-manifest.provenance.expected_spm_version = 'r4667';
-manifest.provenance.record_path = fullfile(repo_root, 'spm8-r4667', 'INVENTORY.json');
+manifest.provenance.expected_spm_version = 'r6313';
+manifest.provenance.record_path = fullfile(repo_root, 'spm8-r6313', 'INVENTORY.json');
 
 manifest.launchpad_identity.host          = '172.27.25.134';
 manifest.launchpad_identity.runner        = fullfile('/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad', 'run_Pseudo_CT_launchpad.sh');
@@ -105,6 +105,9 @@ manifest.launchpad_identity.defaults_mat  = fullfile('/autofs/cluster/pubsw/2/pu
 manifest.launchpad_identity.backend_mat   = fullfile('/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad', 'Pseudo_CT_launchpad');
 manifest.launchpad_identity.queue         = 'p60';
 manifest.launchpad_identity.scratch       = '/cluster/scratch/monday/';
+manifest.launchpad_identity.backend_spm_version = 'r4667';
+manifest.launchpad_identity.backend_runtime = 'MCR7.11';
+manifest.launchpad_identity.backend_provenance_record_path = fullfile(repo_root, 'spm8-r4667', 'INVENTORY.json');
 
 end
 

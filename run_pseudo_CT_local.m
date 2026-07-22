@@ -57,18 +57,21 @@ defaults = '';
 %         return;
 %     end
 % end
-
-orig_warn = warning;
+[orig_warn] = warning;
 warning('off', 'all');
+warn_cleanup = onCleanup(@() warning(orig_warn));
 
 [pathp, ~, ~] = fileparts(mfilename('fullpath'));
 addpath(fullfile(pathp, 'src', 'config'), '-begin');
-setup_pseudo_CT_paths(pathp);
+manifest = pseudo_CT_resolve_profile('local-current', pathp);
+manifest = pseudo_CT_preflight(manifest, pathp);
+
+setup_pseudo_CT_paths(pathp, manifest);
 
 % Get where the Templates are:
-dir_batch_templates = pseudo_CT_resolve_batch_atlas_path(pathp);
+dir_batch_templates = pseudo_CT_resolve_batch_atlas_path(pathp, manifest);
 
-jobs = local_collect_jobs(varargin{:});
+jobs = local_collect_jobs(manifest, varargin{:});
 if isempty(jobs)
     warning(orig_warn);
     return;
@@ -81,7 +84,8 @@ for jj=1:length(jobs)
     if length(jobs) > 1
         disp(sprintf('\nStarting local pseudo-CT subject %d of %d:\n%s\n', jj, length(jobs), jobs(jj).mprage_fn));
     end
-    if local_run_subject(jobs(jj), dir_batch_templates, defaults, orig_warn, show_subject_dialog)
+    if local_run_subject(jobs(jj), dir_batch_templates, defaults, orig_warn, ...
+            show_subject_dialog, manifest)
         num_success = num_success + 1;
     else
         num_failed = num_failed + 1;
@@ -96,11 +100,11 @@ end
 
 return
 
-function jobs = local_collect_jobs(varargin)
+function jobs = local_collect_jobs(manifest, varargin)
 
 jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {});
 
-if ~isdeployed && nargin > 0
+if ~isdeployed && ~isempty(varargin)
     subject_list = '';
     if ischar(varargin{1}) && strcmpi(strtrim(varargin{1}), 'batch')
         subject_list = spm_select(Inf, '*', 'Select the MPRAGE files to use to obtain atlas-based attenuation maps');
@@ -113,10 +117,11 @@ if ~isdeployed && nargin > 0
     end
 
     if ~isempty(subject_list)
-        correct_aliasing = 1;
-        if nargin > 1 && (isnumeric(varargin{2}) || islogical(varargin{2}))
+        correct_aliasing = manifest.aliasing_default;
+        if numel(varargin) > 1
             correct_aliasing = varargin{2};
         end
+        correct_aliasing = pseudo_CT_validate_aliasing(correct_aliasing, manifest);
         jobs = local_build_jobs_from_subject_list(subject_list, correct_aliasing);
         return;
     end
@@ -131,6 +136,8 @@ if ~ischar(mprage_fn) || ~ischar(ute_fn) || ~ischar(umap_fn)
     warndlg('There are some of the filenames missing', 'Files missing!');
     return
 end
+
+correct_aliasing = pseudo_CT_validate_aliasing(correct_aliasing, manifest);
 
 jobs(1).mprage_fn = mprage_fn;
 jobs(1).umap_fn = umap_fn;
@@ -165,7 +172,8 @@ end
 
 return
 
-function success = local_run_subject(job, dir_batch_templates, defaults, orig_warn, show_dialog)
+function success = local_run_subject(job, dir_batch_templates, defaults, orig_warn, ...
+        show_dialog, manifest)
 
 success = 0;
 
@@ -210,7 +218,7 @@ P = convert_dicom_i_2_nii(job.mprage_fn, 'mprage.nii', temp_dir); % To convert t
 disp(sprintf('\n\nThis is the temporary working directory where intermediate results will be saved:\n%s\n', temp_working_dir));
 
 % For the reference image (4th input argument):
-[Pf] = atlas_based_attenuation_map(P, dir_batch_templates, ssh_log, job.correct_aliasing, defaults); % Run the pseudo-ct code!
+[Pf] = atlas_based_attenuation_map(P, dir_batch_templates, ssh_log, job.correct_aliasing, defaults, manifest); % Run the pseudo-ct code!
 if ~ischar(Pf) || isempty(strtrim(Pf))
     disp('Pseudo-CT processing stopped before generating atlas outputs.');
     return;
@@ -231,11 +239,13 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%%% Clean the folder! %%%%%%
-keep_temp = pseudo_CT_keep_temp_enabled(@defaults_pseudo_CT);
-should_cleanup = true;  % default: remove intermediate temp files
-if strcmp(keep_temp, 'Yes')
-    should_cleanup = false;  % operator requested preservation
+[cleanup_policy, ignored_keep_tmp] = cleanup_owner(manifest);
+if ~isempty(ignored_keep_tmp)
+    fprintf(1, '[profile-resource-authority] cleanup policy = %s (ignored env)\n', cleanup_policy);
+else
+    fprintf(1, '[profile-resource-authority] cleanup policy = %s\n', cleanup_policy);
 end
+should_cleanup = strcmp(cleanup_policy, 'remove_on_success');
 promotion_success = pseudo_CT_promote_final_outputs(temp_working_dir, processing_dir, P);
 if ~promotion_success
     disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', temp_working_dir));

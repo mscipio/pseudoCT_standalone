@@ -27,6 +27,8 @@
 %         - varargin{5} = (ONLY for deployed applications) defaults
 %         variable, containing the default values, as from
 %         defaults_pseudo_CT.m
+%         - varargin{6} = explicit profile processing policy manifest. This
+%         six-argument form is separate from the legacy five-argument form.
 %
 % Outputs: - Pf: array of strings containing the names of the new created
 % atlases in subject space:
@@ -105,6 +107,7 @@ end
 
 Pf = ''; % In case program quits before finishing!
 check_aliasing = 0;
+processing_policy = [];
 
 % % Ask the user to agree with the terms:
 % answ_dlg = questdlg(sprintf('This is still Unpublished work!\nDo Not include in publications until we publish the method (Then reference it!)\nIf you agree with this, click Yes, if not, click No'), 'UNPUBLISHED WORK!!!', 'Yes', 'No', 'No');
@@ -164,6 +167,27 @@ elseif nargin < 6
             %defaults = load(varargin{5}); % Old (seems to save defaults.defaults)
             load(varargin{5});
         end
+    end
+elseif nargin == 6
+    P = varargin{1};
+    dir_batch_templates = varargin{2};
+    autom_select_folder = 0;
+    if strcmp(dir_batch_templates, '')
+        autom_select_folder = 1;
+    end
+    ssh_ask_login = 0;
+    check_aliasing = varargin{4};
+    if isdeployed
+        defaults = varargin{5};
+        if ischar(varargin{5})
+            %defaults = load(varargin{5}); % Old (seems to save defaults.defaults)
+            load(varargin{5});
+        end
+    end
+    processing_policy = varargin{6};
+    if ~isstruct(processing_policy)
+        error('PROFILE:InvalidValue', ...
+              'Explicit processing policy must be a profile manifest struct.');
     end
 else
     disp('There are too many inputs! Only 2 inputs are required: P (images of the subject) and dir_batch_templates (the folder where the templates are!)');
@@ -254,7 +278,9 @@ end
 % that the normalization process cut the nose
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 recenter_before_normalization = 1;
-if isdeployed && exist('defaults', 'var') && isstruct(defaults) && isfield(defaults, 'recenter_before_normalization')
+if isstruct(processing_policy) && isfield(processing_policy, 'recenter')
+    recenter_before_normalization = strcmpi(processing_policy.recenter, 'yes');
+elseif isdeployed && exist('defaults', 'var') && isstruct(defaults) && isfield(defaults, 'recenter_before_normalization')
     recenter_before_normalization = strcmpi(defaults.recenter_before_normalization, 'yes');
 else
     recenter_before_normalization = strcmpi(defaults_pseudo_CT('recenter_before_normalization'), 'yes');
@@ -651,10 +677,15 @@ I = find(diff); att_map(I) = 0.096;
 % Optionally multiply by the subject mask. Historical Launchpad output keeps
 % these background values, so the compatibility default is 'No'.
 zero_background_defaults = @defaults_pseudo_CT;
-if isdeployed && exist('defaults', 'var') && isstruct(defaults)
+if isstruct(processing_policy)
+    zero_background = pseudo_CT_zero_background_enabled(processing_policy);
+elseif isdeployed && exist('defaults', 'var') && isstruct(defaults)
     zero_background_defaults = @(defstr) defaults.(defstr);
+    zero_background = pseudo_CT_zero_background_enabled(zero_background_defaults);
+else
+    zero_background = pseudo_CT_zero_background_enabled(zero_background_defaults);
 end
-if strcmp(pseudo_CT_zero_background_enabled(zero_background_defaults), 'Yes')
+if strcmp(zero_background, 'Yes')
     att_map = att_map.*((subj_mask_dil + (orig_mprage > 20)) > 0);
 end
 % Rename the filename to save it!
