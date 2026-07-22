@@ -52,6 +52,8 @@ else
 end
 
 att_map_filename = 'att_map.nii';
+evidence = launchpad_evidence('init', struct('profile', 'launchpad', ...
+    'subject_count', size(P, 1)));
 
 ssh2_conn = ssh2_config(ssh_log{3}, ssh_log{1}, ssh_log{2});
 host_folder = defaults_pseudo_CT_launchpad('host_folder');
@@ -87,12 +89,17 @@ for jj=1:size(P, 1)
     cmd = [cmd launchpad_runner ' ' launchpad_mcr_root ' ' vari ';'];
     cmd = sprintf('"%s"', cmd);
     [ssh2_conn, jobname{jj}, jobnum(jj)] = run_launchpad_cmd_return(cmd, ssh2_conn, FS, queue_com); %#ok<AGROW>
+    evidence = launchpad_evidence('submission', evidence, ...
+        struct('jobname', jobname{jj}, 'jobnum', jobnum(jj)));
 end
 
 ss_tot = check_launchpad_command_status(jobname, ssh2_conn, 10*60, 60, jobnum);
 
 for jj=1:size(P, 1)
     [pathn, fn, extn] = fileparts(deblank(P(jj, :))); %#ok<ASGLU>
+    pbs_result = {};
+    evidence = launchpad_evidence('polling', evidence, ...
+        struct('exit_status', ss_tot(jj)));
 
     % --- Diagnostic: capture PBS job logs from cluster (always) ---
     % The compiled Launchpad binary is opaque — PBS stdout/stderr are
@@ -119,6 +126,8 @@ for jj=1:size(P, 1)
             end
             fprintf(1, '[launchpad-diag] Saved PBS job logs for subject %s in %s\n', fn, pathn);
         end
+        evidence = launchpad_evidence('pbs_logs', evidence, ...
+            struct('pbs_logs', pbs_result));
     catch ME_pbs  %#ok<CTCH>
         fprintf(1, '[launchpad-diag] Could not fetch PBS logs for subject %s: %s\n', fn, ME_pbs.message);
     end
@@ -145,6 +154,8 @@ for jj=1:size(P, 1)
                 end
             end
         end
+        evidence = launchpad_evidence('retrieval', evidence, struct(...
+            'att_map_present', exist(fullfile(pathn, att_map_filename), 'file') == 2));
     else
         disp(sprintf('\nSubject FAILED: %s\n', deblank(P(jj, :))));
         fprintf(1, '[launchpad-debug] Job %d failed with exit code %d — see PBS logs in %s\n', ...
@@ -152,12 +163,20 @@ for jj=1:size(P, 1)
     end
     if keep_tmp == 0
         ssh2_conn = ssh2_command(ssh2_conn, sprintf('rm -rf %s', strcat(lc_path_parent, num2str(rand_fold(jj)))));
+        cleanup_state = 'remote-scratch-removed';
     else
         preserved_path = strcat(lc_path_parent, num2str(rand_fold(jj)));
         fprintf(1, ['[keep-tmp] Preserved cluster scratch: %s\n', ...
                     '[keep-tmp] To clean up later, run:\n', ...
                     '           ssh %s ''rm -rf %s''\n'], ...
                 preserved_path, ssh2_conn.hostname, preserved_path);
+        cleanup_state = 'remote-scratch-preserved';
+    end
+    evidence = launchpad_evidence('cleanup', evidence, struct('cleanup', cleanup_state));
+    try
+        launchpad_evidence('write', pathn, evidence);
+    catch ME_evidence %#ok<CTCH>
+        fprintf(1, '[launchpad-diag] Could not save lifecycle evidence for %s: %s\n', fn, ME_evidence.message);
     end
 end
 

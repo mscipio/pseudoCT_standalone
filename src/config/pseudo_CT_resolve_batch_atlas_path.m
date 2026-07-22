@@ -1,77 +1,46 @@
-function batch_atlas_path = pseudo_CT_resolve_batch_atlas_path(repo_root)
-% PSEUDO_CT_RESOLVE_BATCH_ATLAS_PATH  Resolve Batch_atlas location at runtime.
-%   PATH = PSEUDO_CT_RESOLVE_BATCH_ATLAS_PATH(REPO_ROOT) resolves the
-%   Batch_atlas directory via:
-%     1. PSEUDOCT_BATCH_ATLAS environment variable
-%     2. defaults_pseudo_CT('batch_atlas_path') config default
-%     3. fullfile(REPO_ROOT, 'Batch_atlas') repo-adjacent fallback
-%     4. fullfile(fileparts(REPO_ROOT), 'Batch_atlas') packaged-release sibling fallback
-%     5. fullfile(fileparts(fileparts(REPO_ROOT)), 'Batch_atlas') packaged-release parent fallback
-%
-%   Raises an error with every checked location if none exists.
+function batch_atlas_path = pseudo_CT_resolve_batch_atlas_path(repo_root, manifest)
+%PSEUDO_CT_RESOLVE_BATCH_ATLAS_PATH Resolve the manifest-owned atlas.
+%   Environment variables, defaults, and packaged fallbacks cannot replace
+%   the selected profile resource.
 
-candidates = struct('source', {}, 'path', {});
+ids = pseudo_CT_error_ids();
+if nargin == 1 && isstruct(repo_root)
+    manifest = repo_root;
+    repo_root = fileparts(manifest.spm_root);
+elseif nargin < 1 || isempty(repo_root)
+    config_dir = fileparts(mfilename('fullpath'));
+    repo_root = fileparts(fileparts(config_dir));
+end
+if nargin < 2 || isempty(manifest)
+    manifest = pseudo_CT_resolve_profile('local-current', repo_root);
+end
+if ~isfield(manifest, 'atlas_assets') || ...
+        ~isfield(manifest.atlas_assets, 'batch_atlas_path') || ...
+        ~isfield(manifest.atlas_assets, 'required_files')
+    error(ids.ATLAS.AssetMissing, 'Profile manifest has no Batch_atlas path.');
+end
 
-% 1. Environment variable
-env_path = getenv('PSEUDOCT_BATCH_ATLAS');
-if ~isempty(env_path)
-    candidates(end + 1).source = 'env:PSEUDOCT_BATCH_ATLAS';
-    candidates(end).path = env_path;
-    if exist(env_path, 'dir') == 7
-        batch_atlas_path = env_path;
-        return;
+batch_atlas_path = manifest.atlas_assets.batch_atlas_path;
+if isempty(batch_atlas_path)
+    error(ids.ATLAS.AssetMissing, 'Profile Batch_atlas path is empty.');
+end
+if ~is_absolute(batch_atlas_path)
+    batch_atlas_path = fullfile(repo_root, batch_atlas_path);
+end
+if exist(batch_atlas_path, 'dir') ~= 7
+    error(ids.ATLAS.AssetMissing, 'Batch_atlas not found: %s', batch_atlas_path);
+end
+
+required = manifest.atlas_assets.required_files;
+for ii = 1:length(required)
+    resource = fullfile(batch_atlas_path, required{ii});
+    if exist(resource, 'file') ~= 2
+        error(ids.ATLAS.AssetMissing, 'Required atlas asset missing: %s', resource);
     end
 end
-
-% 2. Config default
-cfg_path = defaults_pseudo_CT('batch_atlas_path');
-if ischar(cfg_path) && ~isempty(cfg_path)
-    candidates(end + 1).source = 'defaults_pseudo_CT:batch_atlas_path';
-    candidates(end).path = cfg_path;
-    if exist(cfg_path, 'dir') == 7
-        batch_atlas_path = cfg_path;
-        return;
-    end
 end
 
-% 3. Repo-adjacent fallback
-fallback_path = fullfile(repo_root, 'Batch_atlas');
-candidates(end + 1).source = 'repo-adjacent-fallback';
-candidates(end).path = fallback_path;
-if exist(fallback_path, 'dir') == 7
-    batch_atlas_path = fallback_path;
-    return;
+function result = is_absolute(path_name)
+result = ~isempty(path_name) && (path_name(1) == filesep || ...
+    (length(path_name) > 1 && path_name(2) == ':'));
 end
-
-% 4. Packaged release sibling fallback (Batch_atlas sits next to the repo folder)
-release_root = fileparts(repo_root);
-if ischar(release_root) && ~isempty(release_root)
-    fallback_path = fullfile(release_root, 'Batch_atlas');
-    candidates(end + 1).source = 'release-sibling-fallback';
-    candidates(end).path = fallback_path;
-    if exist(fallback_path, 'dir') == 7
-        batch_atlas_path = fallback_path;
-        return;
-    end
-
-    % 5. Packaged release parent fallback (covers callers rooted in /.../src)
-    release_parent = fileparts(release_root);
-    if ischar(release_parent) && ~isempty(release_parent)
-        fallback_path = fullfile(release_parent, 'Batch_atlas');
-        candidates(end + 1).source = 'release-parent-fallback';
-        candidates(end).path = fallback_path;
-        if exist(fallback_path, 'dir') == 7
-            batch_atlas_path = fallback_path;
-            return;
-        end
-    end
-end
-
-% Resolution failed — list all checked locations
-msg = sprintf('Batch_atlas not found. Checked locations:\n');
-for ii = 1:length(candidates)
-    msg = sprintf('%s  %s: %s\n', msg, candidates(ii).source, candidates(ii).path);
-end
-error('%s', msg);
-
-return

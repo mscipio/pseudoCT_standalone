@@ -1,33 +1,29 @@
-function [spm_dir, spm_label] = pseudo_CT_resolve_spm_root(root_dir)
-%PSEUDO_CT_RESOLVE_SPM_ROOT Resolve the SPM tree directory from env vars.
-%   [SPM_DIR, SPM_LABEL] = PSEUDO_CT_RESOLVE_SPM_ROOT(ROOT_DIR) resolves
-%   the SPM tree to use for the pseudo-CT pipeline.
-%
-%   Resolution order:
-%     1. PSEUDOCT_SPM_ROOT env var — absolute or relative path (highest precedence)
-%     2. PSEUDOCT_SPM_VARIANT env var — short suffix resolved as spm8-{variant} under ROOT_DIR
-%     3. Default: spm8-r6313 under ROOT_DIR
-%
-%   SPM_LABEL is a human-readable string for diagnostics.
-%
-%   Example:
-%       setenv('PSEUDOCT_SPM_VARIANT', 'dan');
-%       [spm_dir, spm_label] = pseudo_CT_resolve_spm_root('/path/to/repo');
-%       % spm_dir  = '/path/to/repo/spm8-dan'
-%       % spm_label = 'spm8-dan (env:PSEUDOCT_SPM_VARIANT)'
-%
-%   See also SETUP_PSEUDO_CT_PATHS.
+function [spm_dir, spm_label] = pseudo_CT_resolve_spm_root(root_dir, manifest)
+%PSEUDO_CT_RESOLVE_SPM_ROOT Resolve the SPM tree from a profile manifest.
+%   The optional MANIFEST argument is authoritative. With only ROOT_DIR the
+%   fixed local-current profile is used for backward-compatible callers.
 
-    spm_root_env = getenv('PSEUDOCT_SPM_ROOT');
-    spm_variant  = getenv('PSEUDOCT_SPM_VARIANT');
-
-    if ~isempty(spm_root_env)
-        spm_dir = spm_root_env;
-        spm_label = sprintf('%s (env:PSEUDOCT_SPM_ROOT)', spm_root_env);
-    elseif ~isempty(spm_variant)
-        spm_dir = fullfile(root_dir, ['spm8-' spm_variant]);
-        spm_label = sprintf('spm8-%s (env:PSEUDOCT_SPM_VARIANT)', spm_variant);
+if nargin == 1 && isstruct(root_dir)
+    manifest = root_dir;
+    if is_absolute(manifest.spm_root)
+        root_dir = fileparts(manifest.spm_root);
     else
-        spm_dir = fullfile(root_dir, 'spm8-r6313');
-        spm_label = 'spm8-r6313 (default)';
+        config_dir = fileparts(mfilename('fullpath'));
+        root_dir = fileparts(fileparts(config_dir));
     end
+elseif nargin < 1 || isempty(root_dir)
+    config_dir = fileparts(mfilename('fullpath'));
+    root_dir = fileparts(fileparts(config_dir));
+end
+
+if nargin < 2 || isempty(manifest)
+    manifest = pseudo_CT_resolve_profile('local-current', root_dir);
+end
+
+[spm_dir, spm_label] = pseudo_CT_compute_spm_root(manifest, root_dir);
+end
+
+function result = is_absolute(path_name)
+result = ~isempty(path_name) && (path_name(1) == filesep || ...
+    (length(path_name) > 1 && path_name(2) == ':'));
+end

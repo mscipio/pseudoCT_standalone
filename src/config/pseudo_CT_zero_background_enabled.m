@@ -1,38 +1,41 @@
-function out = pseudo_CT_zero_background_enabled(defaults_handle)
-%PSEUDO_CT_ZERO_BACKGROUND_ENABLED Resolve whether final att_map background should be zeroed.
-%   OUT = PSEUDO_CT_ZERO_BACKGROUND_ENABLED(DEFAULTS_HANDLE) returns 'Yes' when
-%   the final att_map.nii background (non-head voxels) should be set to zero,
-%   and 'No' otherwise.
-%
-%   Resolution order:
-%     1. PSEUDOCT_ZERO_BACKGROUND values '1', 'true', or 'yes'.
-%     2. DEFAULTS_HANDLE('zero_background').
-%     3. 'No' when the defaults key is unavailable or invalid.
-%
-%   DEFAULTS_HANDLE should be @defaults_pseudo_CT,
-%   @defaults_pseudo_CT_launchpad, or an equivalent deployed-defaults
-%   function handle.
-%
-%   Clinical warning: 'Yes' zeros the final att_map background and may
-%   alter PET AC results. Intended for research/diagnostic use only.
-%
-%   Minimum supported MATLAB: R2010b (strcmpi, no contains/startsWith).
+function out = pseudo_CT_zero_background_enabled(manifest_or_defaults, manifest)
+%PSEUDO_CT_ZERO_BACKGROUND_ENABLED Resolve manifest-owned background policy.
+%   Explicit MANIFEST values always win. Legacy defaults handles remain
+%   accepted for callers that have not yet been profile-bound; environment
+%   variables are never consulted.
 
-env_val = getenv('PSEUDOCT_ZERO_BACKGROUND');
-if ~isempty(env_val)
-    if strcmpi(env_val, '1') || strcmpi(env_val, 'true') || strcmpi(env_val, 'yes')
-        out = 'Yes';
-        return;
+if nargin > 1 && isstruct(manifest)
+    manifest_or_defaults = manifest;
+end
+if nargin < 1 || isempty(manifest_or_defaults)
+    manifest_or_defaults = pseudo_CT_resolve_profile('local-current');
+end
+
+if isstruct(manifest_or_defaults)
+    if ~isfield(manifest_or_defaults, 'zero_background')
+        error('PROFILE:MissingManifestField', ...
+            'Profile manifest has no zero_background field.');
     end
+    out = manifest_or_defaults.zero_background;
+    return;
 end
 
 out = 'No';
-try
-    defaults_value = defaults_handle('zero_background');
-    if ischar(defaults_value) && strcmpi(defaults_value, 'Yes')
-        out = 'Yes';
+if isa(manifest_or_defaults, 'function_handle')
+    handle_name = func2str(manifest_or_defaults);
+    if ~isempty(strfind(handle_name, 'defaults_pseudo_CT_launchpad'))
+        out = pseudo_CT_resolve_profile('launchpad').zero_background;
+        return;
+    elseif ~isempty(strfind(handle_name, 'defaults_pseudo_CT'))
+        out = pseudo_CT_resolve_profile('local-current').zero_background;
+        return;
     end
-catch  %#ok<CTCH>
+    try
+        defaults_value = manifest_or_defaults('zero_background');
+        if ischar(defaults_value) && strcmpi(defaults_value, 'Yes')
+            out = 'Yes';
+        end
+    catch  %#ok<CTCH>
+    end
 end
-
-return
+end
