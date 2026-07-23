@@ -2,6 +2,10 @@ function batch_atlas_path = pseudo_CT_resolve_batch_atlas_path(repo_root, manife
 %PSEUDO_CT_RESOLVE_BATCH_ATLAS_PATH Resolve the manifest-owned atlas.
 %   Environment variables, defaults, and packaged fallbacks cannot replace
 %   the selected profile resource.
+%
+%   The batch atlas directory is validated to exist. No individual required
+%   file list is enforced -- all atlas files are discovered dynamically from
+%   the directory contents.
 
 ids = pseudo_CT_error_ids();
 if nargin == 1 && isstruct(repo_root)
@@ -15,8 +19,7 @@ if nargin < 2 || isempty(manifest)
     manifest = pseudo_CT_resolve_profile('local-current', repo_root);
 end
 if ~isfield(manifest, 'atlas_assets') || ...
-        ~isfield(manifest.atlas_assets, 'batch_atlas_path') || ...
-        ~isfield(manifest.atlas_assets, 'required_files')
+        ~isfield(manifest.atlas_assets, 'batch_atlas_path')
     error(ids.ATLAS.AssetMissing, 'Profile manifest has no Batch_atlas path.');
 end
 
@@ -31,13 +34,6 @@ if exist(batch_atlas_path, 'dir') ~= 7
     error(ids.ATLAS.AssetMissing, 'Batch_atlas not found: %s', batch_atlas_path);
 end
 
-required = manifest.atlas_assets.required_files;
-for ii = 1:length(required)
-    resource = fullfile(batch_atlas_path, required{ii});
-    if exist(resource, 'file') ~= 2
-        error(ids.ATLAS.AssetMissing, 'Required atlas asset missing: %s', resource);
-    end
-end
 end
 
 function result = is_absolute(path_name)

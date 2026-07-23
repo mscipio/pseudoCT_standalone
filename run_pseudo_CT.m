@@ -7,10 +7,10 @@ function run_pseudo_CT(varargin)
 %   RUN_PSEUDO_CT('profile', NAME, 'subjects', SUBJECT_LIST) batch mode.
 %
 %   Named parameters:
-%     'profile'          - Execution profile. One of:
-%                          'local-current' (default)
-%                          'local-near-parity-r2010b'
-%                          'launchpad'
+%     'profile'          - Execution profile (default: 'local-current').
+%                          Valid profiles are discovered by scanning
+%                          src/config/spm_profiles/ for .m configuration
+%                          files. See that directory for available profiles.
 %     'subjects'         - Cell or char array of MPRAGE filenames, or
 %                          the string 'batch' to open an SPM multi-select
 %                          file picker. Omit to use the single-subject GUI.
@@ -18,20 +18,9 @@ function run_pseudo_CT(varargin)
 %                          anti-aliasing default. Omit to use the manifest
 %                          default.
 %
-%   Profiles:
-%     local-current         Local MATLAB/SPM pipeline with the
-%                           system-installed MATLAB version and compiled
-%                           MEX dependencies. Recommended default.
-%     local-near-parity-r2010b
-%                           Local pipeline pinned to near-R2010b (7.11)
-%                           numerical parity for consistent optimizer
-%                           results across MATLAB versions. When selected
-%                           on a MATLAB release other than R2010b, a
-%                           warning is shown and the runtime guard is
-%                           bypassed.
-%     launchpad             Legacy compiled Launchpad backend via SSH.
-%                           Intended for subjects requiring the original
-%                           cluster runtime environment.
+%   Profiles are auto-discovered from src/config/spm_profiles/. Each .m
+%   file in that directory defines one execution profile. To add a new
+%   profile, add a new .m file to that directory.
 %
 %   Examples:
 %       run_pseudo_CT()
@@ -97,12 +86,13 @@ else
     aliasing_arg = p.Results.correct_aliasing;
 end
 
-%% === Validate profile name ===
-valid_profiles = {'local-current', 'local-near-parity-r2010b', 'launchpad'};
+%% === Validate profile name against discovered profiles ===
+valid_profiles = discover_profile_names(pathp);
 if ~ismember(profile_name, valid_profiles)
+    profile_list = join_strings(valid_profiles, ', ');
     error('run_pseudo_CT:InvalidProfile', ...
-        'Unknown profile: ''%s''. Valid profiles are: local-current, local-near-parity-r2010b, launchpad', ...
-        profile_name);
+        'Unknown profile: ''%s''. Available profiles are: %s', ...
+        profile_name, profile_list);
 end
 
 %% === Warning suppression ===
@@ -114,13 +104,14 @@ warn_cleanup = onCleanup(@() warning(orig_warn));
 manifest = pseudo_CT_resolve_profile(profile_name, pathp);
 
 % If near-parity profile on non-R2010b MATLAB: warn and bypass runtime guard
-if strcmp(profile_name, 'local-near-parity-r2010b')
+if ~isempty(strfind(lower(profile_name), 'near-parity'))
     v = ver('MATLAB');
     if ~isempty(v)
         release = v.Release;  % e.g. '(R2023b)'
         if isempty(strfind(release, 'R2010b'))
-            warning(['Profile ''local-near-parity-r2010b'' selected on MATLAB %s. ', ...
-                     'Results may differ from expected near-parity output.'], release);
+            warning(['Profile ''%s'' selected on MATLAB %s. ', ...
+                     'Results may differ from expected near-parity output.'], ...
+                     profile_name, release);
             manifest.runtime_guard = 'supported_matlab';
         end
     end
@@ -468,4 +459,42 @@ catch ME_mask
                 'The fetched Launchpad attenuation mask will remain unmasked.\n'], ME_mask.message);
 end
 
+end
+
+
+%% ========================================================================
+%  PROFILE DISCOVERY
+%  ========================================================================
+function names = discover_profile_names(repo_root)
+%DISCOVER_PROFILE_NAMES Scan spm_profiles/ for available profile names.
+%   NAMES = DISCOVER_PROFILE_NAMES(REPO_ROOT) returns a cell array of
+%   canonical profile names (e.g. 'local-current', 'launchpad') by
+%   scanning the src/config/spm_profiles/ directory for .m files.
+%   Files without a 'function' declaration are skipped. The underscore
+%   in each filename is replaced with a hyphen to form the canonical name.
+
+profile_dir = fullfile(repo_root, 'src', 'config', 'spm_profiles');
+files = dir(fullfile(profile_dir, '*.m'));
+names = {};
+for ii = 1:numel(files)
+    if files(ii).isdir, continue; end
+    [~, fname] = fileparts(files(ii).name);
+    names{end + 1, 1} = strrep(fname, '_', '-'); %#ok<AGROW>
+end
+end
+
+
+function str = join_strings(cell_arr, delimiter)
+%JOIN_STRINGS Join cell array of strings with a delimiter (R2010b-compatible).
+%   STR = JOIN_STRINGS(CELL_ARR, DELIMITER) concatenates the strings in
+%   the cell array CELL_ARR separated by DELIMITER. Compatible with MATLAB
+%   R2010b which does not have the built-in strjoin function.
+
+str = '';
+for ii = 1:numel(cell_arr)
+    if ii > 1
+        str = [str, delimiter]; %#ok<AGROW>
+    end
+    str = [str, char(cell_arr{ii})]; %#ok<AGROW>
+end
 end

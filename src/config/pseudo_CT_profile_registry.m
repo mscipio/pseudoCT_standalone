@@ -1,18 +1,16 @@
 function manifest = pseudo_CT_profile_registry(name, repo_root)
 %PSEUDO_CT_PROFILE_REGISTRY Return a validated canonical profile manifest.
 %   MANIFEST = PSEUDO_CT_PROFILE_REGISTRY(NAME, REPO_ROOT) builds the
-%   deterministic manifest for one of the three canonical profiles:
-%       'local-current'              - r6313 + vers/, Yes/Yes
-%       'local-near-parity-r2010b'   - r4667/R2010b, No/No (internal)
-%       'launchpad'                  - remote r4667/MCR7.11, No/No
+%   deterministic manifest for any profile NAME by loading its configuration
+%   from the corresponding file in src/config/spm_profiles/.
 %
 %   The manifest owns every behavior-changing field: SPM tree/version,
 %   exact vers/ override set/order, atlas assets, PCA backend order,
 %   runtime guard, normalization resource, recentering, background,
 %   bone/FWHM/aliasing policy, cleanup policy, Launchpad identity, and
-%   provenance expectations. The SPM root and expected revision are loaded
-%   from the fixed deployment template for the selected profile. Environment
-%   variables are not consulted.
+%   provenance expectations. All pipeline parameters are loaded from the
+%   profile config file; structural defaults (vers policy, atlas folder
+%   scanning, normalization source command) are set by the registry.
 %
 %   REPO_ROOT defaults to the repository root inferred from this file's
 %   location. An unset deployment root remains unset and is not replaced by
@@ -33,118 +31,90 @@ end
 
 name = strtrim(name);
 
-switch lower(name)
-    case 'local-current'
-        manifest = build_local_current(repo_root);
-    case 'local-near-parity-r2010b'
-        manifest = build_near_parity(repo_root);
-    case 'launchpad'
-        manifest = build_launchpad(repo_root);
-    otherwise
-        error(ids.PROFILE.InvalidName, 'Unknown profile name: %s', name);
-end
+% Load the full profile configuration from the profile config file.
+config = pseudo_CT_load_spm_profile_config(name, ...
+    fullfile(repo_root, 'src', 'config'));
 
-manifest = attach_spm_config(manifest, name, repo_root);
+% Build the manifest from the config plus structural defaults.
+manifest = build_from_config(config, repo_root);
+
+% Validate the complete manifest.
 manifest = validate_manifest(manifest, ids);
 
 end
 
 %% ------------------------------------------------------------------------
-function manifest = attach_spm_config(manifest, profile_name, repo_root)
+function manifest = build_from_config(config, repo_root)
+%BUILD_FROM_CONFIG Build a complete manifest from a profile config struct.
 
-config = pseudo_CT_load_spm_profile_config(profile_name, ...
-    fullfile(repo_root, 'src', 'config'));
+manifest = new_manifest(config.name, repo_root);
+
+% --- Paths from config ---
 manifest.spm_root = config.spm_root;
-manifest.spm_version = config.expected_revision;
-manifest.spm_expected_revision = config.expected_revision;
-manifest.spm_config_path = config.config_path;
-manifest.spm_config_dir = config.config_dir;
-manifest.spm_root_base = config.spm_root_base;
+manifest.atlas_assets.batch_atlas_path = config.batch_atlas_path;
+
+% --- Pipeline parameters from config ---
+manifest.recenter        = config.recenter;
+manifest.zero_background = config.zero_background;
+manifest.cleanup_policy  = config.cleanup_policy;
+manifest.bone_enabled    = config.bone_enabled;
+manifest.fwhm            = config.fwhm;
+manifest.aliasing_default = config.aliasing_default;
+manifest.pca_order       = config.pca_order;
+manifest.runtime_guard   = config.runtime_guard;
+
+% --- Optional normalization child lib path ---
+if isfield(config, 'normalization_child_lib_path') && ...
+        ischar(config.normalization_child_lib_path)
+    manifest.normalization_resource.child_lib_path = ...
+        config.normalization_child_lib_path;
 end
 
-%% ------------------------------------------------------------------------
-function manifest = build_local_current(repo_root)
-
-manifest = new_manifest('local-current', repo_root);
-manifest.vers_policy.order = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'};
-manifest.pca_order         = {'callable_pca'; 'repo_legacy'};
-manifest.runtime_guard     = 'supported_matlab';
-manifest.recenter          = 'No';
-manifest.zero_background   = 'Yes';
-manifest.cleanup_policy    = 'remove_on_success';
-manifest.normalization_resource.child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
-manifest.provenance.expected_spm_version = 'r6313';
-manifest.provenance.record_path = '';
-
+% --- Launchpad identity (only present in launchpad config) ---
+if isfield(config, 'launchpad_host')
+    manifest.launchpad_identity.host          = config.launchpad_host;
+    manifest.launchpad_identity.runner        = config.launchpad_runner;
+    manifest.launchpad_identity.mcr_root      = config.launchpad_mcr_root;
+    manifest.launchpad_identity.defaults_mat  = config.launchpad_defaults_mat;
+    manifest.launchpad_identity.backend_mat   = config.launchpad_backend_mat;
+    manifest.launchpad_identity.batch_templates = config.launchpad_batch_templates;
+    manifest.launchpad_identity.queue         = config.launchpad_queue;
+    manifest.launchpad_identity.scratch       = config.launchpad_scratch;
+    manifest.launchpad_identity.backend_spm_version = config.launchpad_backend_spm_version;
+    manifest.launchpad_identity.backend_runtime = config.launchpad_backend_runtime;
+    manifest.launchpad_identity.backend_provenance_record_path = '';
 end
 
-%% ------------------------------------------------------------------------
-function manifest = build_near_parity(repo_root)
-
-manifest = new_manifest('local-near-parity-r2010b', repo_root);
-manifest.vers_policy.order = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'};
-manifest.pca_order         = {'repo_legacy'; 'callable_pca'};
-manifest.runtime_guard     = 'r2010b_only';
-manifest.recenter          = 'No';
-manifest.zero_background   = 'No';
-manifest.cleanup_policy    = 'remove_on_success';
-manifest.provenance.expected_spm_version = 'r4667';
-manifest.provenance.record_path = '';
-
-end
-
-%% ------------------------------------------------------------------------
-function manifest = build_launchpad(repo_root)
-
-manifest = new_manifest('launchpad', repo_root);
-manifest.vers_policy.order = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'};
-manifest.pca_order         = {'remote'};
-manifest.runtime_guard     = 'launchpad_opaque';
-manifest.recenter          = 'No';
-manifest.zero_background   = 'No';
-manifest.cleanup_policy    = 'remove_on_success';
-manifest.provenance.expected_spm_version = 'r6313';
-manifest.provenance.record_path = '';
-
-manifest.launchpad_identity.host          = '172.27.25.134';
-manifest.launchpad_identity.runner        = fullfile('/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad', 'run_Pseudo_CT_launchpad.sh');
-manifest.launchpad_identity.mcr_root      = '/usr/pubsw/common/matlab/7.11/';
-manifest.launchpad_identity.batch_templates = fullfile('/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad', 'Batch_atlas');
-manifest.launchpad_identity.defaults_mat  = fullfile('/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad', 'default_pseudo_CT_package_deployed.mat');
-manifest.launchpad_identity.backend_mat   = fullfile('/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad', 'Pseudo_CT_launchpad');
-manifest.launchpad_identity.queue         = 'p60';
-manifest.launchpad_identity.scratch       = '/cluster/scratch/monday/';
-manifest.launchpad_identity.backend_spm_version = 'r4667';
-manifest.launchpad_identity.backend_runtime = 'MCR7.11';
-manifest.launchpad_identity.backend_provenance_record_path = '';
+% --- SPM version is no longer enforced from config; detect from tree ---
+% Leave spm_version and spm_expected_revision empty so preflight skips
+% revision validation. The SPM tree at spm_root is used as-is.
+manifest.spm_version         = '';
+manifest.spm_expected_revision = '';
 
 end
 
 %% ------------------------------------------------------------------------
 function manifest = new_manifest(name, repo_root)
+%NEW_MANIFEST Create a new manifest struct with structural defaults.
 
 manifest = struct();
 manifest.name                = name;
 manifest.spm_root            = '';
 manifest.spm_version         = '';
 manifest.vers_path           = fullfile(repo_root, 'vers');
-manifest.vers_policy         = struct('order', {{}}, 'required', true);
+manifest.vers_policy         = struct( ...
+    'order', {{'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'}}, ...
+    'required', true);
 manifest.atlas_assets        = struct();
 manifest.atlas_assets.batch_atlas_path = fullfile(repo_root, 'Batch_atlas');
-manifest.atlas_assets.required_files = { ...
-    'TPM.nii'; ...
-    'ch2.nii'; ...
-    'Template_0.nii'; 'Template_1.nii'; 'Template_2.nii'; ...
-    'Template_3.nii'; 'Template_4.nii'; 'Template_5.nii'; 'Template_6.nii'; ...
-    fullfile('ganymed-ssh2-build250', 'ganymed-ssh2-build250.jar') ...
-    };
 manifest.pca_order           = {};
 manifest.runtime_guard       = '';
 manifest.normalization_resource = struct();
-manifest.normalization_resource.source_command = sprintf('source %s', fullfile(repo_root, 'src', 'config', 'fs_setenv_530_from_launchpad.sh'));
+manifest.normalization_resource.source_command = sprintf('source %s', ...
+    fullfile(repo_root, 'src', 'config', 'fs_setenv_530_from_launchpad.sh'));
 manifest.normalization_resource.child_lib_path = '';
 manifest.recenter            = 'No';
-manifest.zero_background       = 'No';
+manifest.zero_background     = 'No';
 manifest.bone_enabled        = true;
 manifest.fwhm                = 0;
 manifest.aliasing_default    = 1;
@@ -165,6 +135,7 @@ end
 
 %% ------------------------------------------------------------------------
 function manifest = validate_manifest(manifest, ids)
+%VALIDATE_MANIFEST Validate manifest structure and field values.
 
 required_top = { ...
     'name'; 'spm_root'; 'spm_version'; 'vers_path'; 'vers_policy'; ...

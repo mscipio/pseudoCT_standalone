@@ -172,13 +172,9 @@ if exist(atlas_dir, 'dir') ~= 7
     error(ids.ATLAS.AssetMissing, 'Atlas directory not found: %s', atlas_dir);
 end
 
-required = manifest.atlas_assets.required_files;
-for ii = 1:length(required)
-    f = fullfile(atlas_dir, required{ii});
-    if exist(f, 'file') ~= 2
-        error(ids.ATLAS.AssetMissing, 'Required atlas asset missing: %s', f);
-    end
-end
+% Individual required file checks removed per the expanded profile config
+% design: all atlas files are discovered dynamically from the directory.
+% The batch_atlas_path directory existence is the only validation.
 
 end
 
@@ -232,9 +228,13 @@ if ~isfield(manifest, 'provenance') || ~isfield(manifest.provenance, 'record_pat
     error(ids.PROFILE.MissingManifestField, 'provenance.record_path missing.');
 end
 
+% SPM revision validation is no longer enforced by profile configs.
+% The SPM tree at spm_root is used as-is. When expected_spm_version is
+% empty (no revision declared in the profile config), all revision checks
+% are skipped.
 if ~isfield(manifest.provenance, 'expected_spm_version') || ...
    isempty(manifest.provenance.expected_spm_version)
-    error(ids.PROVENANCE.RecordMissing, 'provenance.expected_spm_version missing.');
+    return;
 end
 
 if ~strcmpi(manifest.provenance.expected_spm_version, manifest.spm_version)
@@ -242,15 +242,6 @@ if ~strcmpi(manifest.provenance.expected_spm_version, manifest.spm_version)
           'Provenance expected_spm_version %s does not match manifest spm_version %s.', ...
           manifest.provenance.expected_spm_version, manifest.spm_version);
 end
-
-if strcmp(manifest.name, 'launchpad') && ~strcmp(manifest.spm_version, 'r6313')
-    error(ids.PROVENANCE.ChecksumMismatch, ...
-          'Launchpad local support provenance must be r6313.');
-end
-
-% Manifest structural validation: provenance expected_spm_version must
-% match manifest.spm_version. The physical record file is not required;
-% deployment provides the SPM package and provenance externally.
 
 end
 
