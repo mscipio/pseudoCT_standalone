@@ -56,7 +56,12 @@ function run_pseudo_CT(varargin)
 %   Updated: July 23, 2026.
 %   Minimum supported MATLAB: R2010b (matches cluster's compiled-app runtime, MCR 7.11)
 
-%% === 0. Handle deployed mode (before any argument parsing) ===
+%% === 0. Resolve repo root and add config/ui to path (before any calls) ===
+[pathp, ~, ~] = fileparts(mfilename('fullpath'));
+addpath(fullfile(pathp, 'src', 'config'), '-begin');
+addpath(fullfile(pathp, 'src', 'ui'), '-begin');
+
+%% === 1. Handle deployed mode (before any argument parsing) ===
 defaults = '';
 if isdeployed
     if nargin == 1
@@ -104,10 +109,6 @@ end
 [orig_warn] = warning;
 warning('off', 'all');
 warn_cleanup = onCleanup(@() warning(orig_warn));
-
-%% === Resolve repo root and add config to path ===
-[pathp, ~, ~] = fileparts(mfilename('fullpath'));
-addpath(fullfile(pathp, 'src', 'config'), '-begin');
 
 %% === Resolve and patch manifest ===
 manifest = pseudo_CT_resolve_profile(profile_name, pathp);

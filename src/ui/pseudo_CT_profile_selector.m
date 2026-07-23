@@ -32,7 +32,7 @@ descriptions = {
 
 list_str = cell(size(profiles));
 for ii = 1:numel(profiles)
-    list_str{ii} = sprintf('%s  \u2014  %s', profiles{ii}, descriptions{ii});
+    list_str{ii} = sprintf('%s -- %s', profiles{ii}, descriptions{ii});
 end
 
 [selection, ok] = listdlg( ...
