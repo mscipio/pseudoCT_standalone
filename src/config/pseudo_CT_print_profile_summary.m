@@ -6,6 +6,14 @@ function pseudo_CT_print_profile_summary(manifest, processing_dir)
 %
 %   The summary replaces the previous single-line SPM tree printout.
 
+%% === Resolve actual PCA backend ===
+pca_backend = 'unknown';
+try
+    [~, pca_backend, ~] = pseudo_CT_pca_resolver(manifest);
+catch
+    % Launchpad remote PCA or invalid config — leave as 'unknown'
+end
+
 %% === Build summary lines ===
 lines = {};
 lines{end+1} = sprintf('=== pseudo-CT Profile Summary ===');
@@ -23,12 +31,8 @@ lines{end+1} = sprintf('Cleanup policy:     %s', manifest.cleanup_policy);
 lines{end+1} = sprintf('Bone enabled:       %s', mat2str(manifest.bone_enabled));
 lines{end+1} = sprintf('FWHM:               %d mm', manifest.fwhm);
 lines{end+1} = sprintf('Aliasing default:   %d', manifest.aliasing_default);
+lines{end+1} = sprintf('PCA backend:        %s', pca_backend);
 lines{end+1} = sprintf('Runtime guard:      %s', manifest.runtime_guard);
-lines{end+1} = '';
-lines{end+1} = sprintf('--- PCA Order ---');
-for ii = 1:length(manifest.pca_order)
-    lines{end+1} = sprintf('  %d. %s', ii, manifest.pca_order{ii});
-end
 lines{end+1} = '';
 lines{end+1} = sprintf('--- VERS Override Order ---');
 for ii = 1:length(manifest.vers_policy.order)
