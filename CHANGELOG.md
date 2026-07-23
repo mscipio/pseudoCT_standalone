@@ -1,4 +1,13 @@
-2.6.5
+2.6.6
+
+## 2.6.6 — Profile Resource Authority (external SPM)
+- **External SPM packages:** All canonical profiles now use deployment-provided SPM packages. The repository no longer ships a tracked SPM tree. The deployer is responsible for linking the correct SPM package to each profile via `src/config/spm_profiles/`.
+- **Profile registry and templates:** Added `pseudo_CT_profile_registry.m`, `pseudo_CT_load_spm_profile_config.m`, and deployer-owned profile templates under `src/config/spm_profiles/` for `local-current` (r6313), `local-near-parity-r2010b` (r4667), and `launchpad` (r6313).
+- **SPM revision validation:** Preflight validates the observed SPM revision from the deployment package's `Contents.m` before any path mutation. R2010b-compatible parsing recognizes `Version 6313 (SPM8)` and `Version 4667 (SPM8)`. Mismatches raise `SPM_ROOT:RevisionMismatch`.
+- **Fail-before-mutation contract:** `setup_pseudo_CT_paths.m` calls `pseudo_CT_preflight.m` before any `addpath`, `genpath`, `rehash`, or `which` calls. All resource checks (SPM root, vers, atlas, normalization, PCA, provenance) complete before workflow mutation.
+- **Environment resistance:** Profiles are the sole authority for behavior-changing settings. The 7-variable/3-profile prohibited-variable matrix is enforced by `test_profile_env_resistance.m` (32/32).
+- **Removed tracked SPM tree:** Deleted `spm8-r6313/` (4022 files) and `pseudo_CT_provenance_record.m` (338 lines). SPM packages are provided at deployment time, analogous to `Batch_atlas`.
+- **Test coverage:** Added `test_spm_preflight.m` (14/14 threat tests), `test_spm_external_config.m` (21/21 config tests). Full suite: 110 passed, 0 failed, 1 skipped.
 
 ## 2.6.5 - Configurable Background Policy and Bounded Launchpad Parity
 - Added `zero_background` to `defaults_pseudo_CT.m` and `defaults_pseudo_CT_launchpad.m`. The default is `'No'`, which preserves historical background values; `'Yes'` opts into the final subject-mask multiplication and may alter PET attenuation-correction results.

@@ -27,7 +27,6 @@ package:
 	cp README.md "$(PKG_DIR)/"
 	cp -r src "$(PKG_DIR)/"
 	cp -r vers "$(PKG_DIR)/"
-	cp -r spm8-r6313 "$(PKG_DIR)/"
 	cp -r imgaussian "$(PKG_DIR)/"
 	cp -r ssh2_v2_m1_r5 "$(PKG_DIR)/"
 	cd "$(DIST_DIR)" && tar -czf "pseudoCT_v$(VERSION).tar.gz" "pseudoCT_v$(VERSION)"

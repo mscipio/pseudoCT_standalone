@@ -74,7 +74,7 @@ end
 
 changelog = read_text(fullfile(root_dir, 'CHANGELOG.md'));
 first_line = strtrim(strtok(changelog, char(10)));
-check('CHANGELOG.md top version is 2.6.5', strcmp(first_line, '2.6.5'), first_line);
+check('CHANGELOG.md top version is 2.6.6', strcmp(first_line, '2.6.6'), first_line);
 
 config_dir = fullfile(root_dir, 'src', 'config');
 addpath(config_dir);
