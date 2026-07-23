@@ -2,20 +2,29 @@
 
 ## Purpose
 
-MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR MPRAGE inputs. Two execution paths: local (editable MATLAB) and Launchpad (legacy compiled backend via SSH).
+MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR MPRAGE inputs. Three execution profiles: `local-current` (editable MATLAB), `local-near-parity-r2010b`, and `launchpad` (legacy compiled backend via SSH).
 
 ## Entry Points
 
-- `run_pseudo_CT_local.m` — local MATLAB/SPM pipeline
-- `run_pseudo_CT_launchpad.m` — delegates atlas processing to compiled Launchpad backend over SSH
+- `run_pseudo_CT.m` — primary entrypoint with 3 profiles, named arguments, and GUI integration. Profiles: `local-current` (default), `local-near-parity-r2010b`, `launchpad`.
 
-Both accept: `'batch'` (multi-select GUI), a cell/char list of MPRAGE filenames, or no args (single-subject GUI). Example: `run_pseudo_CT_local('batch')`.
+  Call with no arguments to open the profile selector GUI, then the single-subject GUI.
+  Call with named arguments for CLI/script mode:
+  ```
+  run_pseudo_CT()
+  run_pseudo_CT('profile', 'local-current')
+  run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch')
+  run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, 'correct_aliasing', 0)
+  ```
+
+  The old entrypoints `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` have been moved to `deprecated/` and are preserved unmodified for backward compatibility.
 
 ## Repo Layout
 
 | Path | Role |
 |---|---|
-| `run_pseudo_CT_local.m` / `run_pseudo_CT_launchpad.m` | User-facing entry points; add dependencies to path then dispatch |
+| `run_pseudo_CT.m` | Primary user-facing entry point; dispatches to the selected profile |
+| `deprecated/run_pseudo_CT_local.m`, `deprecated/run_pseudo_CT_launchpad.m` | Legacy entry points preserved for backward compatibility |
 | `src/` | Project MATLAB source — config, core, io, remote, launchpad, qc, ui |
 | `src/config/` | Defaults: `defaults_pseudo_CT.m` (local) and `defaults_pseudo_CT_launchpad.m` (Launchpad) |
 | `src/config/fs_setenv_530_from_launchpad.sh` | FreeSurfer 5.3 env setup, referenced by defaults |
@@ -35,7 +44,7 @@ Both accept: `'batch'` (multi-select GUI), a cell/char list of MPRAGE filenames,
 
 ### Local Path
 
-1. `run_pseudo_CT_local` adds `src/`, `spm8-r6313/`, `vers/`, `imgaussian/`, `ssh2_v2_m1_r5/` to MATLAB path via `genpath`. Calls `clear spm_vol_nifti spm_preproc_write8` then `rehash` to override stock SPM functions with `vers/` versions.
+1. `run_pseudo_CT` with a local profile (`local-current` or `local-near-parity-r2010b`) adds `src/`, the selected SPM package, `vers/`, `imgaussian/`, `ssh2_v2_m1_r5/` to MATLAB path via `setup_pseudo_CT_paths`. Calls `pseudo_CT_preflight` before any path mutation to validate all resource dependencies.
 2. Collects jobs (GUI or batch), creates `MR_PET/`, `MR_PET/tmp/`, `MR/pseudo_muMAP/` dirs.
 3. For each subject: DICOM→NIfTI, FreeSurfer normalization (via SSH or local), SPM new segment + DARTEL + inverse warp, CT→att_map, NIfTI→DICOM, QC image, cleanup `MR_PET/tmp/`.
 
@@ -45,8 +54,8 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 ## Key Gotchas
 
-- **`vers/` overrides SPM8 functions** — `spm_vol_nifti.m` and `spm_preproc_write8.m` in `vers/` shadow SPM originals. The entry scripts run `clear spm_vol_nifti spm_preproc_write8; rehash` after path setup.
-- **Warning suppression** — both entry points call `warning('off', 'all')` and restore on exit.
+- **`vers/` overrides SPM8 functions** — `spm_vol_nifti.m` and `spm_preproc_write8.m` in `vers/` shadow SPM originals. The entrypoint runs `clear spm_vol_nifti spm_preproc_write8; rehash` after path setup.
+- **Warning suppression** — the entrypoint calls `warning('off', 'all')` and restores on exit.
 - **Output folder discovery** — `pseudo_CT_resolve_output_dirs.m` walks up from the MPRAGE file to find the `MR/` parent. Outputs go to `<subject_root>/MR_PET/` (processing), `<subject_root>/MR_PET/tmp/` (intermediate), `<subject_root>/MR/pseudo_muMAP/` (DICOM).
 - **UMAP auto-discovery** — `pseudo_CT_auto_discover_ute_umap.m` looks for `MR/UMAP/*0001.*` or `MR/*UMAP*/*0001.*` relative to the MPRAGE path. Subjects without a detected UMAP are silently skipped in batch mode.
 - **Anti-aliasing** — second positional arg controls nose/back aliasing correction. Defaults to `1` in batch/explicit-list modes. In GUI mode, set via checkbox in `load_mr_4_AC.fig`.
@@ -56,17 +65,18 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 ## Shell Mode & Compiled App
 
-- `run_pseudo_CT_launchpad.m` supports a **deployed (compiled) mode** via `isdeployed`: if called with one arg pointing to a `.mat` defaults file, it loads that instead of hardcoded defaults.
-- Local mode has its deployed code path **commented out** (lines 48–59, 86–88, 206–208 in `run_pseudo_CT_local.m`).
+- `run_pseudo_CT.m` supports a **deployed (compiled) mode** via `isdeployed`: if called with one arg pointing to a `.mat` defaults file, it loads that instead of the default profile configuration. This preserves the existing launchpad deployed mode contract.
+- Local mode has its deployed code path handled through the same unified entrypoint (in contrast to the old local entrypoint which had it commented out).
 
 ## Testing & CI
 
 **CI** — No GitHub Actions workflow is configured because this private repository cannot provide a MATLAB batch license token to GitHub-hosted runners. Run lint and smoke tests locally before release.
 
-**Lint** — `scripts/run_lint.m` runs MATLAB's built-in `mlint` over `src/`, `vers/`, and the two entry scripts (`run_pseudo_CT_local.m`, `run_pseudo_CT_launchpad.m`).
+**Lint** — `scripts/run_lint.m` runs MATLAB's built-in `mlint` over `src/`, `vers/`, and the entry script `run_pseudo_CT.m`.
 
 **Smoke tests** — `scripts/run_smoke_tests.m` checks:
-- Both entry scripts exist and parse
+- Primary entry script `run_pseudo_CT.m` exists and parses
+- Deprecated entry scripts `deprecated/run_pseudo_CT_local.m` and `deprecated/run_pseudo_CT_launchpad.m` exist and parse
 - All `src/**/*.m` files parse
 - The 3 `vers/` SPM overrides parse
 - Key atlas assets exist (`Batch_atlas/TPM.nii`, `ch2.nii`, the 7 `Template_*.nii` DARTEL templates, `Batch_atlas/ganymed-ssh2-build250/ganymed-ssh2-build250.jar`)

@@ -1,3 +1,15 @@
+2.7.0
+
+## 2.7.0 — Unified Entrypoint Migration (BREAKING)
+- **New primary entrypoint:** `run_pseudo_CT.m` replaces the two old entrypoints with a unified interface supporting 3 profiles, named arguments, and GUI integration.
+- **Three execution profiles:** `local-current` (default), `local-near-parity-r2010b`, and `launchpad`. Profiles are selected via named argument or the GUI profile selector.
+- **Named-argument CLI:** `run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, 'correct_aliasing', 0)` replaces the old positional-argument calling convention.
+- **GUI profile selector:** `run_pseudo_CT()` with no arguments opens a profile selection dialog before the subject selection dialog, enabling GUI-based profile choice.
+- **R2010b warning:** Selecting `local-near-parity-r2010b` on a MATLAB release other than R2010b shows a warning that results may differ from expected near-parity output, and the runtime guard is bypassed.
+- **Old entrypoints deprecated:** `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` have been moved to `deprecated/` and are preserved unmodified for backward compatibility.
+- **Shared job collection:** Added `collect_jobs.m` and `build_jobs_from_subject_list.m` as shared helpers used by the new entrypoint.
+- **BREAKING:** Scripts calling `run_pseudo_CT_local(...)` or `run_pseudo_CT_launchpad(...)` by name must be updated to call `run_pseudo_CT('profile', ...)` with the appropriate profile. The old files remain available under `deprecated/` as a transitional migration aid.
+
 2.6.6
 
 ## 2.6.6 — Profile Resource Authority (external SPM)

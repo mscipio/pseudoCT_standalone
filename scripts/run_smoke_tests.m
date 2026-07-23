@@ -24,11 +24,13 @@ num_skipped = 0;
         fprintf('  SKIP  %s - %s\n', test_name, reason);
     end
 
-entry_files = {'run_pseudo_CT_local.m', 'run_pseudo_CT_launchpad.m'};
-for i=1:numel(entry_files)
-    path = fullfile(root_dir, entry_files{i});
-    check([entry_files{i} ' exists'], exist(path, 'file') == 2, 'file not found');
-    check_parse(path, entry_files{i}, @check);
+entry_files = {'run_pseudo_CT.m'};
+deprecated_entry_files = {'deprecated/run_pseudo_CT_local.m', 'deprecated/run_pseudo_CT_launchpad.m'};
+all_entry_files = [entry_files, deprecated_entry_files];
+for i=1:numel(all_entry_files)
+    path = fullfile(root_dir, all_entry_files{i});
+    check([all_entry_files{i} ' exists'], exist(path, 'file') == 2, 'file not found');
+    check_parse(path, all_entry_files{i}, @check);
 end
 
 source_files = collect_m_files(fullfile(root_dir, 'src'));
@@ -74,7 +76,7 @@ end
 
 changelog = read_text(fullfile(root_dir, 'CHANGELOG.md'));
 first_line = strtrim(strtok(changelog, char(10)));
-check('CHANGELOG.md top version is 2.6.6', strcmp(first_line, '2.6.6'), first_line);
+check('CHANGELOG.md top version is 2.7.0', strcmp(first_line, '2.7.0'), first_line);
 
 config_dir = fullfile(root_dir, 'src', 'config');
 addpath(config_dir);
@@ -119,7 +121,7 @@ check('bone reduction remains enabled', ...
     ~isempty(strfind(atlas_source, 'fixed_bone_cleanup()')) && ...
     ~isempty(strfind(atlas_source, 'reduce_bone_segment(Prc_old)')), 'bone cleanup not found');
 
-launchpad_source = read_text(fullfile(root_dir, 'run_pseudo_CT_launchpad.m'));
+launchpad_source = read_text(fullfile(root_dir, 'deprecated', 'run_pseudo_CT_launchpad.m'));
 mask_call = strfind(launchpad_source, 'launchpad_apply_background_mask(jobs(jj).temp_dir)');
 dicom_call = strfind(launchpad_source, 'pseudo_CT_write_mu_map_dicom');
 promote_call = strfind(launchpad_source, 'pseudo_CT_promote_final_outputs');

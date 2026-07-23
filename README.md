@@ -2,20 +2,24 @@
 
 Maintained by Michele Scipioni, PhD  
 mscipioni@mgh.harvard.edu  
-Last updated: July 21, 2026.
+Last updated: July 23, 2026.
 
 If you use this method, or parts of it, please, quote this paper:
 >D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.
 >An SPM8-based Approach for Attenuation Correction Combining Segmentation and Non-rigid Template Formation: Application to Simultaneous PET/MR Brain Imaging. JNM. 2014. Nov;55(11):1825-30.
 
-This package provides two independent ways to generate pseudo-CT attenuation maps from an mMR MPRAGE input.
+This package provides a unified entrypoint `run_pseudo_CT.m` with three execution profiles:
 
-- `run_pseudo_CT_local.m`: runs the editable MATLAB/SPM pipeline locally.
-- `run_pseudo_CT_launchpad.m`: stages the subject to Launchpad and runs the legacy compiled `Pseudo_CT_launchpad` backend.
+- `local-current` (default): runs the editable MATLAB/SPM pipeline with your system-installed MATLAB.
+- `local-near-parity-r2010b`: local pipeline pinned to near-R2010b (7.11) numerical parity for consistent optimizer results across MATLAB versions.
+- `launchpad`: stages the subject to Launchpad and runs the legacy compiled `Pseudo_CT_launchpad` backend.
+
+The old entrypoints `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` have been moved to `deprecated/` and are preserved unmodified for backward compatibility.
 
 ## Top-Level Layout
 
-- `run_pseudo_CT_local.m`, `run_pseudo_CT_launchpad.m`: user-facing entry points.
+- `run_pseudo_CT.m`: primary user-facing entry point.
+- `deprecated/`: contains `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m`, the legacy entry points preserved unmodified for backward compatibility.
 - `src/`: project-owned MATLAB source files grouped by function.
 - `Batch_atlas/`: atlas images and SPM batch templates used by the pseudo-CT pipeline.
 - `spm8-r6313/`: bundled SPM8 tree.
@@ -43,55 +47,70 @@ This package provides two independent ways to generate pseudo-CT attenuation map
 
 ## Execution Paths
 
-### Local
+### Local (profiles: `local-current`, `local-near-parity-r2010b`)
 
-`run_pseudo_CT_local.m` adds `src/`, `spm8-r6313/`, `vers/`, `ssh2_v2_m1_r5/`, and `imgaussian/` to the MATLAB path, prompts for the subject files, runs `atlas_based_attenuation_map`, then writes the final DICOM pseudo-muMAP output.
+`run_pseudo_CT.m` with a local profile runs the editable MATLAB/SPM pipeline. It sets up the MATLAB path via `setup_pseudo_CT_paths`, collects the subject jobs, runs `atlas_based_attenuation_map`, then writes the final DICOM pseudo-muMAP output.
 
-Local mode supports both single-subject and batch usage:
+Both local profiles support interactive, batch, and explicit-list usage:
 
-- `run_pseudo_CT_local` opens the existing single-subject selection dialog.
-- `run_pseudo_CT_local('batch')` opens a multi-select file picker for MPRAGE files and auto-discovers each subject's UMAP reference.
-- `run_pseudo_CT_local(subject_list)` accepts a cell array or char matrix of MPRAGE filenames and processes them sequentially.
+- `run_pseudo_CT()` — opens the profile selector GUI, then the single-subject selection dialog.
+- `run_pseudo_CT('profile', 'local-current')` — skips the profile selector and opens the single-subject dialog.
+- `run_pseudo_CT('profile', 'local-current', 'subjects', 'batch')` — opens a multi-select file picker for MPRAGE files and auto-discovers each subject's UMAP reference.
+- `run_pseudo_CT('profile', 'local-current', 'subjects', subject_list)` — accepts a cell array or char matrix of MPRAGE filenames and processes them sequentially.
 
 Examples:
 
 ```matlab
-run_pseudo_CT_local('batch')
-run_pseudo_CT_local('batch', 0)
+run_pseudo_CT()
+run_pseudo_CT('profile', 'local-current')
+run_pseudo_CT('profile', 'local-current', 'subjects', 'batch')
+run_pseudo_CT('profile', 'local-current', 'subjects', 'batch', 'correct_aliasing', 0)
 
 subject_list = {
   '/path/to/subj1/MR/MEMPRAGE/file1.IMA'
   '/path/to/subj2/MR/MEMPRAGE/file1.IMA'
 };
-run_pseudo_CT_local(subject_list)
-run_pseudo_CT_local(subject_list, 0)
+run_pseudo_CT('profile', 'local-current', 'subjects', subject_list)
+run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, 'correct_aliasing', 0)
 ```
 
-For localhost execution, temporary FreeSurfer normalization staging now happens under each subject's own `MR_PET/tmp` folder rather than under the hardcoded `host_folder` path in the defaults template. On successful completion, the final NIfTI/QC/version artifacts are promoted back into `MR_PET` and the `MR_PET/tmp` folder is removed.
+Near-parity profile:
 
-### Launchpad
+```matlab
+run_pseudo_CT('profile', 'local-near-parity-r2010b')
+run_pseudo_CT('profile', 'local-near-parity-r2010b', 'subjects', 'batch')
+```
 
-`run_pseudo_CT_launchpad.m` uses the same local input selection and final DICOM output layer, but the core atlas processing is delegated to the legacy compiled Launchpad application through the queue helpers in `src/launchpad/`.
+When `local-near-parity-r2010b` is selected on a MATLAB release other than R2010b, a warning is shown that results may differ from expected near-parity output, and the runtime guard is bypassed.
 
-Launchpad mode supports both single-subject and batch usage:
+For localhost execution, temporary FreeSurfer normalization staging happens under each subject's own `MR_PET/tmp` folder rather than under the hardcoded `host_folder` path in the defaults template. On successful completion, the final NIfTI/QC/version artifacts are promoted back into `MR_PET` and the `MR_PET/tmp` folder is removed.
 
-- `run_pseudo_CT_launchpad` opens the existing single-subject selection dialog.
-- `run_pseudo_CT_launchpad('batch')` opens a multi-select file picker for MPRAGE files, auto-discovers each subject's UMAP reference, and submits the batch through Launchpad.
-- `run_pseudo_CT_launchpad(subject_list)` accepts a cell array or char matrix of MPRAGE filenames and processes them sequentially through the Launchpad backend.
+### Launchpad (profile: `launchpad`)
+
+`run_pseudo_CT.m` with the `launchpad` profile uses the same local input selection and final DICOM output layer, but the core atlas processing is delegated to the legacy compiled Launchpad application through the queue helpers in `src/launchpad/`.
+
+Launchpad mode supports interactive, batch, and explicit-list usage:
+
+- `run_pseudo_CT('profile', 'launchpad')` — skips the profile selector and opens the single-subject selection dialog, then SSH login.
+- `run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch')` — opens a multi-select file picker for MPRAGE files, auto-discovers each subject's UMAP reference, and submits the batch through Launchpad.
+- `run_pseudo_CT('profile', 'launchpad', 'subjects', subject_list)` — accepts a cell array or char matrix of MPRAGE filenames and processes them sequentially through the Launchpad backend.
 
 Examples:
 
 ```matlab
-run_pseudo_CT_launchpad('batch')
-run_pseudo_CT_launchpad('batch', 0)
+run_pseudo_CT('profile', 'launchpad')
+run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch')
+run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch', 'correct_aliasing', 0)
 
 subject_list = {
   '/path/to/subj1/MR/MEMPRAGE/file1.IMA'
   '/path/to/subj2/MR/MEMPRAGE/file1.IMA'
 };
-run_pseudo_CT_launchpad(subject_list)
-run_pseudo_CT_launchpad(subject_list, 0)
+run_pseudo_CT('profile', 'launchpad', 'subjects', subject_list)
+run_pseudo_CT('profile', 'launchpad', 'subjects', subject_list, 'correct_aliasing', 0)
 ```
+
+Note: In GUI mode (`run_pseudo_CT()` with no arguments), the profile selector dialog is shown first, enabling GUI-based profile choice before subject selection.
 
 ## Launchpad and Local Numerical Compatibility
 
