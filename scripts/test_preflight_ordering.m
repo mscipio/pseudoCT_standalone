@@ -111,6 +111,7 @@ function [fake_root, cleanup_dir] = make_fake_repo_root()
 
     % SPM r6313 tree (empty directory is enough for existence check).
     mkdir_maybe(fullfile(fake_root, 'spm8-r6313'));
+    copyfile(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'spm8-r6313', 'Contents.m'), fullfile(fake_root, 'spm8-r6313'));
 
     % vers/ overrides in spec order.
     vers_dir = fullfile(fake_root, 'vers');
@@ -134,7 +135,22 @@ function [fake_root, cleanup_dir] = make_fake_repo_root()
     % FreeSurfer env script referenced by the manifest source_command.
     cfg_dir = fullfile(fake_root, 'src', 'config');
     mkdir_maybe(cfg_dir);
+    profile_dir = fullfile(cfg_dir, 'spm_profiles');
+    mkdir_maybe(profile_dir);
+    write_profile_config(profile_dir, 'local_current', ...
+        '../../../spm8-r6313', 'r6313');
     touch(fullfile(cfg_dir, 'fs_setenv_530_from_launchpad.sh'));
+end
+
+%% ------------------------------------------------------------------------
+function write_profile_config(config_dir, function_name, root_name, revision)
+    fid = fopen(fullfile(config_dir, [function_name '.m']), 'w');
+    fprintf(fid, 'function c = %s()\n', function_name);
+    fprintf(fid, 'c.spm_root = ''%s'';\n', root_name);
+    fprintf(fid, 'c.expected_revision = ''%s'';\n', revision);
+    fprintf(fid, 'end\n');
+    fclose(fid);
+    rehash;
 end
 
 %% ------------------------------------------------------------------------

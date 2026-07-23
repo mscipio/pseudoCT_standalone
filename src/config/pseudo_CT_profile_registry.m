@@ -10,12 +10,13 @@ function manifest = pseudo_CT_profile_registry(name, repo_root)
 %   exact vers/ override set/order, atlas assets, PCA backend order,
 %   runtime guard, normalization resource, recentering, background,
 %   bone/FWHM/aliasing policy, cleanup policy, Launchpad identity, and
-%   provenance expectations. Environment variables are not consulted.
+%   provenance expectations. The SPM root and expected revision are loaded
+%   from the fixed deployment template for the selected profile. Environment
+%   variables are not consulted.
 %
 %   REPO_ROOT defaults to the repository root inferred from this file's
-%   location. r4667 is represented as a validated missing resource; the
-%   preflight will fail closed with SPM_ROOT:NotFound until the vendor
-%   phase materializes it.
+%   location. An unset deployment root remains unset and is not replaced by
+%   a repository-owned SPM tree.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -43,16 +44,28 @@ switch lower(name)
         error(ids.PROFILE.InvalidName, 'Unknown profile name: %s', name);
 end
 
+manifest = attach_spm_config(manifest, name, repo_root);
 manifest = validate_manifest(manifest, ids);
 
+end
+
+%% ------------------------------------------------------------------------
+function manifest = attach_spm_config(manifest, profile_name, repo_root)
+
+config = pseudo_CT_load_spm_profile_config(profile_name, ...
+    fullfile(repo_root, 'src', 'config'));
+manifest.spm_root = config.spm_root;
+manifest.spm_version = config.expected_revision;
+manifest.spm_expected_revision = config.expected_revision;
+manifest.spm_config_path = config.config_path;
+manifest.spm_config_dir = config.config_dir;
+manifest.spm_root_base = config.spm_root_base;
 end
 
 %% ------------------------------------------------------------------------
 function manifest = build_local_current(repo_root)
 
 manifest = new_manifest('local-current', repo_root);
-manifest.spm_root          = fullfile(repo_root, 'spm8-r6313');
-manifest.spm_version       = 'r6313';
 manifest.vers_policy.order = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'};
 manifest.pca_order         = {'callable_pca'; 'repo_legacy'};
 manifest.runtime_guard     = 'supported_matlab';
@@ -69,8 +82,6 @@ end
 function manifest = build_near_parity(repo_root)
 
 manifest = new_manifest('local-near-parity-r2010b', repo_root);
-manifest.spm_root          = fullfile(repo_root, 'spm8-r4667');
-manifest.spm_version       = 'r4667';
 manifest.vers_policy.order = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'};
 manifest.pca_order         = {'repo_legacy'; 'callable_pca'};
 manifest.runtime_guard     = 'r2010b_only';
@@ -86,8 +97,6 @@ end
 function manifest = build_launchpad(repo_root)
 
 manifest = new_manifest('launchpad', repo_root);
-manifest.spm_root          = fullfile(repo_root, 'spm8-r6313');
-manifest.spm_version       = 'r6313';
 manifest.vers_policy.order = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'};
 manifest.pca_order         = {'remote'};
 manifest.runtime_guard     = 'launchpad_opaque';

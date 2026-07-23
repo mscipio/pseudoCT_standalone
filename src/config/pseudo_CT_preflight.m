@@ -30,7 +30,7 @@ end
 validate_manifest_structure(manifest, ids);
 validate_alias(manifest, ids);
 validate_runtime(manifest, ids);
-validate_spm_root(manifest, ids);
+validate_spm_root(manifest, repo_root, ids);
 validate_vers(manifest, ids);
 validate_atlas(manifest, ids);
 validate_normalization(manifest, ids);
@@ -73,16 +73,52 @@ end
 end
 
 %% ------------------------------------------------------------------------
-function validate_spm_root(manifest, ids)
+function validate_spm_root(manifest, repo_root, ids)
 
-if isempty(manifest.spm_root)
-    error(ids.SPM_ROOT.NotFound, 'SPM root is empty in profile %s.', manifest.name);
+% Resolve relative roots against the profile config directory. This is the
+% narrow compatibility bridge for external deployment packages; all other
+% Phase 3 resource checks remain unchanged.
+validate_spm_revision(manifest, repo_root, ids);
+
 end
 
-if exist(manifest.spm_root, 'dir') ~= 7
-    error(ids.SPM_ROOT.NotFound, 'SPM root not found: %s', manifest.spm_root);
+%% ------------------------------------------------------------------------
+function spm_dir = validate_spm_revision(manifest, root_dir, ids)
+
+[spm_dir, ~] = pseudo_CT_compute_spm_root(manifest, root_dir);
+if ~isfield(manifest, 'spm_expected_revision') || isempty(manifest.spm_expected_revision), return; end
+expected = manifest.spm_expected_revision;
+
+contents_path = fullfile(spm_dir, 'Contents.m');
+observed = '';
+if exist(contents_path, 'file') ~= 2
+    evidence = 'missing Contents.m';
+else
+    try
+        contents = fileread(contents_path);
+        has6313 = ~isempty(regexp(contents, ...
+            'Version[ \t]+6313[ \t]+\(SPM8\)', 'once'));
+        has4667 = ~isempty(regexp(contents, ...
+            'Version[ \t]+4667[ \t]+\(SPM8\)', 'once'));
+        if has6313 && ~has4667
+            observed = 'r6313';
+            evidence = 'r6313 (Version 6313 (SPM8))';
+        elseif has4667 && ~has6313
+            observed = 'r4667';
+            evidence = 'r4667 (Version 4667 (SPM8))';
+        else
+            evidence = 'malformed Contents.m';
+        end
+    catch
+        evidence = 'unreadable Contents.m';
+    end
 end
 
+if isempty(observed) || ~strcmpi(observed, expected)
+    error(ids.SPM_ROOT.RevisionMismatch, ...
+        'SPM revision mismatch for profile %s at %s: expected %s, observed/missing %s.', ...
+        manifest.name, spm_dir, expected, evidence);
+end
 end
 
 %% ------------------------------------------------------------------------

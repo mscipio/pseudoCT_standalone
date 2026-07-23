@@ -202,6 +202,15 @@ function [fake_root, cleanup_dir] = make_fake_repo_root()
     mkdir(fake_root);
     cleanup_dir = fake_root;
 
+    profile_config_dir = fullfile(fake_root, 'src', 'config', 'spm_profiles');
+    mkdir_maybe(profile_config_dir);
+    write_profile_config(profile_config_dir, 'local_current', ...
+        '../../../spm8-r6313', 'r6313');
+    write_profile_config(profile_config_dir, 'local_near_parity_r2010b', ...
+        '../../../spm8-r4667', 'r4667');
+    write_profile_config(profile_config_dir, 'launchpad', ...
+        '../../../spm8-r6313', 'r6313');
+
     % SPM r6313 tree (empty directory is enough for existence check).
     mkdir_maybe(fullfile(fake_root, 'spm8-r6313'));
 
@@ -228,6 +237,21 @@ function [fake_root, cleanup_dir] = make_fake_repo_root()
     cfg_dir = fullfile(fake_root, 'src', 'config');
     mkdir_maybe(cfg_dir);
     touch(fullfile(cfg_dir, 'fs_setenv_530_from_launchpad.sh'));
+end
+
+%% ------------------------------------------------------------------------
+function write_profile_config(config_dir, function_name, root_name, revision)
+    fid = fopen(fullfile(config_dir, [function_name '.m']), 'w');
+    if fid == -1
+        error('test_deterministic_error_ids:Fixture', ...
+            'Could not create profile config %s.', function_name);
+    end
+    fprintf(fid, 'function c = %s()\n', function_name);
+    fprintf(fid, 'c.spm_root = ''%s'';\n', root_name);
+    fprintf(fid, 'c.expected_revision = ''%s'';\n', revision);
+    fprintf(fid, 'end\n');
+    fclose(fid);
+    rehash;
 end
 
 %% ------------------------------------------------------------------------

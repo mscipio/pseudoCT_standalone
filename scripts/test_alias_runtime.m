@@ -181,6 +181,9 @@ end
 function ok = launchpad_preflight_accepts_distinct_identity(root_dir)
 manifest = pseudo_CT_profile_registry('launchpad', root_dir);
 % This isolates provenance ordering from the optional, absent checkout atlas.
+% The deployment template is intentionally blank in the source checkout;
+% provide the existing tracked tree only for this preflight seam test.
+manifest.spm_root = fullfile(root_dir, 'spm8-r6313');
 manifest.atlas_assets.batch_atlas_path = root_dir;
 manifest.atlas_assets.required_files = {};
 ok = true;

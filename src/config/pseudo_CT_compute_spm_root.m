@@ -21,7 +21,13 @@ if isempty(spm_dir)
     error(ids.SPM_ROOT.NotFound, 'SPM root is empty in profile %s.', manifest_name(manifest));
 end
 if ~is_absolute(spm_dir)
-    spm_dir = fullfile(root_dir, spm_dir);
+    if ~isfield(manifest, 'spm_root_base') || ...
+            ~ischar(manifest.spm_root_base) || isempty(manifest.spm_root_base)
+        error(ids.SPM_ROOT.NotFound, ...
+            'Relative SPM root has no deployment-config base for profile %s.', ...
+            manifest_name(manifest));
+    end
+    spm_dir = fullfile(manifest.spm_root_base, spm_dir);
 end
 if exist(spm_dir, 'dir') ~= 7
     error(ids.SPM_ROOT.NotFound, 'SPM root not found: %s', spm_dir);

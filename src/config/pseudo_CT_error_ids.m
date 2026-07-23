@@ -18,6 +18,9 @@ ids.PROFILE.InvalidValue           = 'PROFILE:InvalidValue';
 ids.PROFILE.R2010bOnly             = 'PROFILE:R2010bOnly';
 
 ids.SPM_ROOT.NotFound              = 'SPM_ROOT:NotFound';
+ids.SPM_ROOT.RevisionMismatch      = 'SPM_ROOT:RevisionMismatch';
+ids.SPM_CONFIG.Missing             = 'SPM_CONFIG:Missing';
+ids.SPM_CONFIG.Invalid             = 'SPM_CONFIG:Invalid';
 
 ids.VERS.Incomplete                = 'VERS:Incomplete';
 ids.VERS.WrongOrder                = 'VERS:WrongOrder';

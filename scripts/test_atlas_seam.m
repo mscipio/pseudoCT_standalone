@@ -6,6 +6,11 @@ addpath(fullfile(root_dir, 'src', 'config'));
 fake_root = tempname;
 mkdir(fake_root);
 mkdir(fullfile(fake_root, 'spm8-r6313'));
+mkdir(fullfile(fake_root, 'src'));
+mkdir(fullfile(fake_root, 'src', 'config'));
+mkdir(fullfile(fake_root, 'src', 'config', 'spm_profiles'));
+write_profile_config(fullfile(fake_root, 'src', 'config', 'spm_profiles'), ...
+    'local_current', '../../../spm8-r6313', 'r6313');
 make_atlas(fake_root);
 cleanup = onCleanup(@() rmdir(fake_root, 's')); %#ok<NASGU>
 
@@ -26,6 +31,16 @@ catch ME
 end
 assert(failed, 'Missing manifest atlas assets must fail as ATLAS:AssetMissing.');
 fprintf('=== Atlas seam tests: 2/2 passed ===\n');
+end
+
+function write_profile_config(config_dir, function_name, root_name, revision)
+fid = fopen(fullfile(config_dir, [function_name '.m']), 'w');
+fprintf(fid, 'function c = %s()\n', function_name);
+fprintf(fid, 'c.spm_root = ''%s'';\n', root_name);
+fprintf(fid, 'c.expected_revision = ''%s'';\n', revision);
+fprintf(fid, 'end\n');
+fclose(fid);
+rehash;
 end
 
 function make_atlas(fake_root)

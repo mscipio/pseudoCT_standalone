@@ -184,8 +184,18 @@ end
 %% ------------------------------------------------------------------------
 function make_fixture(fake_root)
 
-mkdir(fullfile(fake_root, 'spm8-r6313'));
-mkdir(fullfile(fake_root, 'spm8-r4667'));
+    mkdir(fullfile(fake_root, 'spm8-r6313'));
+    mkdir(fullfile(fake_root, 'spm8-r4667'));
+    spm_config_dir = fullfile(fake_root, 'src', 'config', 'spm_profiles');
+    mkdir(fullfile(fake_root, 'src'));
+    mkdir(fullfile(fake_root, 'src', 'config'));
+    mkdir(spm_config_dir);
+    write_profile_config(spm_config_dir, 'local_current', ...
+        '../../../spm8-r6313', 'r6313');
+    write_profile_config(spm_config_dir, 'local_near_parity_r2010b', ...
+        '../../../spm8-r4667', 'r4667');
+    write_profile_config(spm_config_dir, 'launchpad', ...
+        '../../../spm8-r6313', 'r6313');
 atlas_dir = fullfile(fake_root, 'Batch_atlas');
 mkdir(atlas_dir);
 required = {'TPM.nii'; 'ch2.nii'; 'Template_0.nii'; 'Template_1.nii'; ...
@@ -194,8 +204,25 @@ required = {'TPM.nii'; 'ch2.nii'; 'Template_0.nii'; 'Template_1.nii'; ...
 for ii = 1:length(required)
     touch(fullfile(atlas_dir, required{ii}));
 end
+
 mkdir(fullfile(atlas_dir, 'ganymed-ssh2-build250'));
 touch(fullfile(atlas_dir, 'ganymed-ssh2-build250', 'ganymed-ssh2-build250.jar'));
+end
+
+%% ------------------------------------------------------------------------
+function write_profile_config(config_dir, function_name, root_name, revision)
+
+fid = fopen(fullfile(config_dir, [function_name '.m']), 'w');
+if fid == -1
+    error('test_profile_env_resistance:Fixture', ...
+        'Could not create profile config %s.', function_name);
+end
+fprintf(fid, 'function c = %s()\n', function_name);
+fprintf(fid, 'c.spm_root = ''%s'';\n', root_name);
+fprintf(fid, 'c.expected_revision = ''%s'';\n', revision);
+fprintf(fid, 'end\n');
+fclose(fid);
+rehash;
 end
 
 %% ------------------------------------------------------------------------
