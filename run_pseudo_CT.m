@@ -198,6 +198,11 @@ switch profile_name
                 end
             end
             
+            % Print and save profile summary (first subject only)
+            if ii == 1
+                pseudo_CT_print_profile_summary(manifest, processing_dir);
+            end
+            
             if length(jobs) > 1
                 disp(sprintf('\nPreparing Launchpad pseudo-CT subject %d of %d:\n%s\n', ...
                     ii, length(jobs), jobs(ii).mprage_fn));
@@ -331,6 +336,9 @@ for ii = 1:length(dir_list)
         end
     end
 end
+
+% Print and save profile summary
+pseudo_CT_print_profile_summary(manifest, processing_dir);
 
 % Resolve SSH host for FreeSurfer normalization
 HOSTNAME = defaults_pseudo_CT('HOSTNAME');

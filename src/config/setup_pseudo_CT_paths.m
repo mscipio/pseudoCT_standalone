@@ -14,7 +14,6 @@ if exist(fullfile(root_dir, 'src'), 'dir') == 7
     addpath(genpath(fullfile(root_dir, 'src')), '-begin');
 end
 
-disp(sprintf('pseudo-CT: SPM tree = %s', spm_label));
 addpath(genpath(spm_dir), '-begin');
 
 if exist(fullfile(root_dir, 'imgaussian'), 'dir') == 7
