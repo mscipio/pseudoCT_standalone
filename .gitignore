@@ -5,6 +5,7 @@
 *.log
 Batch_atlas/
 spm8-dan/
+spm8-r6313/
 dist/
 .codegraph/
 opencode-quota/
