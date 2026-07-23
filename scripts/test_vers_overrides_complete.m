@@ -6,7 +6,7 @@ addpath(fullfile(root_dir, 'src', 'config'));
 fake_root = tempname;
 mkdir(fake_root);
 mkdir(fullfile(fake_root, 'spm8-r6313'));
-copyfile(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'spm8-r6313', 'Contents.m'), fullfile(fake_root, 'spm8-r6313'));
+write_contents_m(fullfile(fake_root, 'spm8-r6313'), '6313');
 mkdir(fullfile(fake_root, 'vers'));
 touch(fullfile(fake_root, 'vers', 'spm_vol_nifti.m'));
 touch(fullfile(fake_root, 'vers', 'spm_preproc_write8.m'));
@@ -54,4 +54,12 @@ end
 function touch(path)
 fid = fopen(path, 'w');
 if fid ~= -1, fclose(fid); end
+end
+
+function write_contents_m(dir_name, revision)
+fid = fopen(fullfile(dir_name, 'Contents.m'), 'w');
+if fid ~= -1
+    fprintf(fid, '%% Version %s (SPM8)\n', revision);
+    fclose(fid);
+end
 end

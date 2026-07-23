@@ -1,9 +1,9 @@
 function test_deterministic_error_ids()
-%TEST_DETERMINISTIC_ERROR_IDS RED-first checks for PR1 foundation error IDs.
+%TEST_DETERMINISTIC_ERROR_IDS RED-first checks for foundation error IDs.
 %   Verifies that pseudo_CT_resolve_profile, pseudo_CT_profile_registry,
-%   pseudo_CT_preflight, and pseudo_CT_provenance_record raise the
-%   deterministic error identifiers defined in pseudo_CT_error_ids.
-%   No SPM batch, DICOM conversion, SSH/PBS, or subject mutation is run.
+%   and pseudo_CT_preflight raise the deterministic error identifiers
+%   defined in pseudo_CT_error_ids. No SPM batch, DICOM conversion,
+%   SSH/PBS, or subject mutation is run.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -126,19 +126,7 @@ bad_manifest.aliasing_override = [0 2];
 run_error_test('alias invalid override', ids.ALIAS.InvalidOverride, ...
     @() pseudo_CT_preflight(bad_manifest, fake_root));
 
-%% 15) Provenance record missing -> PROVENANCE:RecordMissing.
-run_error_test('provenance record missing', ids.PROVENANCE.RecordMissing, ...
-    @() pseudo_CT_provenance_record(fullfile(fake_root, 'spm8-r4667')));
-
-%% 16) Provenance inventory missing -> PROVENANCE:InventoryMissing.
-mkdir_maybe(fullfile(fake_root, 'spm8-r6313'));
-fid = fopen(fullfile(fake_root, 'spm8-r6313', 'SOURCES.md'), 'w');
-if fid ~= -1, fclose(fid); end
-run_error_test('provenance inventory missing', ids.PROVENANCE.InventoryMissing, ...
-    @() pseudo_CT_provenance_record(fullfile(fake_root, 'spm8-r6313'), ...
-                                    fullfile(fake_root, 'spm8-r6313', 'SOURCES.md')));
-
-%% 17) Valid local-current preflight passes.
+%% 15) Valid local-current preflight passes.
 try
     pseudo_CT_preflight(valid_manifest, fake_root);
     test_passed = test_passed + 1;
@@ -211,8 +199,10 @@ function [fake_root, cleanup_dir] = make_fake_repo_root()
     write_profile_config(profile_config_dir, 'launchpad', ...
         '../../../spm8-r6313', 'r6313');
 
-    % SPM r6313 tree (empty directory is enough for existence check).
+    % SPM r6313 tree with Contents.m for revision validation.
     mkdir_maybe(fullfile(fake_root, 'spm8-r6313'));
+    fid = fopen(fullfile(fake_root, 'spm8-r6313', 'Contents.m'), 'w');
+    if fid ~= -1, fprintf(fid, '%% Version 6313 (SPM8)\n'); fclose(fid); end
 
     % vers/ overrides in spec order.
     vers_dir = fullfile(fake_root, 'vers');
@@ -291,7 +281,7 @@ function manifest = make_valid_manifest(fake_root)
     manifest.provenance.bytes = 0;
     manifest.provenance.expected_spm_version = 'r6313';
     manifest.provenance.sha256_map = struct();
-    manifest.provenance.record_path = fullfile(fake_root, 'spm8-r6313', 'INVENTORY.json');
+    manifest.provenance.record_path = '';
 end
 
 %% ------------------------------------------------------------------------

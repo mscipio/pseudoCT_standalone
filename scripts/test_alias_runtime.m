@@ -180,10 +180,13 @@ end
 %% ------------------------------------------------------------------------
 function ok = launchpad_preflight_accepts_distinct_identity(root_dir)
 manifest = pseudo_CT_profile_registry('launchpad', root_dir);
-% This isolates provenance ordering from the optional, absent checkout atlas.
-% The deployment template is intentionally blank in the source checkout;
-% provide the existing tracked tree only for this preflight seam test.
-manifest.spm_root = fullfile(root_dir, 'spm8-r6313');
+% Create a temporary fake SPM package for the preflight seam test.
+fake_spm = fullfile(tempname, 'spm8-r6313');
+mkdir(fake_spm);
+cleanup = onCleanup(@() rmdir(fake_spm, 's')); %#ok<NASGU>
+fid = fopen(fullfile(fake_spm, 'Contents.m'), 'w');
+if fid ~= -1, fprintf(fid, '%% Version 6313 (SPM8)\n'); fclose(fid); end
+manifest.spm_root = fake_spm;
 manifest.atlas_assets.batch_atlas_path = root_dir;
 manifest.atlas_assets.required_files = {};
 ok = true;

@@ -10,9 +10,9 @@ function manifest = pseudo_CT_preflight(manifest, repo_root)
 %   does not already contain absolute paths. It defaults to the repository
 %   root inferred from this file's location.
 %
-%   This PR1 foundation validates structure and presence. Full provenance
-%   checksum enforcement is wired in pseudo_CT_provenance_record and will
-%   become hard once r6313/r4667 records land in the vendor phase.
+%   This foundation validates structure and presence before any workflow
+%   mutation. All resource checks (SPM root, vers, atlas, normalization,
+%   PCA, provenance) complete before addpath/genpath/rehash/which.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -248,10 +248,9 @@ if strcmp(manifest.name, 'launchpad') && ~strcmp(manifest.spm_version, 'r6313')
           'Launchpad local support provenance must be r6313.');
 end
 
-% PR1 foundation: do not require the physical record file to exist for
-% local-current or launchpad. The helper pseudo_CT_provenance_record is
-% fail-closed when called directly; full enforcement arrives with r6313/r4667
-% records in the vendor phase.
+% Manifest structural validation: provenance expected_spm_version must
+% match manifest.spm_version. The physical record file is not required;
+% deployment provides the SPM package and provenance externally.
 
 end
 

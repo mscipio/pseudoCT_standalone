@@ -109,9 +109,9 @@ function [fake_root, cleanup_dir] = make_fake_repo_root()
     mkdir(fake_root);
     cleanup_dir = fake_root;
 
-    % SPM r6313 tree (empty directory is enough for existence check).
+    % SPM r6313 tree with Contents.m for revision validation.
     mkdir_maybe(fullfile(fake_root, 'spm8-r6313'));
-    copyfile(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'spm8-r6313', 'Contents.m'), fullfile(fake_root, 'spm8-r6313'));
+    write_spm_contents(fullfile(fake_root, 'spm8-r6313'), '6313');
 
     % vers/ overrides in spec order.
     vers_dir = fullfile(fake_root, 'vers');
@@ -204,6 +204,15 @@ end
 function touch(p)
     fid = fopen(p, 'w');
     if fid ~= -1
+        fclose(fid);
+    end
+end
+
+%% ------------------------------------------------------------------------
+function write_spm_contents(dir_name, revision)
+    fid = fopen(fullfile(dir_name, 'Contents.m'), 'w');
+    if fid ~= -1
+        fprintf(fid, '%% Version %s (SPM8)\n', revision);
         fclose(fid);
     end
 end
