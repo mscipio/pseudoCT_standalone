@@ -24,10 +24,12 @@ out = 'No';
 if isa(manifest_or_defaults, 'function_handle')
     handle_name = func2str(manifest_or_defaults);
     if ~isempty(strfind(handle_name, 'defaults_pseudo_CT_launchpad'))
-        out = pseudo_CT_resolve_profile('launchpad').zero_background;
+        tmp = pseudo_CT_resolve_profile('launchpad');
+        out = tmp.zero_background;
         return;
     elseif ~isempty(strfind(handle_name, 'defaults_pseudo_CT'))
-        out = pseudo_CT_resolve_profile('local-current').zero_background;
+        tmp = pseudo_CT_resolve_profile('local-current');
+        out = tmp.zero_background;
         return;
     end
     try
