@@ -15,6 +15,10 @@ if exist(fullfile(root_dir, 'src'), 'dir') == 7
 end
 
 addpath(genpath(spm_dir), '-begin');
+% Ensure main SPM matlabbatch/ is first on path — prevents WFU toolbox
+% (spm8-dan/toolbox/.../matlabbatch/) from shadowing cfg_getfile and
+% other core SPM functions with incompatible versions.
+addpath(fullfile(spm_dir, 'matlabbatch'), '-begin');
 
 if exist(fullfile(root_dir, 'imgaussian'), 'dir') == 7
     addpath(genpath(fullfile(root_dir, 'imgaussian')), '-begin');
