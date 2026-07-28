@@ -16,14 +16,26 @@ umap_fn = 0;
 
 [patha, ~, ~] = fileparts(deblank(mprage_fn));
 ss = strfind(patha, strcat(filesep, 'MR', filesep));
-if isempty(ss)
+dir_b = '';
+if ~isempty(ss)
+    dir_b = patha(1:(ss(end) + 3));  % includes trailing 'MR'
+else
+    % The up-walk did not find MR/ as an ancestor. Check if MR/ exists as a
+    % sibling of the MPRAGE parent directory (e.g. NIfTI input in MR_PET/
+    % with MR/ alongside it).
+    mr_parent = fileparts(patha);
+    potential_mr = fullfile(mr_parent, 'MR');
+    if isdir(potential_mr)
+        dir_b = [potential_mr, filesep];
+    end
+end
+
+if isempty(dir_b)
     % Legacy output: fprintf(1, 'WARNING: No MR/ parent in %s\n', patha);
     pseudo_CT_output('WARN', struct('scope', 'discovery'), 'No MR parent was found.');
     pseudo_CT_output('INFO', struct('scope', 'discovery'), '    %s', patha);
     return;
 end
-
-dir_b = patha(1:(ss(end) + 3));  % includes trailing 'MR'
 
 % --- gather sibling directories (skip . and ..) ---
 all_entries = dir(fullfile(dir_b, '*'));

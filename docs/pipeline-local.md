@@ -21,23 +21,54 @@ legend:
 ## Stage 1 — Input Preparation
 
 ```
-  MPRAGE DICOM (IMA)
+  MPRAGE DICOM (IMA/DCM)   or   MPRAGE NIfTI (.nii)
   │
   ~~~ convert_dicom_i_2_nii ~~~
   │
-  ├── MR_PET/tmp/mprage.nii
+  └── MR_PET/tmp/mprage.nii
 ```
 
-Called by `run_pseudo_CT → local_run_subject`. Converts the first MPRAGE DICOM
-series to NIfTI using SPM's DICOM import.
+Called by `run_pseudo_CT → local_run_subject`. The input can be either:
+
+- **DICOM** (`.dcm`, `.DCM`, `.ima`, `.IMA`): converted to NIfTI via SPM's DICOM
+  import. A separate UMAP DICOM file is needed for the DICOM output geometry.
+- **NIfTI** (`.nii`): **copied** directly to `tmp/mprage.nii` preserving the
+  original file. A UMAP reference is still required for DICOM output (discovered
+  from the sibling `MR/` directory tree).
+
+### NIfTI input
+
+To use a pre-converted NIfTI instead of raw DICOM:
+
+```matlab
+run_pseudo_CT('profile', 'local-near-parity-r2010b', 'subjects', ...
+    {'/path/to/subject/MR_PET/mprage.nii'})
+```
+
+Place the NIfTI in the `MR_PET/` folder alongside the existing `MR/` tree.
+The UMAP auto-discovery finds the reference UMAP from the sibling `MR/`
+directory. The expected layout is:
+
+```
+<subject_root>/
+├── MR/
+│   ├── UMAP/            ← reference UMAP (for DICOM geometry)
+│   ├── MEMPRAGE/        ← original DICOM (optional when using NIfTI)
+│   └── ...
+└── MR_PET/              ← contains a NIfTI MPRAGE
+    └── mprage.nii
+```
+
+The NIfTI is copied (not moved) into `MR_PET/tmp/` during staging, leaving the
+original untouched.
 
 **Files created:**
-- `MR_PET/tmp/mprage.nii` — the working MPRAGE in NIfTI format.
+- `MR_PET/tmp/mprage.nii` — the working MPRAGE in NIfTI format (copy of input).
 
 **Tools used:**
-- `convert_dicom_i_2_nii` (`src/io/`) — wraps SPM's `spm_dicom_convert`
+- `convert_dicom_i_2_nii` (`src/io/`) — for DICOM wraps SPM's `spm_dicom_convert`
   (overridden by `vers/spm_dicom_convert.m` in local profiles for R2010b
-  compatibility).
+  compatibility); for NIfTI performs a direct file copy.
 
 ---
 

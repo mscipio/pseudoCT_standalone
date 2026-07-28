@@ -83,6 +83,32 @@ run_pseudo_CT('profile', 'local-near-parity-r2010b', 'subjects', 'batch')
 
 When `local-near-parity-r2010b` is selected on a MATLAB release other than R2010b, a warning is shown that results may differ from expected near-parity output, and the runtime guard is bypassed.
 
+### NIfTI Input
+
+All profiles accept **pre-converted NIfTI files** in place of raw DICOM. Place
+the NIfTI in the subject's `MR_PET/` folder and pass its path to the `subjects`
+argument. The UMAP reference is discovered from the sibling `MR/` directory:
+
+```
+<subject_root>/
+├── MR/
+│   ├── UMAP/         ← reference UMAP (for DICOM output geometry)
+│   └── ...
+└── MR_PET/
+    └── mprage.nii    ← input NIfTI (processed in place)
+```
+
+Example:
+
+```matlab
+run_pseudo_CT('profile', 'local-current', 'subjects', ...
+    {'/path/to/subject/MR_PET/mprage.nii'})
+```
+
+The NIfTI is copied into `MR_PET/tmp/mprage.nii` during staging, preserving the
+original input file. All pipeline stages (UMAP discovery, DICOM output, QC,
+promotion) work identically to the DICOM input path.
+
 For localhost execution, temporary FreeSurfer normalization staging happens under each subject's own `MR_PET/tmp` folder rather than under the hardcoded `host_folder` path in the defaults template. On successful completion, the final NIfTI/QC/version artifacts are promoted back into `MR_PET` and the `MR_PET/tmp` folder is removed.
 
 ### Launchpad (profile: `launchpad`)
