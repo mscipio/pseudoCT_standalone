@@ -98,9 +98,13 @@ if isempty(profile_name)
 end
 
 %% === Warning handling ===
-% Legacy output: [orig_warn] = warning;
-% Legacy output: warning('off', 'all');
-% Legacy output: warn_cleanup = onCleanup(@() warning(orig_warn));
+% Suppress all warnings during processing (legacy SPM8 generates many
+% benign warnings about version compatibility, deprecated functions, and
+% Java classpath conflicts). The original state is restored on exit via
+% the onCleanup guard.
+[orig_warn] = warning;
+warning('off', 'all');
+warn_cleanup = onCleanup(@() warning(orig_warn));
 
 %% === Load the selected profile once and set up its resources ===
 config = pseudo_CT_load_profile(profile_name, fullfile(pathp, 'src', 'config'));
