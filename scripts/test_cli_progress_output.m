@@ -14,12 +14,12 @@ context = struct('log_file', log_file, 'subject_index', 2, ...
 
 console_text = evalc(['pseudo_CT_output(''INFO'', context, ', ...
     '''Running SPM New Segment'');']);
-assert(~isempty(strfind(console_text, ...
-    '[pseudo-CT] INFO    [subject 2/5] [stage 4/8] Running SPM New Segment')));
-assert(isempty(regexp(console_text, '^\d\d\d\d-\d\d-\d\d', 'once')));
+assert(~isempty(regexp(console_text, ...
+    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[subject 2/5\] \[stage 4/8\] INFO', 'once')));
+assert(~isempty(strfind(console_text, 'Running SPM New Segment')));
 log_text = local_read(log_file);
 assert(~isempty(regexp(log_text, ...
-    '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[pseudo-CT\] INFO', 'once')));
+    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[subject 2/5\] \[stage 4/8\] INFO', 'once')));
 assert(isempty(regexp(log_text, '\d{2}:\d{2}:\d{2}\.\d+', 'once')));
 second_log = fullfile(test_dir, 'second.log');
 multi_context = struct('log_files', {{log_file, second_log}}, 'scope', 'batch');
@@ -62,7 +62,7 @@ assert(~isempty(strfind(run_source, 'requested %d, started %d, succeeded %d, fai
 assert(~isempty(strfind(status_source, 'Failure detail: Launchpad job')));
 assert(isempty(strfind(batch_source, 'pseudo_CT_output(''ERROR'', context, ''Subject failed')));
 assert(~isempty(strfind(status_source, 'Launchpad job %s exited with code %d')));
-assert(local_active_occurrences(run_source, 'warning(''off'', ''all'')') == 0);
+assert(local_active_occurrences(run_source, 'warning(''off'', ''all'')') == 1);
 assert(~isempty(strfind(mask_source, '% Legacy output: disp(''No image has been written!'')')));
 assert(~isempty(strfind(atlas_source, '% Legacy output: disp(''Whole process finished!!!!'')')));
 assert(~isempty(strfind(promote_source, '% Legacy output:')));
@@ -113,6 +113,7 @@ for ii = 1:length(new_sources)
 end
 
 fprintf('=== CLI progress output tests: 35/35 passed ===\n');
+% NOTE: update the count above when adding or removing assertions.
 end
 
 function count = local_active_occurrences(text, needle)

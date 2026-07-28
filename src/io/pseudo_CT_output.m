@@ -23,7 +23,7 @@ end
 
 message = sprintf(format_string, varargin{:});
 message = regexprep(message, '[\r\n]+', ' | ');
-prefix = sprintf('[pseudo-CT] %-7s ', level);
+timestamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
 tags = '';
 if isfield(context, 'subject_index') && isfield(context, 'subject_count') && ...
         ~isempty(context.subject_index) && ~isempty(context.subject_count)
@@ -42,9 +42,8 @@ if isempty(tags) && isfield(context, 'scope') && ~isempty(context.scope)
     tags = sprintf('[%s] ', context.scope);
 end
 
-timestamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
-line = [prefix tags message];
-fprintf(1, '%s %s\n', timestamp, line);
+line = sprintf('[%s] %s%-7s %s', timestamp, tags, level, message);
+fprintf(1, '%s\n', line);
 
 log_files = {};
 if isfield(context, 'log_files') && ~isempty(context.log_files)
@@ -60,14 +59,14 @@ for ii = 1:length(log_files)
     fid = fopen(log_files{ii}, 'a');
     if fid == -1
         if ~log_warning_emitted
-            fprintf(1, '[pseudo-CT] WARN    Run log could not be written; processing will continue.\n');
+            fprintf(1, '[%s] WARN    Run log could not be written; processing will continue.\n', timestamp);
             log_warning_emitted = true;
         end
         continue;
     end
     write_failed = false;
     try
-        fprintf(fid, '%s %s\n', timestamp, line);
+        fprintf(fid, '%s\n', line);
     catch
         write_failed = true;
     end
@@ -78,7 +77,7 @@ for ii = 1:length(log_files)
     end
     if write_failed
         if ~log_warning_emitted
-            fprintf(1, '[pseudo-CT] WARN    Run log could not be written; processing will continue.\n');
+            fprintf(1, '[%s] WARN    Run log could not be written; processing will continue.\n', timestamp);
             log_warning_emitted = true;
         end
     end
