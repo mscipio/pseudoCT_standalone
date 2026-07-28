@@ -35,7 +35,7 @@ for ii=1:nf
 %         [aux,fnd,extd] = fileparts(list_dcm(1).name);
 %     end
     if length(strfind(extd, '.dcm')) || length(strfind(extd, '.DCM')) || length(strfind(extd, '.ima')) || length(strfind(extd, '.IMA')) || (length(strfind(extd, '.i'))==0 && (length(strfind(extd, '.nii'))==0) )
-        disp('Converting the *.dcm into *.nii');
+        % Legacy output: disp('Converting the *.dcm into *.nii');
 %         dcm2flat(strcat(fnd, extd)); % This is Dan's method! Not good if
 %         list_i = dir('*.i'); % using Spencer transform into Dicom!
 %         [aux,fnd,extd] = fileparts(list_i(1).name);
@@ -100,12 +100,12 @@ for ii=1:nf
             movefile(aux, aux2);
             Pnew(ii, 1:length(aux2)) = aux2;
         else
-            disp(sprintf('Neither the destination folder %s nor MR_PET does exits!!', dir_final));
+            % Legacy output: disp(sprintf('Neither the destination folder %s nor MR_PET does exits!!', dir_final));
             Pnew(ii, 1:length(aux)) = aux;
         end
     end
     if length(strfind(extd, '.i')) && length(strfind(lower(extd), '.ima')) == 0
-        disp('Converting the *.i into *.nii');
+        % Legacy output: disp('Converting the *.i into *.nii');
         gen_mr_anz_hdr(strcat(fnd, extd), 0, 'nii');
         aux = fullfile(pathd, strcat(fnd, '.nii'));
         aux2 = fullfile(pathd(1:str_f(end-1)), 'MR_PET');
@@ -126,7 +126,7 @@ for ii=1:nf
             aux2 = fullfile(aux2, strcat(fnd, '.nii'));
             Pnew(ii, 1:length(aux2)) = aux2;
         else
-            disp(sprintf('Neither the destination folder %s nor MR_PET does exits! Program quit!', dir_final));
+            % Legacy output: disp(sprintf('Neither the destination folder %s nor MR_PET does exits! Program quit!', dir_final));
         end
     end
     if length(strfind(extd, '.nii'))

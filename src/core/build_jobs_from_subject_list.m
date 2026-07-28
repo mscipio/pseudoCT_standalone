@@ -1,4 +1,4 @@
-function jobs = build_jobs_from_subject_list(subject_list, correct_aliasing)
+function [jobs, stats] = build_jobs_from_subject_list(subject_list, correct_aliasing)
 %BUILD_JOBS_FROM_SUBJECT_LIST Build job structs from a list of MPRAGE paths.
 %   JOBS = BUILD_JOBS_FROM_SUBJECT_LIST(SUBJECT_LIST, CORRECT_ALIASING)
 %   creates a struct array from the given MPRAGE file list.
@@ -21,6 +21,7 @@ function jobs = build_jobs_from_subject_list(subject_list, correct_aliasing)
 %   Minimum supported MATLAB: R2010b.
 
 jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {});
+stats = struct('requested', 0, 'skipped', 0, 'skipped_subjects', {{}});
 
 if ischar(subject_list) && isrow(subject_list)
     subject_list = char(subject_list);
@@ -32,9 +33,12 @@ for ii = 1:size(subject_list, 1)
     if isempty(mprage_fn)
         continue;
     end
+    stats.requested = stats.requested + 1;
     [ute_fn, umap_fn] = pseudo_CT_auto_discover_ute_umap(mprage_fn); %#ok<NASGU>
     if ~ischar(umap_fn) || exist(umap_fn, 'file') ~= 2
-        disp(sprintf('Skipping subject because no UMAP reference was found:\n%s\n', mprage_fn));
+        % Legacy output: disp(sprintf('Skipping subject because no UMAP reference was found:\n%s\n', mprage_fn));
+        stats.skipped = stats.skipped + 1;
+        stats.skipped_subjects{end + 1} = mprage_fn;
         continue;
     end
     kk = kk + 1;

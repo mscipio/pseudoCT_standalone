@@ -98,11 +98,11 @@ if dist_nose < thres_aliasing & dist_back < thres_aliasing
             %V_orig.mat = V_orig.mat*(spm_matrix(params, 'Z*S*R*T')*eye(4));
             V_orig.mat = (spm_matrix(params, 'Z*S*R*T')*eye(4))*V_orig.mat; % New May/3/2017
             aux = spm_write_vol(V_orig, Im_out);
-            disp(sprintf('Orig image saved as:\n%s', new_fn));
+            % Legacy output: disp(sprintf('Orig image saved as:\n%s', new_fn));
             Pnew = new_fn;
         otherwise
             corrected = 0;
-            disp('Original image maintained!!');
+            % Legacy output: disp('Original image maintained!!');
     end
     close;
 end

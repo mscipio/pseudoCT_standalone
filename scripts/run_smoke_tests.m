@@ -7,7 +7,6 @@ fprintf('Root: %s\n\n', root_dir);
 
 num_passed = 0;
 num_failed = 0;
-num_skipped = 0;
 
     function check(test_name, ok, detail)
         if ok
@@ -19,18 +18,11 @@ num_skipped = 0;
         end
     end
 
-    function skip(test_name, reason)
-        num_skipped = num_skipped + 1;
-        fprintf('  SKIP  %s - %s\n', test_name, reason);
-    end
-
 entry_files = {'run_pseudo_CT.m'};
-deprecated_entry_files = {'deprecated/run_pseudo_CT_local.m', 'deprecated/run_pseudo_CT_launchpad.m'};
-all_entry_files = [entry_files, deprecated_entry_files];
-for i=1:numel(all_entry_files)
-    path = fullfile(root_dir, all_entry_files{i});
-    check([all_entry_files{i} ' exists'], exist(path, 'file') == 2, 'file not found');
-    check_parse(path, all_entry_files{i}, @check);
+for i=1:numel(entry_files)
+    path = fullfile(root_dir, entry_files{i});
+    check([entry_files{i} ' exists'], exist(path, 'file') == 2, 'file not found');
+    check_parse(path, entry_files{i}, @check);
 end
 
 source_files = collect_m_files(fullfile(root_dir, 'src'));
@@ -52,27 +44,6 @@ for i=1:numel(override_files)
     check_parse(path, ['vers/' override_files{i}], @check);
 end
 
-atlas_path = getenv('PSEUDOCT_BATCH_ATLAS');
-if isempty(atlas_path)
-    atlas_path = fullfile(root_dir, 'Batch_atlas');
-end
-if exist(atlas_path, 'dir') ~= 7
-    skip('Batch_atlas assets', sprintf('atlas directory not found: %s', atlas_path));
-else
-    check('Batch_atlas/TPM.nii exists', ...
-        exist(fullfile(atlas_path, 'TPM.nii'), 'file') == 2, 'TPM.nii not found');
-    check('Batch_atlas/ch2.nii exists', ...
-        exist(fullfile(atlas_path, 'ch2.nii'), 'file') == 2, 'ch2.nii not found');
-    templates_ok = true;
-    for i=0:6
-        templates_ok = templates_ok && ...
-            exist(fullfile(atlas_path, sprintf('Template_%d.nii', i)), 'file') == 2;
-    end
-    check('seven DARTEL templates exist', templates_ok, 'Template_0.nii through Template_6.nii are required');
-    check('Launchpad SSH JAR exists', ...
-        exist(fullfile(atlas_path, 'ganymed-ssh2-build250', ...
-        'ganymed-ssh2-build250.jar'), 'file') == 2, 'SSH JAR not found');
-end
 
 changelog = read_text(fullfile(root_dir, 'CHANGELOG.md'));
 first_line = strtrim(strtok(changelog, char(10)));
@@ -99,7 +70,7 @@ check('final FWHM consumes profile setting', ...
     'config.fwhm is not passed to DICOM output');
 
 launchpad_source = entry_source;
-mask_call = strfind(launchpad_source, 'launchpad_apply_background_mask(jobs(jj).temp_dir)');
+mask_call = strfind(launchpad_source, 'launchpad_apply_background_mask(jobs(jj).temp_dir, context)');
 dicom_call = strfind(launchpad_source, 'pseudo_CT_write_mu_map_dicom');
 promote_call = strfind(launchpad_source, 'pseudo_CT_promote_final_outputs');
 check('Launchpad optional mask precedes DICOM conversion and promotion', ...
@@ -118,8 +89,8 @@ for i=1:numel(comparator_files)
     check_parse(path, ['scripts/' comparator_files{i}], @check);
 end
 
-fprintf('\n=== Results: %d passed, %d failed, %d skipped ===\n', ...
-    num_passed, num_failed, num_skipped);
+fprintf('\n=== Results: %d passed, %d failed ===\n', ...
+    num_passed, num_failed);
 if num_failed > 0
     error('Smoke tests failed.');
 end

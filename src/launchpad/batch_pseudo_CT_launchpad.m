@@ -13,6 +13,7 @@ varargin = varargin(1:end-1);
 clean_folder = 1;
 keep_tmp = 0;
 check_aliasing = config.aliasing_default;
+output_log_files = {};
 
 if length(P) == 0
     P = spm_select(Inf, 'any', 'Choose the subjects to run Pseudo-CT on cluster!');
@@ -36,13 +37,19 @@ if num_extra_args > 0 && rem(num_extra_args, 2) == 0
                 keep_tmp = varargin{ii+1};
             case 'check_aliasing'
                 check_aliasing = varargin{ii+1};
+            case 'output_contexts'
+                output_log_files = varargin{ii+1};
             otherwise
-                disp('Unkown parameter!!');
+                % Legacy output: disp('Unkown parameter!!');
+                pseudo_CT_output('ERROR', struct('log_files', {output_log_files}), ...
+                    'Unknown Launchpad parameter: %s', varargin{ii});
                 return
         end
     end
 elseif rem(num_extra_args, 2) ~= 0
-    disp(sprintf('The total number of input variables must be: (%d fix + multiples of 2 for extra parameters)!!!', fix_args));
+    % Legacy output: disp(sprintf('The total number of input variables must be: (%d fix + multiples of 2 for extra parameters)!!!', fix_args));
+    pseudo_CT_output('ERROR', struct('log_files', {output_log_files}), ...
+        'Launchpad options must be supplied as name/value pairs.');
     return
 end
 
@@ -77,7 +84,10 @@ launchpad_runner = config.launchpad.runner;
 launchpad_mcr_root = config.launchpad.mcr_root;
 
 for jj=1:size(P, 1)
-    disp(sprintf('Working on subject %d of %d:\n%s\n', jj, size(P, 1), deblank(P(jj, :))));
+    % Legacy output: disp(sprintf('Working on subject %d of %d:\n%s\n', jj, size(P, 1), deblank(P(jj, :))));
+    context = local_context(output_log_files, jj, size(P, 1), 2);
+    stage_started = tic;
+    pseudo_CT_output('INFO', context, 'Uploading input and submitting Launchpad job.');
     [pathn, fn, extn] = fileparts(deblank(P(jj, :)));
 
     rand_fold(jj) = randi(10000000, 1);
@@ -100,13 +110,23 @@ for jj=1:size(P, 1)
     cmd = [cmd 'export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1; ' launchpad_runner ' ' launchpad_mcr_root ' ' vari ';'];
     cmd = sprintf('"%s"', cmd);
     [ssh2_conn, jobname{jj}, jobnum(jj)] = run_launchpad_cmd_return(...
-        cmd, ssh2_conn, FS, queue_com, config); %#ok<AGROW>
+        cmd, ssh2_conn, FS, queue_com, context, config); %#ok<AGROW>
     evidence = launchpad_evidence('submission', evidence, ...
         struct('jobname', jobname{jj}, 'jobnum', jobnum(jj)));
+    context.job_number = jobnum(jj);
+    pseudo_CT_output('SUCCESS', context, 'Launchpad job submitted (elapsed %s).', ...
+        local_elapsed(toc(stage_started)));
 end
 
+shared_context = struct('log_files', {output_log_files}, 'scope', 'batch', ...
+    'stage_index', 3, 'stage_count', 8, ...
+    'subject_log_files', {output_log_files});
+stage_started = tic;
+pseudo_CT_output('INFO', shared_context, 'Waiting for remote Launchpad processing.');
 ss_tot = check_launchpad_command_status(jobname, ssh2_conn, 10*60, 60, ...
-    jobnum, config);
+    jobnum, shared_context, config);
+pseudo_CT_output('SUCCESS', shared_context, ...
+    'Remote processing wait completed (elapsed %s).', local_elapsed(toc(stage_started)));
 
 for jj=1:size(P, 1)
     [pathn, fn, extn] = fileparts(deblank(P(jj, :))); %#ok<ASGLU>
@@ -114,7 +134,10 @@ for jj=1:size(P, 1)
         struct('exit_status', ss_tot(jj)));
 
     if ss_tot(jj) == 0
-        disp(sprintf('\nCopying Back images for subject %d of %d: %s\n', jj, size(P, 1), deblank(P(jj, :))));
+        % Legacy output: disp(sprintf('\nCopying Back images for subject %d of %d: %s\n', jj, size(P, 1), deblank(P(jj, :))));
+        context = local_context(output_log_files, jj, size(P, 1), 4);
+        stage_started = tic;
+        pseudo_CT_output('INFO', context, 'Retrieving remote outputs.');
         lc_path = strcat(lc_path_parent, num2str(rand_fold(jj)));
         [ssh2_conn, comm_result] = ssh2_command(ssh2_conn, sprintf('ls %s/*', lc_path)); %#ok<ASGLU>
         ssh2_conn = scp_get(ssh2_conn, comm_result.', pathn);
@@ -122,38 +145,51 @@ for jj=1:size(P, 1)
         % A cluster job exiting 0 with no att_map.nii is a known failure mode
         % (e.g. subject-specific issues in the compiled Pseudo_CT_launchpad).
         if exist(fullfile(pathn, att_map_filename), 'file') ~= 2
-            fprintf(1, '[launchpad-debug] att_map.nii missing for subject %s despite job exit 0.\n', deblank(P(jj, :)));
+            % Legacy output: fprintf(1, '[launchpad-debug] att_map.nii missing for subject %s despite job exit 0.\n', deblank(P(jj, :)));
+            pseudo_CT_output('WARN', context, ...
+                'Failure detail: remote job exited successfully but att_map.nii is missing.');
+            ss_tot(jj) = 711;
+        else
+            pseudo_CT_output('SUCCESS', context, ...
+                'Remote outputs retrieved (elapsed %s).', local_elapsed(toc(stage_started)));
         end
         evidence = launchpad_evidence('retrieval', evidence, struct(...
             'att_map_present', exist(fullfile(pathn, att_map_filename), 'file') == 2));
     else
-        disp(sprintf('\nSubject FAILED: %s\n', deblank(P(jj, :))));
-        fprintf(1, '[launchpad-debug] Job %d failed with exit code %d for subject %s\n', ...
-            jobnum(jj), ss_tot(jj), deblank(P(jj, :)));
+        % Legacy output: disp(sprintf('\nSubject FAILED: %s\n', deblank(P(jj, :))));
+        % Legacy output: fprintf(1, '[launchpad-debug] Job %d failed with exit code %d for subject %s\n', ...
+        %     jobnum(jj), ss_tot(jj), deblank(P(jj, :)));
+        context = local_context(output_log_files, jj, size(P, 1), 3);
+        context.job_number = jobnum(jj);
     end
     if keep_tmp == 0
         ssh2_conn = ssh2_command(ssh2_conn, sprintf('rm -rf %s', strcat(lc_path_parent, num2str(rand_fold(jj)))));
         cleanup_state = 'remote-scratch-removed';
     else
         preserved_path = strcat(lc_path_parent, num2str(rand_fold(jj)));
-        fprintf(1, ['[keep-tmp] Preserved cluster scratch: %s\n', ...
-                    '[keep-tmp] To clean up later, run:\n', ...
-                    '           ssh %s ''rm -rf %s''\n'], ...
-                preserved_path, ssh2_conn.hostname, preserved_path);
+        % Legacy output: fprintf(1, ['[keep-tmp] Preserved cluster scratch: %s\n', ...
+        %             '[keep-tmp] To clean up later, run:\n', ...
+        %             '           ssh %s ''rm -rf %s''\n'], ...
+        %         preserved_path, ssh2_conn.hostname, preserved_path);
+        pseudo_CT_output('INFO', context, 'Remote scratch was preserved.');
+        pseudo_CT_output('INFO', context, '    %s', preserved_path);
         cleanup_state = 'remote-scratch-preserved';
     end
     evidence = launchpad_evidence('cleanup', evidence, struct('cleanup', cleanup_state));
     try
         launchpad_evidence('write', pathn, evidence);
     catch ME_evidence %#ok<CTCH>
-        fprintf(1, '[launchpad-diag] Could not save lifecycle evidence for %s: %s\n', fn, ME_evidence.message);
+        % Legacy output: fprintf(1, '[launchpad-diag] Could not save lifecycle evidence for %s: %s\n', fn, ME_evidence.message);
+        pseudo_CT_output('WARN', context, 'Lifecycle evidence could not be saved: %s', ME_evidence.message);
     end
 end
 
 ssh2_conn = ssh2_close(ssh2_conn);
 
 if clean_folder
-    disp(sprintf('Cleaning folders ... '));
+    % Legacy output: disp(sprintf('Cleaning folders ... '));
+    pseudo_CT_output('INFO', struct('log_files', {output_log_files}, 'scope', 'batch'), ...
+        'Cleaning Launchpad staging folders.');
     for jj=1:size(P, 1)
         [pathn, fn, extn] = fileparts(deblank(P(jj, :))); %#ok<ASGLU>
         current_dir = pwd;
@@ -165,3 +201,18 @@ if clean_folder
 end
 
 return
+end
+
+function context = local_context(log_files, subject_index, subject_count, stage_index)
+context = struct('subject_index', subject_index, 'subject_count', subject_count, ...
+    'stage_index', stage_index, 'stage_count', 8);
+if length(log_files) >= subject_index
+    context.log_file = log_files{subject_index};
+end
+end
+
+function value = local_elapsed(seconds)
+seconds = max(0, floor(seconds));
+value = sprintf('%02d:%02d:%02d', floor(seconds / 3600), ...
+    floor(rem(seconds, 3600) / 60), rem(seconds, 60));
+end

@@ -5,6 +5,7 @@ function test_auto_discover_messages()
 
 root_dir = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(root_dir, 'src', 'ui'));
+addpath(fullfile(root_dir, 'src', 'io'));
 
 passed = 0;
 failed = 0;
@@ -26,7 +27,7 @@ captured = evalc('pseudo_CT_discover_ute_umap(fake_mprage);');
 [ute, umap] = pseudo_CT_discover_ute_umap(fake_mprage);
 if ute == 0, passed = passed + 1; fprintf('  PASS  S1a: ute=0\n'); else failed = failed + 1; fprintf('  FAIL  S1a: ute=%s\n', num2str(ute)); end
 if umap == 0, passed = passed + 1; fprintf('  PASS  S1b: umap=0\n'); else failed = failed + 1; fprintf('  FAIL  S1b: umap=%s\n', num2str(umap)); end
-if contains(captured, 'No MR/ parent'), passed = passed + 1; fprintf('  PASS  S1c: "No MR/ parent" message\n'); else failed = failed + 1; fprintf('  FAIL  S1c: no message. stdout=[%s]\n', strtrim(captured)); end
+if contains(captured, 'No MR parent'), passed = passed + 1; fprintf('  PASS  S1c: "No MR parent" message\n'); else failed = failed + 1; fprintf('  FAIL  S1c: no message. stdout=[%s]\n', strtrim(captured)); end
 
 % ==================== Scenario 2: MR parent, no UTE ====================
 fprintf('\n--- Scenario 2: MR parent, no UTE ---\n');
@@ -41,12 +42,12 @@ fid = fopen(fake_mprage2, 'w'); fclose(fid);
 captured = evalc('pseudo_CT_discover_ute_umap(fake_mprage2);');
 [ute, umap] = pseudo_CT_discover_ute_umap(fake_mprage2);
 if ute == 0, passed = passed + 1; fprintf('  PASS  S2a: ute=0\n'); else failed = failed + 1; fprintf('  FAIL  S2a: ute=%s\n', num2str(ute)); end
-if contains(captured, 'No UTE found'), passed = passed + 1; fprintf('  PASS  S2b: "No UTE found" message\n'); else failed = failed + 1; fprintf('  FAIL  S2b: no message. stdout=[%s]\n', strtrim(captured)); end
+if contains(captured, 'No UTE reference was found'), passed = passed + 1; fprintf('  PASS  S2b: "No UTE reference" message\n'); else failed = failed + 1; fprintf('  FAIL  S2b: no message. stdout=[%s]\n', strtrim(captured)); end
 
 % ==================== Scenario 3: MR parent, no UMAP ====================
 fprintf('\n--- Scenario 3: MR parent, no UMAP ---\n');
 if umap == 0, passed = passed + 1; fprintf('  PASS  S3a: umap=0\n'); else failed = failed + 1; fprintf('  FAIL  S3a: umap=%s\n', num2str(umap)); end
-if contains(captured, 'No UMAP found'), passed = passed + 1; fprintf('  PASS  S3b: "No UMAP found" message\n'); else failed = failed + 1; fprintf('  FAIL  S3b: no message. stdout=[%s]\n', strtrim(captured)); end
+if contains(captured, 'No UMAP reference was found'), passed = passed + 1; fprintf('  PASS  S3b: "No UMAP reference" message\n'); else failed = failed + 1; fprintf('  FAIL  S3b: no message. stdout=[%s]\n', strtrim(captured)); end
 
 % ==================== Scenario 4: Multiple UTE candidates across sibling folders ====================
 fprintf('\n--- Scenario 4: Multiple UTE across sibling folders ---\n');

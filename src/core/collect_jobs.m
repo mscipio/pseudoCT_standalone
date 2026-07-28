@@ -1,4 +1,4 @@
-function jobs = collect_jobs(config, varargin)
+function [jobs, stats] = collect_jobs(config, varargin)
 %COLLECT_JOBS Collect pseudo-CT jobs from GUI, batch mode, or subject list.
 %   JOBS = COLLECT_JOBS(MANIFEST) opens the existing single-subject GUI
 %   (LOAD_MR_4_AC) and returns a job struct for one subject.
@@ -25,6 +25,7 @@ function jobs = collect_jobs(config, varargin)
 %   Minimum supported MATLAB: R2010b.
 
 jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {});
+stats = struct('requested', 0, 'skipped', 0, 'skipped_subjects', {{}});
 
 if ~isdeployed && ~isempty(varargin)
     subject_list = '';
@@ -45,7 +46,7 @@ if ~isdeployed && ~isempty(varargin)
             correct_aliasing = varargin{2};
         end
         correct_aliasing = validate_aliasing(correct_aliasing);
-        jobs = build_jobs_from_subject_list(subject_list, correct_aliasing);
+        [jobs, stats] = build_jobs_from_subject_list(subject_list, correct_aliasing);
         return;
     end
 end
@@ -65,6 +66,7 @@ correct_aliasing = validate_aliasing(correct_aliasing);
 jobs(1).mprage_fn = mprage_fn;
 jobs(1).umap_fn = umap_fn;
 jobs(1).correct_aliasing = correct_aliasing;
+stats.requested = 1;
 
 end
 

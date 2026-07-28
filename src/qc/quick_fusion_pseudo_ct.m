@@ -15,7 +15,7 @@ composite = 0;
 cd(pat_folder);
 listi = cellstr(ls('*normalized.nii'));
 if length(listi) == 0
-    disp('Unable to find a *normalized.nii file');
+    % Legacy output: disp('Unable to find a *normalized.nii file');
     return;
 end
 % Get the first one:
@@ -26,13 +26,13 @@ try
     mr_im = spm_read_vols(spm_vol(mr_image));
     ct_im = spm_read_vols(spm_vol(ct_image));
 catch
-    disp('Unable to open the nifti files');
+    % Legacy output: disp('Unable to open the nifti files');
     return
 end
 
 % Reslice if needed:
 if (size(mr_im, 1) ~= size(ct_im, 1)) | (size(mr_im, 2) ~= size(ct_im, 2)) | (size(mr_im, 3) ~= size(ct_im, 3))
-    disp('Reslicing ...');
+    % Legacy output: disp('Reslicing ...');
     P(1, :) = mr_image;
     P(2, 1:length(ct_image)) = ct_image;
     flg.mean  = 0; % Don't create a mean image;

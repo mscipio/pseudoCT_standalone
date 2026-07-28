@@ -17,7 +17,9 @@ umap_fn = 0;
 [patha, ~, ~] = fileparts(deblank(mprage_fn));
 ss = strfind(patha, strcat(filesep, 'MR', filesep));
 if isempty(ss)
-    fprintf(1, 'WARNING: No MR/ parent in %s\n', patha);
+    % Legacy output: fprintf(1, 'WARNING: No MR/ parent in %s\n', patha);
+    pseudo_CT_output('WARN', struct('scope', 'discovery'), 'No MR parent was found.');
+    pseudo_CT_output('INFO', struct('scope', 'discovery'), '    %s', patha);
     return;
 end
 
@@ -41,14 +43,17 @@ for ii = 1:length(siblings)
 end
 
 if isempty(ute_candidates)
-    fprintf(1, 'WARNING: No UTE found in %s\n', dir_b);
+    % Legacy output: fprintf(1, 'WARNING: No UTE found in %s\n', dir_b);
+    pseudo_CT_output('WARN', struct('scope', 'discovery'), 'No UTE reference was found.');
 elseif length(ute_candidates) == 1
     ute_fn = ute_candidates{1};
 else
     ute_candidates = sort(ute_candidates);
     ute_fn = ute_candidates{1};
-    fprintf(1, 'WARNING: %d UTE candidates in %s, using %s\n', ...
-        length(ute_candidates), dir_b, ute_fn);
+    % Legacy output: fprintf(1, 'WARNING: %d UTE candidates in %s, using %s\n', ...
+    %     length(ute_candidates), dir_b, ute_fn);
+    pseudo_CT_output('WARN', struct('scope', 'discovery'), ...
+        '%d UTE candidates were found; using the first sorted match.', length(ute_candidates));
 end
 
 % ===== UMAP discovery =====
@@ -65,15 +70,18 @@ for ii = 1:length(siblings)
 end
 
 if isempty(umap_candidates)
-    fprintf(1, 'WARNING: No UMAP found in %s\n', dir_b);
+    % Legacy output: fprintf(1, 'WARNING: No UMAP found in %s\n', dir_b);
+    pseudo_CT_output('WARN', struct('scope', 'discovery'), 'No UMAP reference was found.');
 elseif length(umap_candidates) == 1
     umap_fn = umap_candidates{1};
 else
     umap_candidates = sort(umap_candidates);
     umap_fn = umap_candidates{1};
     [~, folder_name] = fileparts(fileparts(umap_fn));
-    fprintf(1, 'WARNING: %d UMAP candidates in %s%s/, using %s\n', ...
-        length(umap_candidates), dir_b, folder_name, umap_fn);
+    % Legacy output: fprintf(1, 'WARNING: %d UMAP candidates in %s%s/, using %s\n', ...
+    %     length(umap_candidates), dir_b, folder_name, umap_fn);
+    pseudo_CT_output('WARN', struct('scope', 'discovery'), ...
+        '%d UMAP candidates were found; using the first sorted match.', length(umap_candidates));
 end
 
 return

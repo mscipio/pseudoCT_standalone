@@ -1,0 +1,147 @@
+function test_cli_progress_output()
+%TEST_CLI_PROGRESS_OUTPUT Focused tests for standardized CLI output.
+
+root_dir = fileparts(fileparts(mfilename('fullpath')));
+addpath(fullfile(root_dir, 'src', 'io'));
+addpath(fullfile(root_dir, 'src', 'core'));
+addpath(fullfile(root_dir, 'src', 'ui'));
+test_dir = tempname;
+mkdir(test_dir);
+cleanup = onCleanup(@() local_cleanup(test_dir)); %#ok<NASGU>
+log_file = fullfile(test_dir, 'pseudo_CT_local-current_20260728_154230.log');
+context = struct('log_file', log_file, 'subject_index', 2, ...
+    'subject_count', 5, 'stage_index', 4, 'stage_count', 8);
+
+console_text = evalc(['pseudo_CT_output(''INFO'', context, ', ...
+    '''Running SPM New Segment'');']);
+assert(~isempty(strfind(console_text, ...
+    '[pseudo-CT] INFO    [subject 2/5] [stage 4/8] Running SPM New Segment')));
+assert(isempty(regexp(console_text, '^\d\d\d\d-\d\d-\d\d', 'once')));
+log_text = local_read(log_file);
+assert(~isempty(regexp(log_text, ...
+    '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[pseudo-CT\] INFO', 'once')));
+assert(isempty(regexp(log_text, '\d{2}:\d{2}:\d{2}\.\d+', 'once')));
+second_log = fullfile(test_dir, 'second.log');
+multi_context = struct('log_files', {{log_file, second_log}}, 'scope', 'batch');
+evalc('pseudo_CT_output(''INFO'', multi_context, ''Shared event'');');
+assert(~isempty(strfind(local_read(log_file), 'Shared event')));
+assert(~isempty(strfind(local_read(second_log), 'Shared event')));
+run_id = '20260728_154230';
+name_a = fullfile('subject_a', 'MR_PET', ...
+    sprintf('pseudo_CT_local-current_%s.log', run_id));
+name_b = fullfile('subject_b', 'MR_PET', ...
+    sprintf('pseudo_CT_local-current_%s.log', run_id));
+[~, base_a, ext_a] = fileparts(name_a);
+[~, base_b, ext_b] = fileparts(name_b);
+assert(strcmp([base_a ext_a], [base_b ext_b]));
+assert(~isempty(regexp([base_a ext_a], ...
+    '^pseudo_CT_local-current_\d{8}_\d{6}\.log$', 'once')));
+
+run_source = local_read(fullfile(root_dir, 'run_pseudo_CT.m'));
+helper_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_output.m'));
+profile_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_print_profile_summary.m'));
+promote_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_promote_final_outputs.m'));
+dicom_source = local_read(fullfile(root_dir, 'src', 'io', 'nii2dcm_header_copy_vb20_david.m'));
+jobs_source = local_read(fullfile(root_dir, 'src', 'core', 'build_jobs_from_subject_list.m'));
+batch_source = local_read(fullfile(root_dir, 'src', 'launchpad', 'batch_pseudo_CT_launchpad.m'));
+status_source = local_read(fullfile(root_dir, 'src', 'launchpad', 'check_launchpad_command_status.m'));
+atlas_source = local_read(fullfile(root_dir, 'src', 'core', 'atlas_based_attenuation_map.m'));
+mask_source = local_read(fullfile(root_dir, 'src', 'core', 'head_mask_mprage.m'));
+
+assert(~isempty(strfind(run_source, 'run_id = datestr(now, ''yyyymmdd_HHMMSS'')')));
+assert(~isempty(strfind(run_source, 'sprintf(''pseudo_CT_%s_%s.log'', profile_name, run_id)')));
+assert(~isempty(strfind(run_source, 'all_log_files{end + 1} = jobs(ii).log_file')));
+assert(local_active_occurrences(run_source, 'pseudo_CT_print_profile_summary(') == 1);
+assert(~isempty(strfind(run_source, 'show_subject_dialog = interactive_gui')));
+assert(~isempty(strfind(run_source, 'if interactive_gui && num_success == 1')));
+assert(~isempty(strfind(run_source, 'if ~promotion_success')));
+assert(~isempty(strfind(run_source, 'num_failed = num_failed + 1')));
+assert(~isempty(strfind(dicom_source, 'pseudo_CT:DICOMDimensionMismatch')));
+assert(~isempty(strfind(jobs_source, 'stats.skipped = stats.skipped + 1')));
+assert(~isempty(strfind(run_source, 'requested %d, started %d, succeeded %d, failed %d')));
+assert(~isempty(strfind(status_source, 'Failure detail: Launchpad job')));
+assert(isempty(strfind(batch_source, 'pseudo_CT_output(''ERROR'', context, ''Subject failed')));
+assert(~isempty(strfind(status_source, 'Launchpad job %s exited with code %d')));
+assert(local_active_occurrences(run_source, 'warning(''off'', ''all'')') == 0);
+assert(~isempty(strfind(mask_source, '% Legacy output: disp(''No image has been written!'')')));
+assert(~isempty(strfind(atlas_source, '% Legacy output: disp(''Whole process finished!!!!'')')));
+assert(~isempty(strfind(promote_source, '% Legacy output:')));
+assert(~isempty(strfind(profile_source, 'pseudo_CT_profile_summary.txt')));
+assert(~isempty(strfind(helper_source, 'datestr(now, ''yyyy-mm-dd HH:MM:SS'')')));
+
+empty_temp = fullfile(test_dir, 'empty');
+promoted = fullfile(test_dir, 'promoted');
+mkdir(empty_temp);
+promotion_result = pseudo_CT_promote_final_outputs(empty_temp, promoted, '', struct());
+assert(promotion_result == 0);
+
+stub_dir = fullfile(test_dir, 'stubs');
+mkdir(stub_dir);
+local_write(fullfile(stub_dir, 'spm_vol.m'), ...
+    'function V=spm_vol(varargin), V=struct(''dim'',[2 3 4]); end\n');
+local_write(fullfile(stub_dir, 'spm_read_vols.m'), ...
+    'function V=spm_read_vols(varargin), V=zeros(2,3,4); end\n');
+local_write(fullfile(stub_dir, 'dicominfo.m'), ...
+    ['function D=dicominfo(varargin), D=struct(''Rows'',9,''Columns'',8,', ...
+     '''BitsAllocated'',16,''SeriesNumber'',1,''InstanceNumber'',1); end\n']);
+addpath(stub_dir, '-begin');
+reference_file = fullfile(test_dir, 'ab01.dcm');
+fid = fopen(reference_file, 'w');
+fwrite(fid, zeros(1, 1000), 'uint8');
+fclose(fid);
+dimension_failed = false;
+try
+    nii2dcm_header_copy_vb20_david(fullfile(test_dir, 'input.nii'), ...
+        reference_file, fullfile(test_dir, 'dicom_output'));
+catch ME
+    dimension_failed = strcmp(ME.identifier, 'pseudo_CT:DICOMDimensionMismatch');
+end
+rmpath(stub_dir);
+assert(dimension_failed, 'DICOM dimension mismatch must propagate as an error.');
+
+[skipped_jobs, skipped_stats] = build_jobs_from_subject_list( ...
+    fullfile(test_dir, 'subject_without_mr', 'mprage.nii'), 1);
+assert(isempty(skipped_jobs));
+assert(skipped_stats.requested == 1 && skipped_stats.skipped == 1);
+
+new_sources = {run_source, helper_source, profile_source, promote_source, ...
+    dicom_source, jobs_source, batch_source, status_source, atlas_source};
+for ii = 1:length(new_sources)
+    assert(isempty(regexp(new_sources{ii}, '\<datetime\>', 'once')));
+    assert(isempty(regexp(new_sources{ii}, '\bstring\s*\(', 'once')));
+    assert(isempty(regexp(new_sources{ii}, '\btable\s*\(', 'once')));
+end
+
+fprintf('=== CLI progress output tests: 35/35 passed ===\n');
+end
+
+function count = local_active_occurrences(text, needle)
+lines = regexp(text, '\n', 'split');
+count = 0;
+for ii = 1:length(lines)
+    trimmed = strtrim(lines{ii});
+    if ~isempty(trimmed) && trimmed(1) ~= '%' && ~isempty(strfind(trimmed, needle))
+        count = count + 1;
+    end
+end
+end
+
+function text = local_read(path)
+fid = fopen(path, 'r');
+assert(fid ~= -1, 'Could not read %s', path);
+text = fread(fid, inf, '*char')';
+fclose(fid);
+end
+
+function local_write(path, text)
+fid = fopen(path, 'w');
+assert(fid ~= -1, 'Could not write %s', path);
+fprintf(fid, text);
+fclose(fid);
+end
+
+function local_cleanup(path)
+if exist(path, 'dir') == 7
+    rmdir(path, 's');
+end
+end

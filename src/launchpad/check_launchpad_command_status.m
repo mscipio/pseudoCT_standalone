@@ -3,11 +3,15 @@
 
 function [ss_tot, queue_time, run_time] = check_launchpad_command_status(jobname, varargin)
 
-if nargin < 6 || ~isstruct(varargin{5})
+if nargin < 6 || ~isstruct(varargin{end})
     error('pseudo_CT:ProfileRequired', ...
         'check_launchpad_command_status requires the selected profile config.');
 end
-config = varargin{5};
+config = varargin{end};
+output_context = struct();
+if length(varargin) >= 6 && isstruct(varargin{end - 1})
+    output_context = varargin{end - 1};
+end
 
 pause_time = 30;
 init_pause = 90;
@@ -22,7 +26,8 @@ else
         'WindowName', 'Enter your Martinos Login and Password to connect to Launchpad and check your jobs!');
     HOSTNAME = config.launchpad.host;
 
-    disp('Starting the ssh connection to Launchpad to check the job status  ... (be patient!)');
+    % Legacy output: disp('Starting the ssh connection to Launchpad to check the job status  ... (be patient!)');
+    pseudo_CT_output('INFO', output_context, 'Connecting to Launchpad to check job status.');
     ssh2_conn = ssh2_config(HOSTNAME, USERNAME, PASSWORD);
 end
 if nargin > 2
@@ -35,7 +40,8 @@ if nargin > 4
     jobnum = varargin{4};
 end
 
-disp(sprintf('\nWaiting for %d seconds to start verifying ... ', init_pause));
+% Legacy output: disp(sprintf('\nWaiting for %d seconds to start verifying ... ', init_pause));
+pseudo_CT_output('INFO', output_context, 'Waiting %d seconds before the first status check.', init_pause);
 pause(init_pause);
 if ~iscell(jobname)
     aux = jobname;
@@ -82,19 +88,33 @@ for ii=1:length(jobname)
     ssh2_conn = ssh2_command(ssh2_conn, sprintf('jobinfo %i', jnum));
     ss_tot(ii) = str2num(commando(ss+7:end)); %#ok<ST2NM>
     if ss_tot(ii) ~= 0
-        disp(sprintf('\n##################################################\nSomething has gone wrong and the job %d has failed with code %d\n##################################################', jobn, ss_tot(ii)));
+        % Legacy output: disp(sprintf('\n##################################################\nSomething has gone wrong and the job %d has failed with code %d\n##################################################', jobn, ss_tot(ii)));
+        detail_context = output_context;
+        if isfield(detail_context, 'log_files')
+            detail_context = rmfield(detail_context, 'log_files');
+        end
+        if isfield(output_context, 'subject_log_files') && ...
+                length(output_context.subject_log_files) >= ii
+            detail_context.log_file = output_context.subject_log_files{ii};
+            detail_context.subject_index = ii;
+            detail_context.subject_count = length(jobname);
+        end
+        detail_context.job_number = jnum;
+        pseudo_CT_output('WARN', detail_context, ...
+            'Failure detail: Launchpad job %s exited with code %d.', jobn, ss_tot(ii));
     end
     if pause_time > 60
         pause_time = 60;
     end
 end
 if sum(ss_tot(:)) ~= 0
-    disp(sprintf('Something has gone wrong with some of the jobs:\n'));
+    % Legacy output: disp(sprintf('Something has gone wrong with some of the jobs:\n'));
     for ii=1:length(jobname)
-        disp(sprintf('%s: %d\n', jobname{ii, :}, ss_tot(ii)));
+        % Legacy output: disp(sprintf('%s: %d\n', jobname{ii, :}, ss_tot(ii)));
     end
     return
 end
-disp(sprintf('\n\nGood News Everyone!! The commands ran properly!\n\n'));
+% Legacy output: disp(sprintf('\n\nGood News Everyone!! The commands ran properly!\n\n'));
+pseudo_CT_output('SUCCESS', output_context, 'All Launchpad jobs completed successfully.');
 
 return

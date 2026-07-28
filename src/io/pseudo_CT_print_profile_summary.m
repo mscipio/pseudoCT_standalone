@@ -1,4 +1,4 @@
-function pseudo_CT_print_profile_summary(profile_name, config, processing_dir)
+function pseudo_CT_print_profile_summary(profile_name, config, processing_dirs, output_context)
 %PSEUDO_CT_PRINT_PROFILE_SUMMARY Print and save the selected configuration.
 
 pca_backend = 'remote';
@@ -48,22 +48,37 @@ lines{end+1} = sprintf('Version:            %s', version);
 lines{end+1} = sprintf('Release:            %s', version('-release'));
 lines{end+1} = '=== End Summary ===';
 
-for ii = 1:length(lines)
-    disp(lines{ii});
-end
+% Legacy output:
+% for ii = 1:length(lines)
+%     disp(lines{ii});
+% end
 
-if nargin >= 3 && ~isempty(processing_dir)
-    summary_path = fullfile(processing_dir, 'pseudo_CT_profile_summary.txt');
+if nargin >= 3 && ~isempty(processing_dirs)
+    if ischar(processing_dirs)
+        processing_dirs = {processing_dirs};
+    end
+    for jj = 1:length(processing_dirs)
+    summary_path = fullfile(processing_dirs{jj}, 'pseudo_CT_profile_summary.txt');
     fid = fopen(summary_path, 'w');
     if fid == -1
-        warning('pseudoCT:SummaryWrite', ...
-            'Could not save profile summary to %s', summary_path);
-        return;
+        % Legacy output: warning('pseudoCT:SummaryWrite', ...
+        %     'Could not save profile summary to %s', summary_path);
+        if nargin >= 4 && isstruct(output_context)
+            pseudo_CT_output('WARN', output_context, ...
+                'Detailed profile summary could not be saved.');
+            pseudo_CT_output('INFO', output_context, '    %s', summary_path);
+        end
+        continue;
     end
-    cleanup = onCleanup(@() fclose(fid)); %#ok<NASGU>
     for ii = 1:length(lines)
         fprintf(fid, '%s\n', lines{ii});
     end
-    disp(sprintf('pseudo-CT: Profile summary saved to %s', summary_path));
+    fclose(fid);
+    end
+    % Legacy output: disp(sprintf('pseudo-CT: Profile summary saved to %s', summary_path));
+    if nargin >= 4 && isstruct(output_context)
+        pseudo_CT_output('INFO', output_context, ...
+            'Detailed profile summary saved as pseudo_CT_profile_summary.txt.');
+    end
 end
 end

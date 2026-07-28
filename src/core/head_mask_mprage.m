@@ -66,13 +66,13 @@ head_mask = imerode(head_mask, ones(7,7,7)); % Original;
 
 % Now write the image into a file:
 if size(P,1) == 0
-    disp('No image has been written!')
+    % Legacy output: disp('No image has been written!')
 else
     [pathd,fnd,extd] = fileparts(deblank(P));
     fname = fullfile(pathd, 'Atlas_head_mask.nii');
     ok = savenifti(fname, head_mask, V.mat, V.hdr.pixdim(2:4), 'uint8');
     if ok
-        disp(sprintf('File saved succesfully:\n%s', fname));
+        % Legacy output: disp(sprintf('File saved succesfully:\n%s', fname));
         Pf = fname;
     end
 end

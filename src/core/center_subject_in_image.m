@@ -53,7 +53,7 @@ if dist_nose < 2 & dist_back < 2 & check_aliasing % Check for automatic anti-ali
         answ = questdlg(sprintf('Do you want to proceed with the original (uncorrected) image?\n(if No, program will quit!)', 'Yes', 'No', 'No'));
         switch answ
             case 'Yes'
-                disp(sprintf('Continuing with original image!'));
+                % Legacy output: disp(sprintf('Continuing with original image!'));
             otherwise
                 aliasing = 1;
                 return
@@ -89,14 +89,14 @@ elseif abs(dist_back - dist_nose) > thres % Check if image needs recentering! On
     %V_orig.mat = V_orig.mat*(spm_matrix(params, 'Z*S*R*T')*eye(4));
     V_orig.mat = (spm_matrix(params, 'Z*S*R*T')*eye(4))*V_orig.mat; % New May/3/2017
     aux = spm_write_vol(V_orig, Im_out);
-    disp(sprintf('Image has been recentered:\n%s!', new_fn));
+    % Legacy output: disp(sprintf('Image has been recentered:\n%s!', new_fn));
     %[Y, aux] = max(Im_orig, [], ax);
     %[Y2, aux] = max(Im_out, [], ax);
     %figure, subplot(1,2,1), imagesc(squeeze(Y)); title('Original');
     %subplot(1,2,2), imagesc(squeeze(Y2)); title('After Recentering');
     P_new = new_fn;
 else
-    disp('Original image did not need to be recentered!!');
+    % Legacy output: disp('Original image did not need to be recentered!!');
 end
 
 

@@ -25,11 +25,15 @@ if nargin >= 2
     end
 end
 
-if nargin < 3 || ~isstruct(varargin{2})
+if nargin < 3 || ~isstruct(varargin{end})
     error('pseudo_CT:ProfileRequired', ...
         'move_image_2_MNI requires the selected profile config.');
 end
-config = varargin{2};
+config = varargin{end};
+output_context = struct();
+if length(varargin) >= 3 && isstruct(varargin{end - 1})
+    output_context = varargin{end - 1};
+end
     
 if autom_select_template
     batch_dir = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'Batch_atlas');
@@ -37,13 +41,13 @@ if autom_select_template
     if exist(ch2_path, 'file') == 2
         Vt = spm_vol(ch2_path);
     else
-        disp(sprintf('Template not found at:\n%s', ch2_path));
-        return;
+        % Legacy output: disp(sprintf('Template not found at:\n%s', ch2_path));
+        error('pseudo_CT:TemplateNotFound', 'Template not found: %s', ch2_path);
     end
     Imt = spm_read_vols(Vt);
 end
 
-disp('Opening the Template and calculating its position in real space ...');
+% Legacy output: disp('Opening the Template and calculating its position in real space ...');
 
 % To get the origin of the file.
 Ot = Vt.mat\[0 0 0 1]'; Ot=Ot(1:3)';
@@ -72,7 +76,7 @@ maxi = max(mm(1,:)); mini = min(mm(1,:));
 rl_centre_t = mean([maxi mini]); % right-left centre in mm (should be zero, as is in AP centre);
 
 % On axial plane:
-pca_fn = pseudo_CT_pca_resolver(config);
+pca_fn = pseudo_CT_pca_resolver(config, output_context);
 [I] = find(slt_a == 1); [rt, ct] = ind2sub(size(mt), I);
 Mt = [rt, ct];
 [coef_t, score_t, latent_t] = pca_fn(Mt);
@@ -83,7 +87,7 @@ fn = deblank(Pin(1, :));
 V = spm_vol(fn);
 Im = spm_read_vols(V);
 
-disp(sprintf('Opening file: %s and calculating the mask ... ', fn));
+% Legacy output: disp(sprintf('Opening file: %s and calculating the mask ... ', fn));
 
 [N, X] = hist(Im(:), 100);
 params = nlinfit(X, N, func_h, [max(N(:)), 0, 100, 1000]);
@@ -133,8 +137,8 @@ for jj=1:3
             slt = slt_s;
             sl = sl_s;
         otherwise
-            disp('Error!! There shouldn''t be more dimensions!!');
-            return
+            % Legacy output: disp('Error!! There shouldn''t be more dimensions!!');
+            error('pseudo_CT:InvalidDimension', 'Unexpected image dimension.');
     end
     [rt, ct] = find(slt == 1); Mt = [rt, ct];
     [r, c] = find(sl == 1); M = [r, c];
@@ -158,7 +162,7 @@ theta(3) = 0.3; % Let's force the pitch too!
 
 % Display the angles for the axial (yaw), coronal (roll) and saggital
 % (pitch):
-disp(sprintf('Angles (in rads):\nAxial (yaw): %.3f\nCoronal (roll):%.3f\nSaggital (pitch):%.3f\n', theta(1), theta(2), theta(3)));
+% Legacy output: disp(sprintf('Angles (in rads):\nAxial (yaw): %.3f\nCoronal (roll):%.3f\nSaggital (pitch):%.3f\n', theta(1), theta(2), theta(3)));
 
 param = [0 0 0 theta(3) theta(2) theta(1) 1 1 1];
 M  = spm_matrix(param);
@@ -181,7 +185,7 @@ t(3) = (top_t - top); % A positive value is going up!
 t(2) = (back_t - back); % A positive value is going forward!
 t(1) = (rl_centre_t - rl_centre); % A positive value is going right!
 
-disp(sprintf('Translations (in mm):\nRight: %.3f\nForward: %.3f\nUp: %.3f\n', t(1), t(2), t(3)));
+% Legacy output: disp(sprintf('Translations (in mm):\nRight: %.3f\nForward: %.3f\nUp: %.3f\n', t(1), t(2), t(3)));
 
 % Then to use it in the image, we need to create the matrix:
 param = [t(1) t(2) t(3) theta(3) theta(2) theta(1) 1 1 1];
@@ -229,8 +233,8 @@ for jj=1:size(Pin, 1)
 end
 
 if size(Pout,1) ~= size(Pin, 1)
-    disp('There was an error writing the images!');
-    return;
+    % Legacy output: disp('There was an error writing the images!');
+    error('pseudo_CT:ImageWriteFailed', 'Aligned NIfTI images could not be written.');
 end
 
 % Now let's coreg (affine) the images:

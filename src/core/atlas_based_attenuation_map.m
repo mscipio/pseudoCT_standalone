@@ -24,7 +24,8 @@
 %         aliasing is happening on the image); = 1: check (and correct if
 %         needed for aliasing). If correcting, user will need to manually
 %         confirm that the automatic correction was propery done.
-%         - varargin{5} = selected profile config.
+%         - varargin{5} = optional output context.
+%         - varargin{6} = selected profile config.
 %
 % Outputs: - Pf: array of strings containing the names of the new created
 % atlases in subject space:
@@ -102,7 +103,7 @@ catch  %#ok<CTCH>
 end
 
 Pf = ''; % In case program quits before finishing!
-if nargin ~= 5 || ~isstruct(varargin{5})
+if nargin < 5 || nargin > 6 || ~isstruct(varargin{end})
     error('pseudo_CT:ProfileRequired', ...
         'atlas_based_attenuation_map requires the selected profile config.');
 end
@@ -110,7 +111,11 @@ P = varargin{1};
 dir_batch_templates = varargin{2};
 ssh2_conn = varargin{3};
 check_aliasing = varargin{4};
-config = varargin{5};
+config = varargin{end};
+output_context = struct();
+if nargin == 6
+    output_context = varargin{5};
+end
 autom_select_folder = isempty(dir_batch_templates);
 ssh_ask_login = ~isstruct(ssh2_conn);
 
@@ -138,7 +143,9 @@ end
 % Look for the Atlases!
 list_atlas = dir(fullfile(dir_batch_templates, '*Atlas*.nii'));
 if length(list_atlas) == 0
-    disp(sprintf('No *Atlas*.nii files were found on the folder: \n%s', fullfile(dir_batch_templates)));
+    % Legacy output: disp(sprintf('No *Atlas*.nii files were found on the folder: \n%s', fullfile(dir_batch_templates)));
+    pseudo_CT_output('ERROR', output_context, 'No atlas NIfTI files were found.');
+    pseudo_CT_output('INFO', output_context, '    %s', dir_batch_templates);
     return;
 end
 
@@ -180,7 +187,8 @@ for ii=2:nf
     if sum(V(ii).dim ~= V(ii-1).dim) > 0, resl = 1; break; end
 end
 if resl & nf > 1
-    disp(sprintf('The images need to be resliced into the same space (your first selected image)!!:\n%s', deblank(P(1, :))));
+    % Legacy output: disp(sprintf('The images need to be resliced into the same space (your first selected image)!!:\n%s', deblank(P(1, :))));
+    pseudo_CT_output('INFO', output_context, 'Reslicing inputs into MPRAGE space.');
     % The first image would be considered as reference, and the last as
     % source and the rest os other:
     job.ref = {deblank(P(1, :))}; job.source = {deblank(P(nf, :))}; job.other = {''};
@@ -212,7 +220,7 @@ if recenter_before_normalization && length(strfind(deblank(P(1, :)), '_normalize
         return;
     end
 elseif ~recenter_before_normalization
-    disp('Skipping pre-normalization recentering step.');
+    % Legacy output: disp('Skipping pre-normalization recentering step.');
 end
 
 
@@ -222,6 +230,9 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Let's ask the user to introduce his username and password (with
 % confirmation):
+stage_started = tic;
+stage_context = local_stage_context(output_context, 2);
+pseudo_CT_output('INFO', stage_context, 'Normalizing MPRAGE with FreeSurfer.');
 if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
 %     if ssh_ask_login | length(varargin{3}) ~= 3
 %         [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
@@ -266,9 +277,9 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
     is_local_host = strcmp(HOSTNAME, '127.0.0.1') || strcmpi(HOSTNAME, 'localhost');
 
     if is_local_host
-        disp('Preparing local FreeSurfer normalization commands ...');
+        % Legacy output: disp('Preparing local FreeSurfer normalization commands ...');
     else
-        disp('Starting the ssh connection to run the Normalization process  ... (be patient!)');
+        % Legacy output: disp('Starting the ssh connection to run the Normalization process  ... (be patient!)');
         ssh2_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD);
     end
     if is_local_host
@@ -297,13 +308,15 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
         cmd = sprintf('"mri_normalize %s %s"', strcat(lc_path, '/', aux{ii}), strcat(lc_path, '/', aux_norm{ii}));
         if ~strcmpi(config.normalization.cluster, 'yes')
             cmd = cmd(2:end-1); % Cut the " ";
-            [sts] = run_normalization_cmd(cmd, ssh2_conn, config);
+            [sts] = run_normalization_cmd(cmd, ssh2_conn, stage_context, config);
         else
             [sts] = run_launchpad_cmd(cmd, ssh2_conn, config);
         end
         if sts ~= 0
-            disp(sprintf('Normalization failed for:\n%s', aux{ii}));
-            disp(sprintf('Temporary files were left in:\n%s', lc_path));
+            % Legacy output: disp(sprintf('Normalization failed for:\n%s', aux{ii}));
+            % Legacy output: disp(sprintf('Temporary files were left in:\n%s', lc_path));
+            pseudo_CT_output('ERROR', stage_context, 'FreeSurfer normalization failed.');
+            pseudo_CT_output('INFO', stage_context, '    %s', lc_path);
             if ~is_local_host
                 ssh2_conn = ssh2_close(ssh2_conn);
             end
@@ -328,12 +341,19 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
     end
 end
 
+pseudo_CT_output('SUCCESS', stage_context, 'MPRAGE normalization completed (elapsed %s).', ...
+    local_elapsed(toc(stage_started)));
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Now reorient all images to make them close to the MNI template (ch2.nii)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+stage_started = tic;
+stage_context = local_stage_context(output_context, 3);
+pseudo_CT_output('INFO', stage_context, 'Aligning MPRAGE and creating subject mask.');
 P_orig = P; % Let's save the original image filenames as we will need them to use their .mat to reposition the att-map!
-P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), config);
+P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), ...
+    stage_context, config);
 % Decompose the first image (reference to warp everthing into this image)
 % into its fileparts:
 [paths,fns,exts] = fileparts(deblank(P(1, :)));
@@ -356,12 +376,17 @@ Ims = spm_read_vols(V_aux);
 II = find(mm == 0);
 Ims(II) = NaN; % Let's make the outside NaN to avoid segmentation there!
 aux = spm_write_vol(V_aux, Ims); % Re-save the MPRAGE*normalized image with the mask applied!
+pseudo_CT_output('SUCCESS', stage_context, 'Alignment and masking completed (elapsed %s).', ...
+    local_elapsed(toc(stage_started)));
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Now load, modify (with the new files) and run the NEW SEGMENT batch:
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-disp('Starting the New Segment process (be patient!!) ...');
+% Legacy output: disp('Starting the New Segment process (be patient!!) ...');
+stage_started = tic;
+stage_context = local_stage_context(output_context, 4);
+pseudo_CT_output('INFO', stage_context, 'Running SPM New Segment.');
 load(fullfile(dir_batch_templates, 'new_segment_batch.mat')); % A new variable called matlabbatch is created!
 % We need to change the channels according to the loaded files:
 matlabbatch{1}.spm.tools.preproc8.channel(1).vols = {deblank(P(1, :))};
@@ -385,7 +410,7 @@ end
 fns_seg_batch = strcat(paths, filesep, 'new_segment_', date, '_batch.mat');
 save(fns_seg_batch, 'matlabbatch');
 clear matlabbatch;
-disp(sprintf('\n\nThe Segmentation step may take 20 to 30 minutes, depending on your computer ... Please be patient!!'));
+% Legacy output: disp(sprintf('\n\nThe Segmentation step may take 20 to 30 minutes, depending on your computer ... Please be patient!!'));
 % Run the New Segment batch just created!:
 if ~isdeployed
     evalc('cfg_util(''run'', fns_seg_batch);');
@@ -397,8 +422,8 @@ else
     elseif isunix
         exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8'));
     else
-        disp('The platform is unkonwn!!');
-        return
+        % Legacy output: disp('The platform is unkonwn!!');
+        error('pseudo_CT:UnsupportedPlatform', 'The current platform is unsupported.');
     end
     cmd=[exe_cmd  ' run ' fns_seg_batch];
     eval([cmd]);
@@ -416,6 +441,8 @@ if config.bone_enabled
     [Prc_new] = reduce_bone_segment(Prc_old);
 end
 exten = '';
+pseudo_CT_output('SUCCESS', stage_context, 'Segmentation completed (elapsed %s).', ...
+    local_elapsed(toc(stage_started)));
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -423,7 +450,10 @@ exten = '';
 % We will use the newly generated files from the New Segment process run
 % just above! (rc1*.nii, where * is the P(1, :) file!);
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-disp(sprintf('\nStarting the Dartel coregistration process (be patient again!!) ...'));
+% Legacy output: disp(sprintf('\nStarting the Dartel coregistration process (be patient again!!) ...'));
+stage_started = tic;
+stage_context = local_stage_context(output_context, 5);
+pseudo_CT_output('INFO', stage_context, 'Registering atlases with DARTEL.');
 load(fullfile(dir_batch_templates, 'dartel_existing_template_batch.mat')); % A new variable called matlabbatch is created!
 % Let's replace the files again:
 for ii=1:6
@@ -441,7 +471,7 @@ save(fns_dartel_exist_template_batch, 'matlabbatch');
 clear matlabbatch;
 % Run the Dartel Existing Template batch just created!:
 %cfg_util('run', fns_dartel_exist_template_batch);
-disp(sprintf('\n\nThe Coreg step may take 5 minutes to run, depending on your computer ... Please be patient!!'));
+% Legacy output: disp(sprintf('\n\nThe Coreg step may take 5 minutes to run, depending on your computer ... Please be patient!!'));
 if ~isdeployed
     evalc('cfg_util(''run'', fns_dartel_exist_template_batch);');
 else
@@ -453,7 +483,8 @@ end
 % Once finished, just need to run the INVERSE WARPED batch to create the atlases
 % back into subject space:
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-disp(sprintf('\nStarting the Inverse Warped process (to create the atlases in subject space!) ...'));
+% Legacy output: disp(sprintf('\nStarting the Inverse Warped process (to create the atlases in subject space!) ...'));
+pseudo_CT_output('INFO', stage_context, '    Applying inverse warp.');
 load(fullfile(dir_batch_templates, 'create_inverse_warped_batch.mat'));
 % Let's modify the flow-field field:
 matlabbatch{1}.spm.tools.dartel.crt_iwarped.flowfields = {strcat(paths, filesep, 'u_rc1', fns, exten, exts)};
@@ -478,7 +509,8 @@ end
 % MPRAGE, UTE_1, UTE_2 and head_mask! RESLICE the new atlas into subject
 % space
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-disp(sprintf('\nStarting the final reslicing of the atlas in real subject space (which is Image:\n%s)', deblank(P(1, :))));
+% Legacy output: disp(sprintf('\nStarting the final reslicing of the atlas in real subject space (which is Image:\n%s)', deblank(P(1, :))));
+pseudo_CT_output('INFO', stage_context, '    Reslicing atlases into MPRAGE space.');
 num_atlas = length(matlabbatch{1}.spm.tools.dartel.crt_iwarped.images); % Number of warped atlas just created
 clear Pr;
 Pr(1, :) = deblank(P(1, :));
@@ -494,20 +526,25 @@ spm_reslice(Pr, flg); % Reslice only!
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Finished! Just display the final files created!!:
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-disp(sprintf('\nCoregistration and reslicing finished!!!!'));
-disp('Files created:');
+% Legacy output: disp(sprintf('\nCoregistration and reslicing finished!!!!'));
+% Legacy output: disp('Files created:');
 for ii=1:num_atlas
     [pathf,fnf,extf] = fileparts(deblank(Pr(ii+1, :)));
     aux = strcat(pathf, filesep,'r', fnf, extf);
     Pf(ii, 1:length(aux)) = aux; % Just in case the new name is longer than the matrix P!
-    disp(sprintf('%s\n', aux));
+    % Legacy output: disp(sprintf('%s\n', aux));
 end
+pseudo_CT_output('SUCCESS', stage_context, 'Atlas registration completed (elapsed %s).', ...
+    local_elapsed(toc(stage_started)));
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Finally, we just need to convert the CT atlas into an attenuation map and
 % multiply by the head_mask to get a clean attenuation map!
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-disp(sprintf('\nCreating att_map file ...'));
+% Legacy output: disp(sprintf('\nCreating att_map file ...'));
+stage_started = tic;
+stage_context = local_stage_context(output_context, 6);
+pseudo_CT_output('INFO', stage_context, 'Building attenuation map and QC image.');
 % First look for th CT file within Pf:
 for ii=1:num_atlas
     st_f = strfind(deblank(Pf(ii,:)), 'Atlas_rCT');
@@ -580,7 +617,7 @@ aux = spm_write_vol(V_att_map, att_map);
 
 % Add the attenuation map file to the list to be returned:
 Pf(num_atlas+1, 1:length(fn_att_map)) = fn_att_map;
-disp(sprintf('Attenuation map file created:\n%s\n', deblank(Pf(num_atlas+1, :))));
+% Legacy output: disp(sprintf('Attenuation map file created:\n%s\n', deblank(Pf(num_atlas+1, :))));
 
 % Jun/25/2016: Printing a validation image:
 %ss = strfind(paths, filesep);
@@ -593,13 +630,29 @@ try
     close(fh);
 catch
 end
-disp('Whole process finished!!!!');
+% Legacy output: disp('Whole process finished!!!!');
 
 % Write Pseudo_CT_AC_Version.txt with changelog content
-status = pseudo_CT_write_version_log(code_version, paths);
+status = pseudo_CT_write_version_log(code_version, paths, stage_context);
 if status ~= 1
-    disp('WARNING: Pseudo_CT_AC_Version.txt was written in fallback mode — CHANGELOG.md could not be copied.');
+    % Legacy output: disp('WARNING: Pseudo_CT_AC_Version.txt was written in fallback mode — CHANGELOG.md could not be copied.');
+    pseudo_CT_output('WARN', stage_context, ...
+        'Version log used fallback content because CHANGELOG.md could not be copied.');
 end
+pseudo_CT_output('SUCCESS', stage_context, ...
+    'Attenuation map and QC completed (elapsed %s).', local_elapsed(toc(stage_started)));
 
 
 return
+end
+
+function context = local_stage_context(context, stage_index)
+context.stage_index = stage_index;
+context.stage_count = 8;
+end
+
+function value = local_elapsed(seconds)
+seconds = max(0, floor(seconds));
+value = sprintf('%02d:%02d:%02d', floor(seconds / 3600), ...
+    floor(rem(seconds, 3600) / 60), rem(seconds, 60));
+end

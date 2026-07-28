@@ -71,7 +71,7 @@ assert(length(strfind(entry_source, 'config.fwhm')) >= 2);
 assert(~isempty(strfind(atlas_source, 'if config.bone_enabled')));
 assert(~isempty(strfind(atlas_source, 'config.zero_background')));
 assert(~isempty(strfind(atlas_source, ...
-    'move_image_2_MNI(P_orig, fullfile(dir_batch_templates, ''ch2.nii''), config)')));
+    'move_image_2_MNI(P_orig, fullfile(dir_batch_templates, ''ch2.nii''), ...')));
 assert(~isempty(strfind(launchpad_source, 'config.launchpad.runner')));
 assert(isempty(strfind(launchpad_source, 'pseudo_CT_load_profile')));
 

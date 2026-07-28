@@ -1,4 +1,4 @@
-function status = pseudo_CT_write_version_log(code_version, dest_dir)
+function status = pseudo_CT_write_version_log(code_version, dest_dir, varargin)
 %Writes Pseudo_CT_AC_Version.txt to dest_dir by copying CHANGELOG.md.
 %If CHANGELOG.md cannot be read, writes a minimal fallback with code_version
 %and date. Never errors — fallback ensures pipeline continuation.
@@ -15,6 +15,10 @@ function status = pseudo_CT_write_version_log(code_version, dest_dir)
 %Path resolution: fileparts(fileparts(fileparts(mfilename('fullpath'))))
 %matches the pattern used in atlas_based_attenuation_map.m.
 
+    output_context = struct();
+    if ~isempty(varargin) && isstruct(varargin{1})
+        output_context = varargin{1};
+    end
     dest_file = fullfile(dest_dir, 'Pseudo_CT_AC_Version.txt');
     status = 0;  % default to fallback
 
@@ -45,8 +49,10 @@ function status = pseudo_CT_write_version_log(code_version, dest_dir)
 
     catch ME  %#ok<CTCH>
         %% Graceful fallback — write version + date, never error
-        disp(['WARNING: pseudo_CT_write_version_log fallback — CHANGELOG.md ' ...
-              'copy failed: ' ME.message]);
+        % Legacy output: disp(['WARNING: pseudo_CT_write_version_log fallback — CHANGELOG.md ' ...
+        %       'copy failed: ' ME.message]);
+        pseudo_CT_output('WARN', output_context, ...
+            'Version log fallback used: %s', ME.message);
         try
             fid = fopen(dest_file, 'w');
             if fid ~= -1
@@ -55,13 +61,15 @@ function status = pseudo_CT_write_version_log(code_version, dest_dir)
                 fclose(fid);
             else
                 status = -1;  % complete failure
-                disp(['ERROR: pseudo_CT_write_version_log cannot write ' ...
-                      'Pseudo_CT_AC_Version.txt to ' dest_file]);
+                % Legacy output: disp(['ERROR: pseudo_CT_write_version_log cannot write ' ...
+                %       'Pseudo_CT_AC_Version.txt to ' dest_file]);
+                pseudo_CT_output('ERROR', output_context, 'Version log could not be written.');
             end
         catch  %#ok<CTCH>
             status = -1;  % complete failure
-            disp(['ERROR: pseudo_CT_write_version_log cannot write ' ...
-                  'Pseudo_CT_AC_Version.txt to ' dest_file]);
+            % Legacy output: disp(['ERROR: pseudo_CT_write_version_log cannot write ' ...
+            %       'Pseudo_CT_AC_Version.txt to ' dest_file]);
+            pseudo_CT_output('ERROR', output_context, 'Version log could not be written.');
         end
     end
 end

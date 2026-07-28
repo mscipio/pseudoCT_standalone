@@ -32,7 +32,7 @@ if ~ssh2_conn_exist || ~isstruct(ssh2_conn) || (ssh2_conn_exist && ~strcmp(ssh2_
             error('Authentication Canceled. Quitting...');
         end
         %HOSTNAME = '172.27.25.134'; % Address of Launchpad computer!
-        disp('Starting the ssh connection to Launchpad to run commands  ... (be patient!)');
+        % Legacy output: disp('Starting the ssh connection to Launchpad to run commands  ... (be patient!)');
         ssh2_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD);
         try
             ssh2_conn = ssh2_command(ssh2_conn, sprintf('echo Password Authenticated'));
