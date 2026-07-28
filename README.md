@@ -2,7 +2,7 @@
 
 Maintained by Michele Scipioni, PhD  
 mscipioni@mgh.harvard.edu  
-Last updated: July 23, 2026.
+Last updated: July 28, 2026.
 
 If you use this method, or parts of it, please, quote this paper:
 >D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.
@@ -112,36 +112,55 @@ run_pseudo_CT('profile', 'launchpad', 'subjects', subject_list, 'correct_aliasin
 
 Note: In GUI mode (`run_pseudo_CT()` with no arguments), the profile selector dialog is shown first, enabling GUI-based profile choice before subject selection.
 
-## Launchpad and Local Numerical Compatibility
+## Documentation
 
-The final controlled comparison places the practical compatibility boundary at
-SPM New Segment, and specifically at the host environment used to execute the
-same package, input, and job. The legacy PBS E5472/RHEL7/glibc 2.17 environment
-matched the historical result exactly. On celer, R2010 compiled and interpreted
-runs matched each other but followed a slightly different iterative numerical
-path. The experiment did not independently isolate CPU dispatch from glibc or
-other system-math behavior.
+- **[Pipeline Stages: Local](docs/pipeline-local.md)** — step-by-step flow for
+  local profiles (`local-current`, `local-near-parity-r2010b`): which files are
+  created at each stage and which tools are used.
+- **[Pipeline Stages: Launchpad](docs/pipeline-launchpad.md)** — step-by-step flow
+  for the `launchpad` profile: local I/O layer, remote compiled-backend internals,
+  and post-processing.
+- **[Numerical Parity Assessment](docs/parity-assessment.md)** — controlled
+  comparison between local profiles and the legacy Launchpad backend: what
+  diverges, why, and the practical impact on PET attenuation correction.
+- **[Legacy Launchpad Parity](docs/legacy-launchpad-parity.md)** — original
+  host-boundary finding (superseded by the broader parity assessment above).
 
-From exact cleaned `rc*` inputs, the compared celer R2010 DARTEL, inverse-warp,
-reslice, and final attenuation-map outputs were byte-identical at every stage.
-This is evidence from one controlled subject, not universal end-to-end parity.
-Manual pipeline execution and review of the generated QC TIFF remain required.
+## Numerical Compatibility
 
-For historical output compatibility:
+Two independent sources of numerical divergence have been characterised
+(see the [full parity assessment](docs/parity-assessment.md) for detail):
 
-- Keep `recenter_before_normalization = 'No'`. Launchpad runs `mri_normalize`
-  first and passes `_normalized.nii`, so the recenter branch is bypassed.
-- Keep production bone reduction enabled.
-- Keep `zero_background = 'No'`.
-- Keep the production New Segment settings unchanged: `affreg = ''`,
-  `biasfwhm = 30`, and `warp.reg = 10`.
+1. **Queue-dependent Launchpad divergence.** The same compiled `Pseudo_CT_launchpad`
+   binary produces measurably different attenuation maps when submitted to
+   different PBS queues (default vs `p60`). This is intrinsic to environment-
+   sensitive numerical software (CPU dispatch, glibc, MCR BLAS) and proves that
+   perfect parity is not achievable when moving away from the legacy execution
+   environment — the same binary already varies across hosts within the cluster.
 
-The local entry point continues to load the supported `vers/` compatibility
-overrides. The controlled host-boundary result does not attribute New Segment
-parity to those writer overrides.
+2. **New Segment convergence differences.** Between the local
+   `local-near-parity-r2010b` profile and the Launchpad backend, the only
+   systematic divergence is in SPM New Segment's Gauss-Newton convergence path.
+   From exact cleaned `rc*` inputs, every downstream stage (DARTEL, inverse warp,
+   reslice, att_map construction) reproduces byte-identically. The divergent
+   voxels in the final `att_map.nii` (~0.23%) are functionally negligible for
+   511 keV PET attenuation correction.
 
-See [Legacy Launchpad Parity](docs/legacy-launchpad-parity.md) for the controlled
-provenance, exact stage results, final hash, and limits of the finding.
+**Practical conclusion:** The `local-near-parity-r2010b` profile produces
+attenuation maps that are practically equivalent to the legacy Launchpad output
+for the purpose of PET attenuation correction. The Launchpad backend itself
+lacks a fixed numerical reference because its output depends on which PBS queue
+runs the job. A cross-validation period (running both Launchpad and local for the
+first batch of subjects in a new study) is recommended but expected to converge
+quickly.
+
+For historical output compatibility retain these settings (all profiles ship
+with these defaults):
+
+- `recenter_before_normalization = 'No'`.
+- Bone-segmentation reduction enabled.
+- `zero_background = 'No'`.
+- New Segment batch settings: `affreg = ''`, `biasfwhm = 30`, `warp.reg = 10`.
 
 ## Defaults
 
@@ -162,6 +181,5 @@ The existing environment overrides remain available for maintainer workflows:
 
 ## Version History
 
-See [CHANGELOG.md](CHANGELOG.md) for release history. Version 2.6.5 adds the
-configurable background policy, records the bounded Launchpad parity finding,
-and removes superseded investigation tooling while keeping generic comparators.
+See [CHANGELOG.md](CHANGELOG.md) for release history. The current release is
+**2.7.0** (unified entrypoint with profile-based execution).
