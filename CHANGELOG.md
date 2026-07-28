@@ -1,6 +1,8 @@
 2.7.0
 
-## 2.7.0 — Unified Entrypoint Migration (BREAKING)
+## 2.7.0 — Unified Entrypoint Migration and Profile Architecture (BREAKING)
+
+### Unified Entrypoint
 - **New primary entrypoint:** `run_pseudo_CT.m` replaces the two old entrypoints with a unified interface supporting 3 profiles, named arguments, and GUI integration.
 - **Three execution profiles:** `local-current` (default), `local-near-parity-r2010b`, and `launchpad`. Profiles are selected via named argument or the GUI profile selector.
 - **Named-argument CLI:** `run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, 'correct_aliasing', 0)` replaces the old positional-argument calling convention.
@@ -8,7 +10,37 @@
 - **R2010b warning:** Selecting `local-near-parity-r2010b` on a MATLAB release other than R2010b shows a warning that results may differ from expected near-parity output, and the runtime guard is bypassed.
 - **Old entrypoints deprecated:** `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` have been moved to `deprecated/` and are preserved unmodified for backward compatibility.
 - **Shared job collection:** Added `collect_jobs.m` and `build_jobs_from_subject_list.m` as shared helpers used by the new entrypoint.
-- **BREAKING:** Scripts calling `run_pseudo_CT_local(...)` or `run_pseudo_CT_launchpad(...)` by name must be updated to call `run_pseudo_CT('profile', ...)` with the appropriate profile. The old files remain available under `deprecated/` as a transitional migration aid.
+
+### Profile Authority Architecture
+- **External SPM packages:** All canonical profiles now use deployment-provided SPM packages. The repository no longer ships a tracked SPM tree. The deployer is responsible for linking the correct SPM package to each profile via `src/config/spm_profiles/`.
+- **Profile registry and templates:** Added `pseudo_CT_profile_registry.m`, `pseudo_CT_load_spm_profile_config.m`, and deployer-owned profile templates under `src/config/spm_profiles/`.
+- **SPM revision validation:** Preflight validates the observed SPM revision from the deployment package's `Contents.m` before any path mutation. R2010b-compatible parsing recognizes `Version 6313 (SPM8)` and `Version 4667 (SPM8)`.
+- **Fail-before-mutation contract:** `setup_pseudo_CT_paths.m` calls `pseudo_CT_preflight.m` before any `addpath`, `genpath`, `rehash`, or `which` calls. All resource checks complete before workflow mutation.
+- **Environment resistance:** Profiles are the sole authority for behavior-changing settings. The 7-variable/3-profile prohibited-variable matrix is enforced by `test_profile_env_resistance.m` (32/32).
+- **Removed tracked SPM tree:** Deleted `spm8-r6313/` (4022 files) and `pseudo_CT_provenance_record.m` (338 lines).
+
+### Console Output and Logging
+- **Timestamped run logs:** Per-subject timestamped run logs with standardized `[run]` level tags.
+- **Profile summary:** Full profile summary printout saved to `MR_PET/`, including active PCA backend and resolution.
+
+### NIfTI Input Workflow
+- **NIfTI input staging:** `convert_dicom_i_2_nii.m` now copies `.nii` inputs into `MR_PET/tmp/mprage.nii` at entry time.
+- **Output directory resolution:** `pseudo_CT_resolve_output_dirs.m` now checks for `MR/` as a sibling directory when the up-walk fails.
+- **R2018b+ princomp fallback:** try-catch guard in `move_image_2_MNI.m` for removed-function error stubs.
+- **Configurable PBS queue:** added `queue_name` to `defaults_pseudo_CT_launchpad.m`.
+
+### Background Policy
+- **Configurable background:** Added `zero_background` to both defaults files. Default is `'No'` (preserves historical values); `'Yes'` opts into final subject-mask multiplication.
+- **Recenter compatibility:** Corrected to `'No'` — Launchpad runs `mri_normalize` first and passes `_normalized.nii`, bypassing recentering.
+
+### Verification and Testing
+- **Test suite:** 110 passed, 0 failed, 1 skipped. Includes SPM preflight threat tests (14/14), SPM external config tests (21/21), and profile environment resistance tests (32/32).
+- **Reusable verification tools:** `diff_entrypoint_runs.m`, `compare_nifti_data.m`, `compare_hash_strings.m`, `pseudo_ct_princomp_legacy.m`.
+- **Coregistration-parity finding:** MATLAB R2010b (7.11) / MCR 7.11 matches compiled Launchpad v2.0 at `spm_run_coreg_estimate` for byte-identical input. Modern MATLAB may diverge.
+
+### BREAKING
+- Scripts calling `run_pseudo_CT_local(...)` or `run_pseudo_CT_launchpad(...)` must be updated to `run_pseudo_CT('profile', ...)` with the appropriate profile. Old files remain under `deprecated/`.
+- `spm8-r6313/` is no longer tracked. Deployers must link the correct SPM package via `src/config/spm_profiles/`.
 
 2.6.6
 

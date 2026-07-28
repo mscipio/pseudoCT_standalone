@@ -10,7 +10,7 @@ config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/Batch_at
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'No';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
-config.zero_background = 'Yes';
+config.zero_background = 'No';
 % Remove temporary files after successful output promotion.
 config.cleanup_on_success = false;
 % PCA implementations to try in order.
