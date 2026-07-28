@@ -448,7 +448,8 @@ while true
 
     if ProgramOptions.ValidatePassword
         [PasswordValidate, Accepted] = uipassword([], ...
-            [ProgramOptions.WindowName ' - Reenter password']);
+            [ProgramOptions.WindowName ' - Reenter password'], ...
+            'Reenter password:');
         if ~Accepted
             Password = -1;
             UserName = '';

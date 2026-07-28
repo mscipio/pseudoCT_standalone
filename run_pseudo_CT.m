@@ -155,9 +155,9 @@ for ii = 1:length(jobs)
         sprintf('pseudo_CT_%s_%s.log', profile_name, run_id));
     all_log_files{end + 1} = jobs(ii).log_file; %#ok<AGROW>
     processing_dirs{end + 1} = processing_dir; %#ok<AGROW>
-    context = local_subject_context(jobs(ii), ii, length(jobs));
-    pseudo_CT_output('INFO', context, 'Run log initialized.');
-    local_write_log_header(context, profile_name, config.mode, ...
+    header_context = struct('log_file', jobs(ii).log_file, 'scope', 'run');
+    pseudo_CT_output('INFO', header_context, 'Run log initialized.');
+    local_write_log_header(header_context, profile_name, config.mode, ...
         jobs(ii).mprage_fn, run_start_time, processing_dir, temp_dir);
 end
 for ii = 1:length(collection_stats.skipped_subjects)
