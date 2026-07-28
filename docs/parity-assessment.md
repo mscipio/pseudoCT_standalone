@@ -124,8 +124,8 @@ attenuation correction.**
 | Profile | Use Case |
 |---------|----------|
 | `launchpad` | Legacy production — already-validated pipeline for published/reviewed work |
-| `local-near-parity-r2010b` | New processing — practical parity, no dependency on remote cluster. Recommended for all new subjects. |
-| `local-current` | Development — most accessible, acceptable for internal testing. Slightly different numerical path from the other two. |
+| `local-near-parity-r2010b` | New processing — practical parity, no dependency on remote cluster. Requires running in MATLAB R2010b or v7.11. |
+| `local-current` | Development — most updated version of the code and the one that will be maintained moving forward. Slightly different numerical path from the other two but compatible with more modern MATLAB versions that are based on different underlying architectures and numerical solvers. |
 
 When switching from Launchpad to a local profile for a longitudinal study, it is
 prudent to cross-validate the first batch of subjects by running both the Launchpad

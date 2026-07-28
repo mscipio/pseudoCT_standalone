@@ -26,17 +26,17 @@ else
     out_root = strtrim(out_root);
 end
 
-repo = '/autofs/cluster/catanagp/users/mscipioni/Biograph_mMR/pseudoCT_devel/pseudoCT_standalone';
+repo = fileparts(fileparts(mfilename('fullpath')));
 spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/spm8-r6313';
-spm_override_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-2.6.4/vers';
+spm_override_root = fullfile(repo, 'vers');
 atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/Batch_atlas';
 stages = {'MR_PET', 'MR_PET/tmp', 'MR/pseudo_muMAP'};
 stage_ids = {'mr_pet', 'tmp', 'dicom'};
 tol = 1e-6;
 
-validate_input_tree(reference_root, 'reference', stages);
+validate_directory(reference_root, 'reference root');
 for t = 1:numel(target_roots)
-    validate_input_tree(target_roots{t}, ['target ' target_labels{t}], stages);
+    validate_directory(target_roots{t}, ['target ' target_labels{t} ' root']);
 end
 validate_directory(spm_root, 'SPM root');
 validate_directory(spm_override_root, 'SPM override root');
@@ -71,7 +71,8 @@ fprintf(sfid, '- NIfTI tolerance used by repository comparator: `%.9g`\n\n', tol
 
 empty_result = struct('label', '', 'target_root', '', 'verdict', '', ...
     'first_divergence', '', 'first_class', '', 'dicom_verdict', '', ...
-    'report_path', '', 'comparator_txt', [], 'comparator_csv', []);
+    'report_path', '', 'comparator_txt', [], 'comparator_csv', [], ...
+    'coverage_complete', false, 'coverage_status', '', 'coverage', []);
 target_results = repmat(empty_result, 1, numel(target_roots));
 artifact_paths = {summary_path};
 
@@ -81,15 +82,20 @@ for t = 1:numel(target_roots)
     report_path = fullfile(out_root, [target_label '_semantic_report.md']);
     txt_paths = cell(1, numel(stages));
     csv_paths = cell(1, numel(stages));
+    coverage = inspect_coverage(target_root, reference_root, stages, stage_ids);
 
     for s = 1:numel(stages)
-        left = fullfile(target_root, stages{s});
-        right = fullfile(reference_root, stages{s});
+        left = fullfile(target_root, stages{s}); %#ok<NASGU>
+        right = fullfile(reference_root, stages{s}); %#ok<NASGU>
         txt_path = fullfile(out_root, sprintf('%s_%s_comparator.txt', target_label, stage_ids{s}));
         csv_path = fullfile(out_root, sprintf('%s_%s_comparator.csv', target_label, stage_ids{s}));
-        captured = evalc('diff_entrypoint_runs(left, right, ''Tolerance'', tol, ''OutputCSV'', csv_path, ''Order'', ''timestamp'');');
-        write_text(txt_path, genericize_comparator_text(captured));
-        genericize_comparator_file(csv_path);
+        if coverage(s).target_available && coverage(s).reference_available
+            captured = evalc('diff_entrypoint_runs(left, right, ''Tolerance'', tol, ''OutputCSV'', csv_path, ''Order'', ''timestamp'');');
+            write_text(txt_path, genericize_comparator_text(captured));
+            genericize_comparator_file(csv_path);
+        else
+            write_unavailable_comparator(txt_path, csv_path, stages{s}, coverage(s));
+        end
         txt_paths{s} = txt_path;
         csv_paths{s} = csv_path;
     end
@@ -106,14 +112,17 @@ for t = 1:numel(target_roots)
     fprintf(fid, '- Batch_atlas: `%s`\n\n', atlas_root);
 
     for s = 1:numel(stages)
-        write_inventory(fid, stages{s}, fullfile(target_root, stages{s}), fullfile(reference_root, stages{s}));
+        write_inventory(fid, coverage(s));
     end
 
-    nifti_rows = compare_all_nifti(fid, target_root, reference_root, stages, tol);
-    dicom_result = compare_dicom_series(fid, fullfile(target_root, stages{3}), fullfile(reference_root, stages{3}));
+    nifti_rows = compare_all_nifti(fid, target_root, reference_root, stages, coverage, tol);
+    dicom_result = compare_dicom_series(fid, fullfile(target_root, stages{3}), fullfile(reference_root, stages{3}), coverage(3));
+    coverage = finalize_coverage(coverage, nifti_rows, dicom_result);
+    write_coverage(fid, coverage);
     write_expected_differences(fid);
     [first_name, first_class] = first_nifti_divergence(nifti_rows, tol);
-    verdict = comparison_verdict(nifti_rows, dicom_result, tol);
+    verdict = comparison_verdict(nifti_rows, dicom_result, coverage, tol);
+    unavailable = unavailable_evidence(coverage, nifti_rows, dicom_result);
 
     fprintf(fid, '## Verdict\n\n');
     fprintf(fid, '- Overall: **%s**\n', verdict);
@@ -122,6 +131,7 @@ for t = 1:numel(target_roots)
     else
         fprintf(fid, '- First significant common NIfTI divergence in canonical generation order: `%s` (%s).\n', first_name, first_class);
     end
+    fprintf(fid, '- Earlier unavailable/incomplete checkpoints: %s\n', unavailable);
     fprintf(fid, '- DICOM: %s\n', dicom_result.verdict);
     fprintf(fid, '- Expected-only categories: version text, run-specific summary/evidence artifacts, date-stamped generated batch MAT files, and QC TIFF artifacts.\n');
     fprintf(fid, '- Repository comparator outputs: `%s_%s_comparator.{txt,csv}` for `%s`, `%s`, and `%s`.\n', ...
@@ -134,6 +144,7 @@ for t = 1:numel(target_roots)
     else
         fprintf(sfid, '- First significant common NIfTI divergence: `%s` (%s).\n', first_name, first_class);
     end
+    fprintf(sfid, '- Unavailable/incomplete evidence: %s\n', unavailable);
     fprintf(sfid, '- DICOM: %s\n', dicom_result.verdict);
     fprintf(sfid, '- Detailed report: `%s`\n', report_path);
     fprintf(sfid, '- Comparator outputs: `%s`, `%s`, `%s`\n\n', txt_paths{1}, txt_paths{2}, txt_paths{3});
@@ -146,6 +157,9 @@ for t = 1:numel(target_roots)
     target_results(t).report_path = report_path;
     target_results(t).comparator_txt = txt_paths;
     target_results(t).comparator_csv = csv_paths;
+    target_results(t).coverage_complete = all([coverage.complete]);
+    target_results(t).coverage_status = coverage_status(coverage);
+    target_results(t).coverage = coverage;
     artifact_paths = [artifact_paths {report_path} txt_paths csv_paths]; %#ok<AGROW>
     clear cleanup_report
 end
@@ -155,7 +169,11 @@ fprintf(sfid, '- Compared %d target output tree(s) against one reference output 
 fprintf(sfid, '- Detailed reports and comparator outputs are listed in the target sections above.\n');
 
 summary = struct();
-summary.status = 'completed';
+if all([target_results.coverage_complete])
+    summary.status = 'completed';
+else
+    summary.status = 'completed_with_partial_evidence';
+end
 summary.executive_summary = sprintf(...
     'Compared %d target output tree(s) against one reference output tree.', numel(target_roots));
 summary.reference_root = reference_root;
@@ -236,14 +254,6 @@ if isempty(label)
 end
 end
 
-function validate_input_tree(root, role, stages)
-validate_directory(root, [role ' root']);
-for s = 1:numel(stages)
-    stage_path = fullfile(root, stages{s});
-    validate_directory(stage_path, [role ' stage ' stages{s}]);
-end
-end
-
 function validate_directory(path, description)
 if exist(path, 'dir') ~= 7
     error('run_e2e_semantic_comparison:MissingDirectory', ...
@@ -251,17 +261,105 @@ if exist(path, 'dir') ~= 7
 end
 end
 
-function write_inventory(fid, label, left_dir, right_dir)
-left = file_names(left_dir);
-right = file_names(right_dir);
-only_left = setdiff(left, right);
-only_right = setdiff(right, left);
-fprintf(fid, '## Inventory: %s\n\n', label);
-fprintf(fid, '- Target files: %d\n', numel(left));
-fprintf(fid, '- Reference files: %d\n', numel(right));
-fprintf(fid, '- Common names: %d\n', numel(intersect(left, right)));
-fprintf(fid, '- Target-only (%d): %s\n', numel(only_left), format_names(only_left));
-fprintf(fid, '- Reference-only (%d): %s\n\n', numel(only_right), format_names(only_right));
+function coverage = inspect_coverage(target_root, reference_root, stages, stage_ids)
+empty_stage = struct('id', '', 'label', '', 'target_available', false, ...
+    'reference_available', false, 'target_count', 0, 'reference_count', 0, ...
+    'common_count', 0, 'target_only', {{}}, 'reference_only', {{}}, ...
+    'required_target_only', {{}}, 'required_reference_only', {{}}, ...
+    'read_errors', {{}}, 'empty', true, 'complete', false, 'status', 'UNAVAILABLE');
+coverage = repmat(empty_stage, 1, numel(stages));
+for s = 1:numel(stages)
+    target_dir = fullfile(target_root, stages{s});
+    reference_dir = fullfile(reference_root, stages{s});
+    target_available = exist(target_dir, 'dir') == 7;
+    reference_available = exist(reference_dir, 'dir') == 7;
+    if target_available, target_names = file_names(target_dir); else, target_names = {}; end
+    if reference_available, reference_names = file_names(reference_dir); else, reference_names = {}; end
+    common = intersect(target_names, reference_names);
+    target_only = setdiff(target_names, reference_names);
+    reference_only = setdiff(reference_names, target_names);
+    if strcmp(stage_ids{s}, 'dicom')
+        required_target_only = target_only;
+        required_reference_only = reference_only;
+        required_common = common;
+    else
+        required_target_only = required_names(target_only);
+        required_reference_only = required_names(reference_only);
+        required_common = nifti_names(common);
+    end
+    coverage(s).id = stage_ids{s};
+    coverage(s).label = stages{s};
+    coverage(s).target_available = target_available;
+    coverage(s).reference_available = reference_available;
+    coverage(s).target_count = numel(target_names);
+    coverage(s).reference_count = numel(reference_names);
+    coverage(s).common_count = numel(common);
+    coverage(s).target_only = target_only;
+    coverage(s).reference_only = reference_only;
+    coverage(s).required_target_only = required_target_only;
+    coverage(s).required_reference_only = required_reference_only;
+    coverage(s).empty = isempty(target_names) || isempty(reference_names) || isempty(required_common);
+    coverage(s).complete = target_available && reference_available && ~coverage(s).empty && ...
+        isempty(required_target_only) && isempty(required_reference_only);
+    if coverage(s).complete
+        coverage(s).status = 'COMPLETE';
+    elseif ~target_available || ~reference_available
+        coverage(s).status = 'UNAVAILABLE';
+    elseif coverage(s).empty
+        coverage(s).status = 'EMPTY';
+    else
+        coverage(s).status = 'PARTIAL';
+    end
+end
+end
+
+function names = required_names(names)
+keep = true(size(names));
+for i = 1:numel(names)
+    keep(i) = ~is_expected_provenance_name(names{i});
+end
+names = names(keep);
+end
+
+function expected = is_expected_provenance_name(name)
+expected = strcmp(name, 'Pseudo_CT_AC_Version.txt') || ...
+    strcmp(name, 'pseudo_CT_profile_summary.txt') || ...
+    strcmp(name, 'pseudo_CT_launchpad_evidence.mat') || ...
+    strcmp(name, 'Fusion_MR_Pseudo_CT_validation.tiff') || ...
+    ~isempty(regexp(name, '^(new_segment|dartel_existing_template|create_inverse_warped)_.+_batch\.mat$', 'once')) || ...
+    ~isempty(regexp(name, '_params\.mat$', 'once'));
+end
+
+function names = nifti_names(names)
+keep = false(size(names));
+for i = 1:numel(names)
+    [~, ~, ext] = fileparts(names{i});
+    keep(i) = strcmpi(ext, '.nii');
+end
+names = names(keep);
+end
+
+function write_unavailable_comparator(txt_path, csv_path, stage, coverage)
+detail = sprintf('%s unavailable: target=%s; reference=%s', stage, ...
+    availability_text(coverage.target_available), availability_text(coverage.reference_available));
+write_text(txt_path, [detail sprintf('\n')]); %#ok<SPRINTFN>
+write_text(csv_path, sprintf('filename,status,detail\n%s,UNAVAILABLE,%s\n', stage, detail));
+end
+
+function write_inventory(fid, stage)
+fprintf(fid, '## Inventory: %s\n\n', stage.label);
+fprintf(fid, '- Target directory: %s\n', availability_text(stage.target_available));
+fprintf(fid, '- Reference directory: %s\n', availability_text(stage.reference_available));
+fprintf(fid, '- Target files: %d\n', stage.target_count);
+fprintf(fid, '- Reference files: %d\n', stage.reference_count);
+fprintf(fid, '- Common names: %d\n', stage.common_count);
+fprintf(fid, '- Target-only (%d): %s\n', numel(stage.target_only), format_names(stage.target_only));
+fprintf(fid, '- Reference-only (%d): %s\n', numel(stage.reference_only), format_names(stage.reference_only));
+fprintf(fid, '- Empty evidence: %s\n\n', yesno(stage.empty));
+end
+
+function text = availability_text(value)
+if value, text = 'available'; else, text = 'unavailable'; end
 end
 
 function names = file_names(path)
@@ -282,12 +380,15 @@ end
 text = join_strings(quoted, ', ');
 end
 
-function rows = compare_all_nifti(fid, left_root, right_root, stages, tol)
+function rows = compare_all_nifti(fid, left_root, right_root, stages, coverage, tol)
 rows = struct('stage', {}, 'name', {}, 'dim_text', {}, 'dt_text', {}, 'dim_equal', {}, 'dt_equal', {}, ...
     'affine_max', {}, 'pinfo_max', {}, 'max_abs', {}, 'mean_abs', {}, ...
     'nonfinite_mismatch_count', {}, 'different_count', {}, 'different_fraction', {}, 'over_tol_count', {}, ...
-    'over_tol_fraction', {}, 'class', {});
+    'over_tol_fraction', {}, 'class', {}, 'status', {}, 'read_error', {});
 for s = 1:numel(stages)
+    if ~coverage(s).target_available || ~coverage(s).reference_available
+        continue
+    end
     left_dir = fullfile(left_root, stages{s});
     right_dir = fullfile(right_root, stages{s});
     common = intersect(file_names(left_dir), file_names(right_dir));
@@ -296,7 +397,11 @@ for s = 1:numel(stages)
         if ~strcmpi(ext, '.nii')
             continue
         end
-        row = compare_one_nifti(fullfile(left_dir, common{i}), fullfile(right_dir, common{i}), tol);
+        try
+            row = compare_one_nifti(fullfile(left_dir, common{i}), fullfile(right_dir, common{i}), tol);
+        catch ME
+            row = unreadable_nifti_row(ME.message);
+        end
         row.stage = stages{s};
         row.name = common{i};
         rows(end + 1) = row; %#ok<AGROW>
@@ -305,14 +410,16 @@ end
 
 fprintf(fid, '## NIfTI semantic comparison\n\n');
 fprintf(fid, 'Exact differing voxels use `abs(target - reference) > 0`; tolerance counts use `> %.9g`. Affine is the SPM-interpreted `mat`; scaling is `pinfo`. Max/mean are over finite comparable pairs; non-finite disagreements are counted separately.\n\n', tol);
-fprintf(fid, '| Stage | File | Dimensions | Datatype/endian | Affine max | pinfo max | Max abs | Mean abs | Nonfinite mismatch | Different voxels | Fraction | >tol voxels | >tol fraction | Classification |\n');
-fprintf(fid, '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n');
+fprintf(fid, '| Stage | File | Status | Dimensions | Datatype/endian | Affine max | pinfo max | Max abs | Mean abs | Nonfinite mismatch | Different voxels | Fraction | >tol voxels | >tol fraction | Classification / error |\n');
+fprintf(fid, '|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n');
 for i = 1:numel(rows)
-    fprintf(fid, '| %s | `%s` | %s | %s | %.9g | %.9g | %.9g | %.9g | %d | %d | %.9g | %d | %.9g | %s |\n', ...
-        rows(i).stage, rows(i).name, rows(i).dim_text, rows(i).dt_text, ...
+    detail = rows(i).class;
+    if strcmp(rows(i).status, 'READ_ERROR'), detail = rows(i).read_error; end
+    fprintf(fid, '| %s | `%s` | %s | %s | %s | %.9g | %.9g | %.9g | %.9g | %d | %d | %.9g | %d | %.9g | %s |\n', ...
+        rows(i).stage, rows(i).name, rows(i).status, rows(i).dim_text, rows(i).dt_text, ...
         rows(i).affine_max, rows(i).pinfo_max, rows(i).max_abs, rows(i).mean_abs, ...
         rows(i).nonfinite_mismatch_count, rows(i).different_count, rows(i).different_fraction, rows(i).over_tol_count, ...
-        rows(i).over_tol_fraction, rows(i).class);
+        rows(i).over_tol_fraction, detail);
 end
 fprintf(fid, '\n');
 end
@@ -329,7 +436,8 @@ if dt_equal, dt_text = mat2str(hl.dt); else, dt_text = [mat2str(hl.dt) ' vs ' ma
 row = struct('stage', '', 'name', '', 'dim_text', dim_text, 'dt_text', dt_text, 'dim_equal', dim_equal, ...
     'dt_equal', dt_equal, 'affine_max', max(abs(double(hl.mat(:)) - double(hr.mat(:)))), ...
     'pinfo_max', NaN, 'max_abs', NaN, 'mean_abs', NaN, 'nonfinite_mismatch_count', 0, 'different_count', 0, ...
-    'different_fraction', NaN, 'over_tol_count', 0, 'over_tol_fraction', NaN, 'class', '');
+    'different_fraction', NaN, 'over_tol_count', 0, 'over_tol_fraction', NaN, 'class', '', ...
+    'status', 'COMPARED', 'read_error', '');
 if isequal(size(hl.pinfo), size(hr.pinfo))
     row.pinfo_max = max(abs(double(hl.pinfo(:)) - double(hr.pinfo(:))));
 end
@@ -364,9 +472,18 @@ else
 end
 end
 
-function result = compare_dicom_series(fid, left_dir, right_dir)
-left = file_names(left_dir);
-right = file_names(right_dir);
+function row = unreadable_nifti_row(message)
+row = struct('stage', '', 'name', '', 'dim_text', 'unavailable', 'dt_text', 'unavailable', ...
+    'dim_equal', false, 'dt_equal', false, 'affine_max', NaN, 'pinfo_max', NaN, ...
+    'max_abs', NaN, 'mean_abs', NaN, 'nonfinite_mismatch_count', 0, ...
+    'different_count', 0, 'different_fraction', NaN, 'over_tol_count', 0, ...
+    'over_tol_fraction', NaN, 'class', 'READ_ERROR', 'status', 'READ_ERROR', ...
+    'read_error', message);
+end
+
+function result = compare_dicom_series(fid, left_dir, right_dir, coverage)
+if coverage.target_available, left = file_names(left_dir); else, left = {}; end
+if coverage.reference_available, right = file_names(right_dir); else, right = {}; end
 common = intersect(left, right);
 only_left = setdiff(left, right);
 only_right = setdiff(right, left);
@@ -430,7 +547,12 @@ else
     pixel_mean = NaN;
     pixel_fraction = NaN;
 end
-if isempty(only_left) && isempty(only_right) && isempty(read_errors) && ...
+readable_slices = numel(common) - numel(read_errors);
+if ~coverage.target_available || ~coverage.reference_available
+    verdict = 'DICOM comparison unavailable because a required directory is missing.';
+elseif isempty(left) || isempty(right) || isempty(common) || readable_slices == 0
+    verdict = 'DICOM comparison incomplete because no readable common slices are available.';
+elseif isempty(only_left) && isempty(only_right) && isempty(read_errors) && ...
         pixel_diff_count == 0 && geometry_mismatch_slices == 0
     verdict = 'slice inventory, pixel arrays, and relevant geometry fields match exactly; any listed UID/date/time drift is metadata-only.';
 elseif pixel_diff_count > 0
@@ -442,7 +564,8 @@ else
 end
 result = struct('slice_count_left', numel(left), 'slice_count_right', numel(right), ...
     'pixel_diff_count', pixel_diff_count, 'geometry_mismatch_slices', geometry_mismatch_slices, ...
-    'verdict', verdict);
+    'readable_slice_count', readable_slices, 'read_errors', {read_errors}, ...
+    'target_only', {only_left}, 'reference_only', {only_right}, 'verdict', verdict);
 
 fprintf(fid, '## DICOM semantic comparison\n\n');
 fprintf(fid, '- Target slices: %d\n', numel(left));
@@ -450,7 +573,7 @@ fprintf(fid, '- Reference slices: %d\n', numel(right));
 fprintf(fid, '- Common filenames: %d\n', numel(common));
 fprintf(fid, '- Target-only: %s\n', format_names(only_left));
 fprintf(fid, '- Reference-only: %s\n', format_names(only_right));
-fprintf(fid, '- Pixel dimensions compared: %d slices\n', numel(common) - numel(read_errors));
+fprintf(fid, '- Pixel dimensions compared: %d slices\n', readable_slices);
 fprintf(fid, '- Pixel-divergent slices: %d\n', pixel_diff_slices);
 fprintf(fid, '- Pixel max absolute difference: %.9g\n', pixel_max);
 fprintf(fid, '- Pixel mean absolute difference: %.9g\n', pixel_mean);
@@ -460,6 +583,42 @@ fprintf(fid, '- Relevant geometry/header mismatch counts: %s\n', field_counts(ge
 fprintf(fid, '- Expected generated UID/date/time mismatch counts: %s\n', field_counts(generated_fields, generated_mismatch_counts));
 fprintf(fid, '- Read errors: %s\n', format_names(read_errors));
 fprintf(fid, '- Verdict: %s\n\n', verdict);
+end
+
+function coverage = finalize_coverage(coverage, rows, dicom_result)
+for s = 1:numel(coverage)
+    read_errors = {};
+    if strcmp(coverage(s).id, 'dicom')
+        read_errors = dicom_result.read_errors;
+        coverage(s).complete = coverage(s).complete && ...
+            dicom_result.readable_slice_count > 0 && isempty(read_errors);
+    else
+        for i = 1:numel(rows)
+            if strcmp(rows(i).stage, coverage(s).label) && strcmp(rows(i).status, 'READ_ERROR')
+                read_errors{end + 1} = [rows(i).name ': ' rows(i).read_error]; %#ok<AGROW>
+            end
+        end
+        coverage(s).complete = coverage(s).complete && isempty(read_errors);
+    end
+    coverage(s).read_errors = read_errors;
+    if ~isempty(read_errors)
+        coverage(s).status = 'READ_ERROR';
+    elseif coverage(s).complete
+        coverage(s).status = 'COMPLETE';
+    end
+end
+end
+
+function write_coverage(fid, coverage)
+fprintf(fid, '## Coverage status\n\n');
+fprintf(fid, '| Stage | Status | Required target-only | Required reference-only | Read errors |\n');
+fprintf(fid, '|---|---|---:|---:|---:|\n');
+for s = 1:numel(coverage)
+    fprintf(fid, '| %s | %s | %d | %d | %d |\n', coverage(s).label, coverage(s).status, ...
+        numel(coverage(s).required_target_only), numel(coverage(s).required_reference_only), ...
+        numel(coverage(s).read_errors));
+end
+fprintf(fid, '\n');
 end
 
 function write_expected_differences(fid)
@@ -556,30 +715,66 @@ order = {'mprage.nii', 'mprage_normalized.nii', 'mprage_normalized_repos.nii', .
 name = '';
 class_name = '';
 for o = 1:numel(order)
-    idx = find(strcmp({rows.name}, order{o}) & strcmp({rows.stage}, 'MR_PET/tmp'), 1);
-    if isempty(idx), continue; end
-    if rows(idx).over_tol_count > 0 || rows(idx).affine_max > tol || ...
-            ~rows(idx).dim_equal || ~rows(idx).dt_equal || rows(idx).pinfo_max > tol
-        name = [rows(idx).stage '/' rows(idx).name];
-        class_name = rows(idx).class;
-        return
+    candidate_stages = {'MR_PET/tmp', 'MR_PET'};
+    for s = 1:numel(candidate_stages)
+        idx = find(strcmp({rows.name}, order{o}) & strcmp({rows.stage}, candidate_stages{s}), 1);
+        if isempty(idx) || ~strcmp(rows(idx).status, 'COMPARED'), continue; end
+        if rows(idx).over_tol_count > 0 || rows(idx).affine_max > tol || ...
+                ~rows(idx).dim_equal || ~rows(idx).dt_equal || rows(idx).pinfo_max > tol
+            name = [rows(idx).stage '/' rows(idx).name];
+            class_name = rows(idx).class;
+            return
+        end
     end
 end
 end
 
-function verdict = comparison_verdict(rows, dicom_result, tol)
+function verdict = comparison_verdict(rows, dicom_result, coverage, tol)
 significant_nifti = false;
 for i = 1:numel(rows)
-    if rows(i).over_tol_count > 0 || rows(i).affine_max > tol || ...
-            ~rows(i).dim_equal || ~rows(i).dt_equal || rows(i).pinfo_max > tol
+    if strcmp(rows(i).status, 'COMPARED') && (rows(i).over_tol_count > 0 || rows(i).affine_max > tol || ...
+            ~rows(i).dim_equal || ~rows(i).dt_equal || rows(i).pinfo_max > tol)
         significant_nifti = true;
         break
     end
 end
-if ~significant_nifti && dicom_result.pixel_diff_count == 0 && dicom_result.geometry_mismatch_slices == 0
-    verdict = 'BEHAVIORALLY EQUIVALENT within tolerance';
-else
+if significant_nifti || dicom_result.pixel_diff_count > 0 || dicom_result.geometry_mismatch_slices > 0
     verdict = 'BEHAVIORALLY DIVERGENT';
+elseif ~all([coverage.complete])
+    verdict = 'INCONCLUSIVE - PARTIAL EVIDENCE';
+else
+    verdict = 'BEHAVIORALLY EQUIVALENT within tolerance';
+end
+end
+
+function status = coverage_status(coverage)
+if all([coverage.complete])
+    status = 'complete';
+else
+    status = 'partial';
+end
+end
+
+function text = unavailable_evidence(coverage, rows, dicom_result) %#ok<INUSD>
+parts = {};
+for s = 1:numel(coverage)
+    if coverage(s).complete, continue; end
+    detail = coverage(s).status;
+    if ~isempty(coverage(s).required_reference_only)
+        detail = [detail '; reference-only=' format_names(coverage(s).required_reference_only)]; %#ok<AGROW>
+    end
+    if ~isempty(coverage(s).required_target_only)
+        detail = [detail '; target-only=' format_names(coverage(s).required_target_only)]; %#ok<AGROW>
+    end
+    if ~isempty(coverage(s).read_errors)
+        detail = [detail '; read-errors=' format_names(coverage(s).read_errors)]; %#ok<AGROW>
+    end
+    parts{end + 1} = [coverage(s).label ' (' detail ')']; %#ok<AGROW>
+end
+if isempty(parts)
+    text = 'none';
+else
+    text = join_strings(parts, '; ');
 end
 end
 

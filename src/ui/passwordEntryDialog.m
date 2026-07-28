@@ -3,7 +3,7 @@ function [Password, UserName] = passwordEntryDialog(varargin)
 % [Password, UserName] = passwordEntryDialog(varargin)
 %
 % Create a password entry dialog for entering a password that is visibly
-% hidden.  Java must be enabled for this function to work properly.
+% hidden.  Releases before R2019a require Java Swing support.
 %
 % It has only been tested on the Windows platform in R2008a.  It should
 % work in R2007a or later.
@@ -124,8 +124,9 @@ function [Password, UserName] = passwordEntryDialog(varargin)
 % LastChangedDate = '$LastChangedDate: 2008-06-16 09:08:17 -0600 (Mon, 16 Jun 2008) $';
 % ProgramDate = getSVNDate(LastChangedDate);
 
-%% Check for Existance of Java
-if ~usejava('swing')
+%% Select the supported UI implementation
+UsePasswordTools = ~verLessThan('matlab', '9.6');
+if ~UsePasswordTools && ~usejava('swing')
    error('passwordEntryDialog: Java is required for this program to run.');
 end
 
@@ -163,6 +164,11 @@ if ProgramOptions.CheckPasswordLength
     end;
 end;
 
+if UsePasswordTools
+    [Password, UserName] = passwordToolsAdapter(ProgramOptions);
+    return;
+end
+
 %% Determine GUI Size and Position
 % Center the GUI on the screen.
 
@@ -187,128 +193,128 @@ BoxWidth = 200;
 %% Create the GUI
 
 BackgroundColor = get(0,'DefaultUicontrolBackgroundcolor');
-handles.figure1 = figure('Menubar','none', ...
-    'Units','Pixels', ...
-    'Resize','off', ...
-    'NumberTitle','off', ...
-    'Name',ProgramOptions.WindowName, ...
-    'Position',PositionGUI, ...
-    'Color', BackgroundColor, ...
-    'WindowStyle','modal');
+    handles.figure1 = figure('Menubar','none', ...
+        'Units','Pixels', ...
+        'Resize','off', ...
+        'NumberTitle','off', ...
+        'Name',ProgramOptions.WindowName, ...
+        'Position',PositionGUI, ...
+        'Color', BackgroundColor, ...
+        'WindowStyle','modal');
 
-% Create Password Validation Entry Box
-if ProgramOptions.ValidatePassword
-    handles.java_PasswordValidate = javax.swing.JPasswordField();
-    handles.java_PasswordValidate.setFocusable(true);
-    [handles.java_PasswordValidate, handles.edit_PasswordValidate] = javacomponent(handles.java_PasswordValidate, [], handles.figure1);
+    % Create Password Validation Entry Box
+    if ProgramOptions.ValidatePassword
+        handles.java_PasswordValidate = javax.swing.JPasswordField();
+        handles.java_PasswordValidate.setFocusable(true);
+        [handles.java_PasswordValidate, handles.edit_PasswordValidate] = javacomponent(handles.java_PasswordValidate, [], handles.figure1);
 
-    set(handles.edit_PasswordValidate, ...
+        set(handles.edit_PasswordValidate, ...
+            'Parent', handles.figure1, ...
+            'Tag', 'edit_PasswordValidate', ...
+            'Units', 'Pixels', ...
+            'Position',[PositionLeft 10 BoxWidth 23]);
+
+        handles.text_LabelPasswordValidate = uicontrol('Parent',handles.figure1, ...
+            'Tag', 'text_LabelPassword', ...
+            'Style','Text', ...
+            'Units','Pixels',...
+            'Position',[PositionLeft 33 BoxWidth 16], ...
+            'FontSize',10, ...
+            'String','Reenter password:',...
+            'HorizontalAlignment', 'Left');
+    end;
+
+    % Create Password Entry Box
+    handles.java_Password = javax.swing.JPasswordField();
+    [handles.java_Password, handles.edit_Password] = javacomponent(handles.java_Password, [PositionLeft 10+OffsetBottom BoxWidth 23], handles.figure1);
+    handles.java_Password.setFocusable(true);
+
+    set(handles.edit_Password, ...
         'Parent', handles.figure1, ...
-        'Tag', 'edit_PasswordValidate', ...
+        'Tag', 'edit_Password', ...
         'Units', 'Pixels', ...
-        'Position',[PositionLeft 10 BoxWidth 23]);
+        'Position',[PositionLeft 10+OffsetBottom BoxWidth 23]);
+    drawnow;    % This drawnow is required to allow the focus to work
 
-    handles.text_LabelPasswordValidate = uicontrol('Parent',handles.figure1, ...
+    handles.text_LabelPassword = uicontrol('Parent',handles.figure1, ...
         'Tag', 'text_LabelPassword', ...
         'Style','Text', ...
         'Units','Pixels',...
-        'Position',[PositionLeft 33 BoxWidth 16], ...
+        'Position',[PositionLeft 33+OffsetBottom BoxWidth 16], ...
         'FontSize',10, ...
-        'String','Reenter password:',...
+        'String','Password:',...
         'HorizontalAlignment', 'Left');
-end;
 
-% Create Password Entry Box
-handles.java_Password = javax.swing.JPasswordField();
-[handles.java_Password, handles.edit_Password] = javacomponent(handles.java_Password, [PositionLeft 10+OffsetBottom BoxWidth 23], handles.figure1);
-handles.java_Password.setFocusable(true);
-
-set(handles.edit_Password, ...
-    'Parent', handles.figure1, ...
-    'Tag', 'edit_Password', ...
-    'Units', 'Pixels', ...
-    'Position',[PositionLeft 10+OffsetBottom BoxWidth 23]);
-drawnow;    % This drawnow is required to allow the focus to work
-   
-handles.text_LabelPassword = uicontrol('Parent',handles.figure1, ...
-    'Tag', 'text_LabelPassword', ...
-    'Style','Text', ...
-    'Units','Pixels',...
-    'Position',[PositionLeft 33+OffsetBottom BoxWidth 16], ...
-    'FontSize',10, ...
-    'String','Password:',...
-    'HorizontalAlignment', 'Left');
-
-% Create OK Pushbutton
-handles.pushbutton_OK = uicontrol('Parent',handles.figure1, ...
-    'Tag', 'pushbutton_OK', ...
-    'Style','Pushbutton', ...
-    'Units','Pixels',...
-    'Position',[PositionLeft+BoxWidth+5 10 30 23], ...
-    'FontSize',10, ...
-    'String','OK',...
-    'HorizontalAlignment', 'Center');
-
-% Create Cancel Pushbutton
-handles.pushbutton_Cancel = uicontrol('Parent',handles.figure1, ...
-    'Tag', 'pushbutton_Cancel', ...
-    'Style','Pushbutton', ...
-    'Units','Pixels',...
-    'Position',[PositionLeft+BoxWidth+30+7 10 50 23], ...
-    'FontSize',10, ...
-    'String','Cancel',...
-    'HorizontalAlignment', 'Center');
-
-% Create User Name Edit Box
-if ProgramOptions.enterUserName
-    handles.java_UserName = javax.swing.JTextField();
-    handles.java_UserName.setFocusable(true);
-    [handles.java_UserName, handles.edit_UserName] = javacomponent(handles.java_UserName, [], handles.figure1);
-
-    set(handles.edit_UserName, ...
-        'Parent', handles.figure1, ...
-        'Tag', 'edit_UserName', ...
-        'Units', 'Pixels', ...
-        'Position',[PositionLeft 53+OffsetBottom 200 23]);
-    set(handles.java_UserName, 'Text', ProgramOptions.DefaultUserName);
-    drawnow;    % This drawnow is required to allow the focus to work
-
-    handles.text_LabelUserName = uicontrol('Parent',handles.figure1, ...
-        'Tag', 'text_LabelUserName', ...
-        'Style','Text', ...
+    % Create OK Pushbutton
+    handles.pushbutton_OK = uicontrol('Parent',handles.figure1, ...
+        'Tag', 'pushbutton_OK', ...
+        'Style','Pushbutton', ...
         'Units','Pixels',...
-        'Position',[PositionLeft 76+OffsetBottom 200 16], ...
+        'Position',[PositionLeft+BoxWidth+5 10 30 23], ...
         'FontSize',10, ...
-        'String','User name:',...
-        'HorizontalAlignment', 'Left');
+        'String','OK',...
+        'HorizontalAlignment', 'Center');
 
-    %uicontrol(handles.edit_UserName);
-    %set(handles.figure1,'CurrentObject',handles.java_UserName)
-    handles.java_UserName.requestFocus;     % Get focus
-    drawnow;
-else
-    handles.java_Password.requestFocus;     % Get focus
-    drawnow;
-end;
+    % Create Cancel Pushbutton
+    handles.pushbutton_Cancel = uicontrol('Parent',handles.figure1, ...
+        'Tag', 'pushbutton_Cancel', ...
+        'Style','Pushbutton', ...
+        'Units','Pixels',...
+        'Position',[PositionLeft+BoxWidth+30+7 10 50 23], ...
+        'FontSize',10, ...
+        'String','Cancel',...
+        'HorizontalAlignment', 'Center');
+
+    % Create User Name Edit Box
+    if ProgramOptions.enterUserName
+        handles.java_UserName = javax.swing.JTextField();
+        handles.java_UserName.setFocusable(true);
+        [handles.java_UserName, handles.edit_UserName] = javacomponent(handles.java_UserName, [], handles.figure1);
+
+        set(handles.edit_UserName, ...
+            'Parent', handles.figure1, ...
+            'Tag', 'edit_UserName', ...
+            'Units', 'Pixels', ...
+            'Position',[PositionLeft 53+OffsetBottom 200 23]);
+        set(handles.java_UserName, 'Text', ProgramOptions.DefaultUserName);
+        drawnow;    % This drawnow is required to allow the focus to work
+
+        handles.text_LabelUserName = uicontrol('Parent',handles.figure1, ...
+            'Tag', 'text_LabelUserName', ...
+            'Style','Text', ...
+            'Units','Pixels',...
+            'Position',[PositionLeft 76+OffsetBottom 200 16], ...
+            'FontSize',10, ...
+            'String','User name:',...
+            'HorizontalAlignment', 'Left');
+
+        %uicontrol(handles.edit_UserName);
+        %set(handles.figure1,'CurrentObject',handles.java_UserName)
+        handles.java_UserName.requestFocus;     % Get focus
+        drawnow;
+    else
+        handles.java_Password.requestFocus;     % Get focus
+        drawnow;
+    end;
 
 %% Setup Callbacks for Objects
 % Adds the callback functions for the objects in the GUI
 
 set(handles.pushbutton_OK,     'Callback', {@pushbutton_OK_Callback, handles, ProgramOptions}, 'KeyPressFcn', {@pushbutton_KeyPressFcn, handles, ProgramOptions});
-set(handles.pushbutton_Cancel, 'Callback', {@pushbutton_Cancel_Callback, handles, ProgramOptions}, 'KeyPressFcn', {@pushbutton_KeyPressFcn, handles, ProgramOptions});
-set(handles.java_Password, 'ActionPerformedCallback', {@pushbutton_OK_Callback, handles, ProgramOptions});
+    set(handles.pushbutton_Cancel, 'Callback', {@pushbutton_Cancel_Callback, handles, ProgramOptions}, 'KeyPressFcn', {@pushbutton_KeyPressFcn, handles, ProgramOptions});
+    set(handles.java_Password, 'ActionPerformedCallback', {@pushbutton_OK_Callback, handles, ProgramOptions});
 
-if ProgramOptions.ValidatePassword
-    if ProgramOptions.enterUserName
-        ObjectNext = handles.java_UserName;
-    else
-        ObjectNext = handles.java_Password;
+    if ProgramOptions.ValidatePassword
+        if ProgramOptions.enterUserName
+            ObjectNext = handles.java_UserName;
+        else
+            ObjectNext = handles.java_Password;
+        end;
+        set(handles.java_PasswordValidate, 'ActionPerformedCallback', {@pushbutton_OK_Callback, handles, ProgramOptions}, 'NextFocusableComponent', ObjectNext);
+        set(handles.java_Password, 'NextFocusableComponent', handles.java_PasswordValidate);
+    elseif ProgramOptions.enterUserName
+        set(handles.java_Password, 'NextFocusableComponent', handles.java_UserName);
     end;
-    set(handles.java_PasswordValidate, 'ActionPerformedCallback', {@pushbutton_OK_Callback, handles, ProgramOptions}, 'NextFocusableComponent', ObjectNext);
-    set(handles.java_Password, 'NextFocusableComponent', handles.java_PasswordValidate);
-elseif ProgramOptions.enterUserName
-    set(handles.java_Password, 'NextFocusableComponent', handles.java_UserName);
-end;
 
 if ProgramOptions.enterUserName
     set(handles.java_UserName, 'ActionPerformedCallback', {@pushbutton_OK_Callback, handles, ProgramOptions}, 'NextFocusableComponent', handles.java_Password);
@@ -335,9 +341,9 @@ if isCanceled
     return;
 end;
 
-Password = handles.java_Password.Password';
+Password = getPassword(handles, 'Password');
 if ProgramOptions.enterUserName
-    UserName = strtrim(get(handles.java_UserName, 'Text'));
+    UserName = getUserName(handles);
 else
     UserName = '';
 end;
@@ -357,28 +363,23 @@ end;
 function pushbutton_OK_Callback(hObject, eventdata, handles, ProgramOptions)
 if ProgramOptions.enterUserName
     % Check if username is blank
-    UserName = strtrim(get(handles.java_UserName, 'Text'));
+    UserName = getUserName(handles);
     if isempty(UserName)
         strMessage = 'Username is blank';
-        %disp(strMessage)
-        hError = errordlg(strMessage, 'passwordEntryDialog');
-        uiwait(hError);
+        showValidationError(handles, strMessage, false);
         return;
     end;
 end;
 
 if ProgramOptions.CheckPasswordLength
-    %Password = handles.edit_Password.Password';
-    Password = handles.java_Password.Password';
+    Password = getPassword(handles, 'Password');
     if length(Password) < ProgramOptions.PasswordLengthMin || length(Password) > ProgramOptions.PasswordLengthMax
         strMessage = sprintf('Password must be between %d and %d characters', ...
             ProgramOptions.PasswordLengthMin, ...
             ProgramOptions.PasswordLengthMax);
-        %disp(strMessage);
-        hError = errordlg(strMessage, 'passwordEntryDialog');
-        uiwait(hError);
+        showValidationError(handles, strMessage, false);
         if ProgramOptions.ValidatePassword
-            set(handles.java_PasswordValidate,'Text', '');
+            clearPassword(handles, 'PasswordValidate');
         end;
         handles.java_Password.requestFocus
         return;
@@ -387,14 +388,11 @@ end;
 
 if ProgramOptions.ValidatePassword
     % Check if passwords match
-    if ~isequal(handles.java_Password.Password, handles.java_PasswordValidate.Password)
+    if ~isequal(getPassword(handles, 'Password'), getPassword(handles, 'PasswordValidate'))
         strMessage = 'Passwords do not match.  Please try again';
-        %disp(strMessage);
-        hError=errordlg(strMessage, 'passwordEntryDialog','modal');
-        uiwait(hError);
-        set(handles.java_Password,'Text', '');
-        set(handles.java_PasswordValidate,'Text', '');
-
+        showValidationError(handles, strMessage, true);
+        clearPassword(handles, 'Password');
+        clearPassword(handles, 'PasswordValidate');
         handles.java_Password.requestFocus
         return;
     end;
@@ -404,3 +402,77 @@ uiresume(handles.figure1);
 function pushbutton_Cancel_Callback(hObject, eventdata, handles, ProgramOptions)
 setappdata(handles.figure1, 'isCanceled', true);
 uiresume(handles.figure1);
+
+function Password = getPassword(handles, FieldName)
+Password = handles.(['java_' FieldName]).Password';
+
+function UserName = getUserName(handles)
+UserName = strtrim(get(handles.java_UserName, 'Text'));
+
+function clearPassword(handles, FieldName)
+set(handles.(['java_' FieldName]), 'Text', '');
+
+function showValidationError(handles, Message, ModalLegacy)
+if ModalLegacy
+    hError = errordlg(Message, 'passwordEntryDialog', 'modal');
+    uiwait(hError);
+else
+    hError = errordlg(Message, 'passwordEntryDialog');
+    uiwait(hError);
+end
+
+function [Password, UserName] = passwordToolsAdapter(ProgramOptions)
+UserName = ProgramOptions.DefaultUserName;
+
+while true
+    if ProgramOptions.enterUserName
+        [UserName, Password, Accepted] = uilogin([], ...
+            ProgramOptions.WindowName, UserName);
+        UserName = strtrim(char(UserName));
+    else
+        [Password, Accepted] = uipassword([], ProgramOptions.WindowName);
+        UserName = '';
+    end
+
+    if ~Accepted
+        Password = -1;
+        UserName = '';
+        return;
+    end
+    Password = char(Password);
+
+    if ProgramOptions.enterUserName && isempty(UserName)
+        showPasswordToolsValidationError('Username is blank');
+        continue;
+    end
+
+    if ProgramOptions.CheckPasswordLength && ...
+            (length(Password) < ProgramOptions.PasswordLengthMin || ...
+            length(Password) > ProgramOptions.PasswordLengthMax)
+        Message = sprintf('Password must be between %d and %d characters', ...
+            ProgramOptions.PasswordLengthMin, ...
+            ProgramOptions.PasswordLengthMax);
+        showPasswordToolsValidationError(Message);
+        continue;
+    end
+
+    if ProgramOptions.ValidatePassword
+        [PasswordValidate, Accepted] = uipassword([], ...
+            [ProgramOptions.WindowName ' - Reenter password']);
+        if ~Accepted
+            Password = -1;
+            UserName = '';
+            return;
+        end
+        if ~isequal(Password, char(PasswordValidate))
+            showPasswordToolsValidationError( ...
+                'Passwords do not match.  Please try again');
+            continue;
+        end
+    end
+    return;
+end
+
+function showPasswordToolsValidationError(Message)
+hError = errordlg(Message, 'passwordEntryDialog', 'modal');
+uiwait(hError);
