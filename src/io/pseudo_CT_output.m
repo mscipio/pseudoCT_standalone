@@ -1,6 +1,6 @@
 function line = pseudo_CT_output(level, context, format_string, varargin)
 %PSEUDO_CT_OUTPUT Write one standardized event to console and run logs.
-%   Console lines are untimestamped. Log lines use second-resolution time.
+%   Both console and log lines use second-resolution timestamps.
 %   Minimum supported MATLAB: R2010b.
 
 persistent log_warning_emitted;
@@ -42,8 +42,9 @@ if isempty(tags) && isfield(context, 'scope') && ~isempty(context.scope)
     tags = sprintf('[%s] ', context.scope);
 end
 
+timestamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
 line = [prefix tags message];
-fprintf(1, '%s\n', line);
+fprintf(1, '%s %s\n', timestamp, line);
 
 log_files = {};
 if isfield(context, 'log_files') && ~isempty(context.log_files)
@@ -66,7 +67,7 @@ for ii = 1:length(log_files)
     end
     write_failed = false;
     try
-        fprintf(fid, '%s %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'), line);
+        fprintf(fid, '%s %s\n', timestamp, line);
     catch
         write_failed = true;
     end
