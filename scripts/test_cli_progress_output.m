@@ -15,11 +15,10 @@ context = struct('log_file', log_file, 'subject_index', 2, ...
 console_text = evalc(['pseudo_CT_output(''INFO'', context, ', ...
     '''Running SPM New Segment'');']);
 assert(~isempty(regexp(console_text, ...
-    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[subject 2/5\] \[stage 4/8\] INFO', 'once')));
-assert(~isempty(strfind(console_text, 'Running SPM New Segment')));
+    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] INFO\s+\[subject 2/5\] \[stage 4/8\] Running SPM New Segment', 'once')));
 log_text = local_read(log_file);
 assert(~isempty(regexp(log_text, ...
-    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[subject 2/5\] \[stage 4/8\] INFO', 'once')));
+    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] INFO\s+\[subject 2/5\] \[stage 4/8\] Running SPM New Segment', 'once')));
 assert(isempty(regexp(log_text, '\d{2}:\d{2}:\d{2}\.\d+', 'once')));
 second_log = fullfile(test_dir, 'second.log');
 multi_context = struct('log_files', {{log_file, second_log}}, 'scope', 'batch');

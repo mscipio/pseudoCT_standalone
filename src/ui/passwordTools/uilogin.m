@@ -32,8 +32,7 @@ end
 sz = get(0,'ScreenSize');
 hFig  = figure('WindowStyle','modal','Position',[(sz(3:4)-[350 100])/2 350 100],'Name',lbl,'Resize','off','NumberTitle','off','Menubar','none','Color',[0.9 0.9 0.9],'CloseRequestFcn',@(~,~)uiresume);
 hUser = uicontrol(hFig,'Style','edit','Position',[80 60 250 20],'KeyPressFcn',@userKeyPress,'FontSize',10,'BackGroundColor','w','String',user);
-hDumy = uicontrol(hFig,'Style','push','Position',[80 30 250 20],'KeyPressFcn',@passKeyPress); %focus target for password keyboard input
-hPass = uicontrol(hFig,'Style','text','Position',[80 30 250 20],'ButtonDownFcn',@passClick,'FontSize',10,'BackGroundColor','w','Enable','Inactive');
+hPass = uicontrol(hFig,'Style','push','Position',[80 30 250 20],'KeyPressFcn',@passKeyPress,'FontSize',10,'BackGroundColor','w','String','');
 annotation(hFig,'textbox','Units','pixels','Position',[0 60 80 20],'String','Username','EdgeColor','none','VerticalAlignment','middle','HorizontalAlignment','right')
 annotation(hFig,'textbox','Units','pixels','Position',[0 30 80 20],'String','Password','EdgeColor','none','VerticalAlignment','middle','HorizontalAlignment','right')
 pass = ''; %init password
@@ -43,9 +42,6 @@ uiwait %wait for uiresume command
 drawnow %required for next line
 user = hUser.String;
 delete(hFig) %clean up
-    function passClick(~,~)
-        uicontrol(hDumy)
-    end
     function userKeyPress(~,event)
         if strcmp(event.Key,'return')
             accepted = true;

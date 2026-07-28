@@ -42,7 +42,7 @@ if isempty(tags) && isfield(context, 'scope') && ~isempty(context.scope)
     tags = sprintf('[%s] ', context.scope);
 end
 
-line = sprintf('[%s] %s%-7s %s', timestamp, tags, level, message);
+line = sprintf('[%s] %-7s %s%s', timestamp, level, tags, message);
 fprintf(1, '%s\n', line);
 
 log_files = {};
