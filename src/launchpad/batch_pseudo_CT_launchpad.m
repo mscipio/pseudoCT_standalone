@@ -3,9 +3,16 @@
 
 function [ssh2_conn, jobname, rand_fold, ss_tot] = batch_pseudo_CT_launchpad(P, ssh_log, varargin)
 
+if isempty(varargin) || ~isstruct(varargin{end})
+    error('pseudo_CT:ProfileRequired', ...
+        'batch_pseudo_CT_launchpad requires the selected profile config.');
+end
+config = varargin{end};
+varargin = varargin(1:end-1);
+
 clean_folder = 1;
 keep_tmp = 0;
-check_aliasing = 1;
+check_aliasing = config.aliasing_default;
 
 if length(P) == 0
     P = spm_select(Inf, 'any', 'Choose the subjects to run Pseudo-CT on cluster!');
@@ -13,14 +20,15 @@ end
 if ~iscell(ssh_log) || length(ssh_log) ~= 3
     [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
         'WindowName', 'Enter your Martinos Login and Password to connect to Launchpad and use FreeSurfer!');
-    HOSTNAME = defaults_pseudo_CT_launchpad('HOSTNAME');
+    HOSTNAME = config.launchpad.host;
     ssh_log = {USERNAME, PASSWORD, HOSTNAME};
     clear USERNAME PASSWORD HOSTNAME
 end
 
 fix_args = 2;
-if nargin > fix_args && rem(nargin-fix_args, 2) == 0
-    for ii=1:2:(nargin-fix_args)
+num_extra_args = length(varargin);
+if num_extra_args > 0 && rem(num_extra_args, 2) == 0
+    for ii=1:2:num_extra_args
         switch varargin{ii}
             case 'clean_folder'
                 clean_folder = varargin{ii+1};
@@ -33,16 +41,16 @@ if nargin > fix_args && rem(nargin-fix_args, 2) == 0
                 return
         end
     end
-elseif rem(nargin-fix_args, 2) ~= 0
+elseif rem(num_extra_args, 2) ~= 0
     disp(sprintf('The total number of input variables must be: (%d fix + multiples of 2 for extra parameters)!!!', fix_args));
     return
 end
 
 FS = 1;
-% Queue selection: defaults_pseudo_CT_launchpad('queue_name') takes
-% priority (e.g. 'p60' for faster scheduling). If empty, fall back to
+% Profile queue selection takes priority (e.g. 'p60' for faster scheduling).
+% If empty, fall back to
 % the hardcoded heuristic (-q max100 for >100 subjects, default otherwise).
-queue_override = defaults_pseudo_CT_launchpad('queue_name');
+queue_override = config.launchpad.queue;
 if ~isempty(queue_override)
     queue_com = ['-q ', queue_override];
 elseif size(P, 1) > 100
@@ -56,17 +64,17 @@ evidence = launchpad_evidence('init', struct('profile', 'launchpad', ...
     'subject_count', size(P, 1)));
 
 ssh2_conn = ssh2_config(ssh_log{3}, ssh_log{1}, ssh_log{2});
-host_folder = defaults_pseudo_CT_launchpad('host_folder');
+host_folder = config.launchpad.scratch;
 if ~strcmp(host_folder(end), '/')
     host_folder = [host_folder, '/'];
 end
 lc_path_parent = strcat(host_folder, ssh2_conn.username, '/');
 ssh2_conn = ssh2_command(ssh2_conn, sprintf('mkdir %s', lc_path_parent));
 
-launchpad_batch_templates = defaults_pseudo_CT_launchpad('launchpad_batch_templates');
-launchpad_defaults_mat = defaults_pseudo_CT_launchpad('launchpad_defaults_mat');
-launchpad_runner = defaults_pseudo_CT_launchpad('launchpad_runner');
-launchpad_mcr_root = defaults_pseudo_CT_launchpad('launchpad_mcr_root');
+launchpad_batch_templates = config.launchpad.batch_templates;
+launchpad_defaults_mat = config.launchpad.defaults_mat;
+launchpad_runner = config.launchpad.runner;
+launchpad_mcr_root = config.launchpad.mcr_root;
 
 for jj=1:size(P, 1)
     disp(sprintf('Working on subject %d of %d:\n%s\n', jj, size(P, 1), deblank(P(jj, :))));
@@ -86,51 +94,24 @@ for jj=1:size(P, 1)
     end
 
     vari = sprintf('%s %s %d %d %s', lc_fn, launchpad_batch_templates, 0, check_aliasing, launchpad_defaults_mat);
-    cmd = [cmd launchpad_runner ' ' launchpad_mcr_root ' ' vari ';'];
+    % Force single-threaded execution to eliminate DARTEL non-determinism
+    % from heterogeneous PBS node CPU architectures (AVX/SSE/FMA variants
+    % cause different floating-point summation ordering in iterative optimization).
+    cmd = [cmd 'export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1; ' launchpad_runner ' ' launchpad_mcr_root ' ' vari ';'];
     cmd = sprintf('"%s"', cmd);
-    [ssh2_conn, jobname{jj}, jobnum(jj)] = run_launchpad_cmd_return(cmd, ssh2_conn, FS, queue_com); %#ok<AGROW>
+    [ssh2_conn, jobname{jj}, jobnum(jj)] = run_launchpad_cmd_return(...
+        cmd, ssh2_conn, FS, queue_com, config); %#ok<AGROW>
     evidence = launchpad_evidence('submission', evidence, ...
         struct('jobname', jobname{jj}, 'jobnum', jobnum(jj)));
 end
 
-ss_tot = check_launchpad_command_status(jobname, ssh2_conn, 10*60, 60, jobnum);
+ss_tot = check_launchpad_command_status(jobname, ssh2_conn, 10*60, 60, ...
+    jobnum, config);
 
 for jj=1:size(P, 1)
     [pathn, fn, extn] = fileparts(deblank(P(jj, :))); %#ok<ASGLU>
-    pbs_result = {};
     evidence = launchpad_evidence('polling', evidence, ...
         struct('exit_status', ss_tot(jj)));
-
-    % --- Diagnostic: capture PBS job logs from cluster (always) ---
-    % The compiled Launchpad binary is opaque — PBS stdout/stderr are
-    % the only runtime evidence for both successes and failures.
-    % Martinos cluster writes PBS logs to /pbs/<user>/ as
-    % <jobname>.o<N> (stdout) and <jobname>.e<N> (stderr).
-    try
-        pbs_cmd = sprintf('ls /pbs/%s/*o%d /pbs/%s/*e%d 2>/dev/null', ...
-            ssh2_conn.username, jobnum(jj), ssh2_conn.username, jobnum(jj));
-        [ssh2_conn, pbs_result] = ssh2_command(ssh2_conn, pbs_cmd);
-        if ~isempty(pbs_result)
-            ssh2_conn = scp_get(ssh2_conn, pbs_result.', pathn);
-            for kk = 1:length(pbs_result)
-                [~, pbs_fn, pbs_ext] = fileparts(pbs_result{kk});
-                src = fullfile(pathn, [pbs_fn pbs_ext]);
-                dst = fullfile(pathn, sprintf('%s_launchpad_%s%s', fn, pbs_fn, pbs_ext));
-                if exist(src, 'file') == 2
-                    try
-                        movefile(src, dst);
-                    catch  %#ok<CTCH>
-                        fprintf(1, '[launchpad-diag] Could not rename PBS log %s (may already exist)\n', [pbs_fn pbs_ext]);
-                    end
-                end
-            end
-            fprintf(1, '[launchpad-diag] Saved PBS job logs for subject %s in %s\n', fn, pathn);
-        end
-        evidence = launchpad_evidence('pbs_logs', evidence, ...
-            struct('pbs_logs', pbs_result));
-    catch ME_pbs  %#ok<CTCH>
-        fprintf(1, '[launchpad-diag] Could not fetch PBS logs for subject %s: %s\n', fn, ME_pbs.message);
-    end
 
     if ss_tot(jj) == 0
         disp(sprintf('\nCopying Back images for subject %d of %d: %s\n', jj, size(P, 1), deblank(P(jj, :))));
@@ -140,26 +121,15 @@ for jj=1:size(P, 1)
         % Check that att_map.nii was produced on the cluster side.
         % A cluster job exiting 0 with no att_map.nii is a known failure mode
         % (e.g. subject-specific issues in the compiled Pseudo_CT_launchpad).
-        % PBS logs were already captured above — see pathn.
         if exist(fullfile(pathn, att_map_filename), 'file') ~= 2
-            fprintf(1, '[launchpad-debug] att_map.nii missing for subject %s despite job exit 0.\nSee PBS logs in: %s\n', deblank(P(jj, :)), pathn);
-            % Print PBS log heads for immediate console feedback
-            log_files = dir(fullfile(pathn, sprintf('%s_launchpad_*', fn)));
-            for kk = 1:min(length(log_files), 2)
-                fid = fopen(fullfile(pathn, log_files(kk).name), 'r');
-                if fid ~= -1
-                    log_txt = fread(fid, 4096, '*char')';
-                    fclose(fid);
-                    fprintf(1, '[launchpad-debug] PBS log %s (head):\n%s\n', log_files(kk).name, log_txt);
-                end
-            end
+            fprintf(1, '[launchpad-debug] att_map.nii missing for subject %s despite job exit 0.\n', deblank(P(jj, :)));
         end
         evidence = launchpad_evidence('retrieval', evidence, struct(...
             'att_map_present', exist(fullfile(pathn, att_map_filename), 'file') == 2));
     else
         disp(sprintf('\nSubject FAILED: %s\n', deblank(P(jj, :))));
-        fprintf(1, '[launchpad-debug] Job %d failed with exit code %d — see PBS logs in %s\n', ...
-            jobnum(jj), ss_tot(jj), pathn);
+        fprintf(1, '[launchpad-debug] Job %d failed with exit code %d for subject %s\n', ...
+            jobnum(jj), ss_tot(jj), deblank(P(jj, :)));
     end
     if keep_tmp == 0
         ssh2_conn = ssh2_command(ssh2_conn, sprintf('rm -rf %s', strcat(lc_path_parent, num2str(rand_fold(jj)))));

@@ -24,11 +24,7 @@
 %         aliasing is happening on the image); = 1: check (and correct if
 %         needed for aliasing). If correcting, user will need to manually
 %         confirm that the automatic correction was propery done.
-%         - varargin{5} = (ONLY for deployed applications) defaults
-%         variable, containing the default values, as from
-%         defaults_pseudo_CT.m
-%         - varargin{6} = explicit profile processing policy manifest. This
-%         six-argument form is separate from the legacy five-argument form.
+%         - varargin{5} = selected profile config.
 %
 % Outputs: - Pf: array of strings containing the names of the new created
 % atlases in subject space:
@@ -106,8 +102,17 @@ catch  %#ok<CTCH>
 end
 
 Pf = ''; % In case program quits before finishing!
-check_aliasing = 0;
-processing_policy = [];
+if nargin ~= 5 || ~isstruct(varargin{5})
+    error('pseudo_CT:ProfileRequired', ...
+        'atlas_based_attenuation_map requires the selected profile config.');
+end
+P = varargin{1};
+dir_batch_templates = varargin{2};
+ssh2_conn = varargin{3};
+check_aliasing = varargin{4};
+config = varargin{5};
+autom_select_folder = isempty(dir_batch_templates);
+ssh_ask_login = ~isstruct(ssh2_conn);
 
 % % Ask the user to agree with the terms:
 % answ_dlg = questdlg(sprintf('This is still Unpublished work!\nDo Not include in publications until we publish the method (Then reference it!)\nIf you agree with this, click Yes, if not, click No'), 'UNPUBLISHED WORK!!!', 'Yes', 'No', 'No');
@@ -118,87 +123,8 @@ processing_policy = [];
 %     otherwise
 % end
 
-ssh_ask_login = 1;
-if nargin < 1 || ~ischar(varargin{1})
-    P = spm_select(Inf, 'image', 'Select the MPRAGE file to use to obtain an atlas-based attenuation map');
-    autom_select_folder = 1;
-    if size(P, 1) == 0
-        return;
-    end
-elseif nargin < 2
-    P = varargin{1};
-    autom_select_folder = 1;
-elseif nargin < 3
-    P = varargin{1};
-    dir_batch_templates = varargin{2};
-    autom_select_folder = 0;
-    if strcmp(dir_batch_templates, '')
-        autom_select_folder = 1;
-    end
-elseif nargin < 4
-    P = varargin{1};
-    dir_batch_templates = varargin{2};
-    autom_select_folder = 0;
-    if strcmp(dir_batch_templates, '')
-        autom_select_folder = 1;
-    end
-    ssh_ask_login = 0;
-elseif nargin < 5
-    P = varargin{1};
-    dir_batch_templates = varargin{2};
-    autom_select_folder = 0;
-    if strcmp(dir_batch_templates, '')
-        autom_select_folder = 1;
-    end
-    ssh_ask_login = 0;
-    check_aliasing = varargin{4};
-elseif nargin < 6
-    P = varargin{1};
-    dir_batch_templates = varargin{2};
-    autom_select_folder = 0;
-    if strcmp(dir_batch_templates, '')
-        autom_select_folder = 1;
-    end
-    ssh_ask_login = 0;
-    check_aliasing = varargin{4};
-    if isdeployed
-        defaults = varargin{5};
-        if ischar(varargin{5})
-            %defaults = load(varargin{5}); % Old (seems to save defaults.defaults)
-            load(varargin{5});
-        end
-    end
-elseif nargin == 6
-    P = varargin{1};
-    dir_batch_templates = varargin{2};
-    autom_select_folder = 0;
-    if strcmp(dir_batch_templates, '')
-        autom_select_folder = 1;
-    end
-    ssh_ask_login = 0;
-    check_aliasing = varargin{4};
-    if isdeployed
-        defaults = varargin{5};
-        if ischar(varargin{5})
-            %defaults = load(varargin{5}); % Old (seems to save defaults.defaults)
-            load(varargin{5});
-        end
-    end
-    processing_policy = varargin{6};
-    if ~isstruct(processing_policy)
-        error('PROFILE:InvalidValue', ...
-              'Explicit processing policy must be a profile manifest struct.');
-    end
-else
-    disp('There are too many inputs! Only 2 inputs are required: P (images of the subject) and dir_batch_templates (the folder where the templates are!)');
-    disp(sprintf('Type help %s for more info!', mfilename));
-    return;
-end
-
 if autom_select_folder
-    repo_root = fileparts(fileparts(mfilename('fullpath')));
-    batch_dir = pseudo_CT_resolve_batch_atlas_path(repo_root);
-    dir_batch_templates = batch_dir;
+    dir_batch_templates = config.atlas_root;
 end
 
 
@@ -277,14 +203,8 @@ end
 % v.1.8: Let's try to get the subject into the center of the image to avoid
 % that the normalization process cut the nose
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-recenter_before_normalization = 1;
-if isstruct(processing_policy) && isfield(processing_policy, 'recenter')
-    recenter_before_normalization = strcmpi(processing_policy.recenter, 'yes');
-elseif isdeployed && exist('defaults', 'var') && isstruct(defaults) && isfield(defaults, 'recenter_before_normalization')
-    recenter_before_normalization = strcmpi(defaults.recenter_before_normalization, 'yes');
-else
-    recenter_before_normalization = strcmpi(defaults_pseudo_CT('recenter_before_normalization'), 'yes');
-end
+recenter_before_normalization = ...
+    strcmpi(config.recenter_before_normalization, 'yes');
 
 if recenter_before_normalization && length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0 & length(strfind(deblank(P(1, :)), '_moved.nii')) == 0
     [P, aliasing] =  center_subject_in_image(P, check_aliasing);
@@ -309,10 +229,6 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
 %         % Now let's copy the file (or files) to the server:
 %         % if one would like to upload a few files sequentilly, use a cell array
 %         %HOSTNAME = '172.20.180.53'; % Address of Brain-Vision computer!
-%         HOSTNAME = defaults_pseudo_CT('HOSTNAME'); % Address of Launchpad computer!
-%         if isdeployed
-%             HOSTNAME = defaults.HOSTNAME;
-%         end
 %     else
 %         auxi = varargin{3};
 %         if length(auxi) ~= 3
@@ -325,15 +241,12 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
 %         clear auxi
 %     end
     if ssh_ask_login ||  ~isstruct(varargin{3})
-        ssh2_conn = ssh_login_pseudo_CT();
+        ssh2_conn = ssh_login_pseudo_CT(config);
     else
         ssh2_conn = varargin{3};
     end
     if ~isfield(ssh2_conn, 'hostname') || isempty(ssh2_conn.hostname)
-        ssh2_conn.hostname = defaults_pseudo_CT('HOSTNAME');
-        if isdeployed
-            ssh2_conn.hostname = defaults.HOSTNAME;
-        end
+        ssh2_conn.hostname = config.normalization.host;
     end
     if ~isfield(ssh2_conn, 'username') || isempty(ssh2_conn.username)
         ssh2_conn.username = getenv('USER');
@@ -361,10 +274,7 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
     if is_local_host
         host_fold = fileparts(deblank(P(1, :)));
     else
-        host_fold = defaults_pseudo_CT('host_folder');
-        if isdeployed
-            host_fold = defaults.host_folder;
-        end
+        host_fold = config.normalization.host_folder;
     end
     if ~strcmp(host_fold(end), '/'), host_fold = [host_fold, '/']; end
     lc_path = strcat(host_fold, ssh2_conn.username, '/'); % This is the Launchpad folder where to execute the commands!
@@ -385,19 +295,11 @@ if length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0
     for ii=1:nf
         aux_norm(ii) = {strcat(aux{ii}(1:end-4), '_normalized.nii')};
         cmd = sprintf('"mri_normalize %s %s"', strcat(lc_path, '/', aux{ii}), strcat(lc_path, '/', aux_norm{ii}));
-        if (~isdeployed & ~strcmp(lower(defaults_pseudo_CT('cluster')), 'yes')) | (isdeployed & ~strcmp(lower(defaults.cluster), 'yes'))
+        if ~strcmpi(config.normalization.cluster, 'yes')
             cmd = cmd(2:end-1); % Cut the " ";
-            if isdeployed
-                [sts] = run_normalization_cmd(cmd, ssh2_conn, defaults, processing_policy);
-            else
-                [sts] = run_normalization_cmd(cmd, ssh2_conn, processing_policy);
-            end
+            [sts] = run_normalization_cmd(cmd, ssh2_conn, config);
         else
-            if isdeployed
-                [sts] = run_launchpad_cmd(cmd, ssh2_conn, defaults);
-            else
-                [sts] = run_launchpad_cmd(cmd, ssh2_conn);
-            end
+            [sts] = run_launchpad_cmd(cmd, ssh2_conn, config);
         end
         if sts ~= 0
             disp(sprintf('Normalization failed for:\n%s', aux{ii}));
@@ -431,7 +333,7 @@ end
 % Now reorient all images to make them close to the MNI template (ch2.nii)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 P_orig = P; % Let's save the original image filenames as we will need them to use their .mat to reposition the att-map!
-P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'));
+P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), config);
 % Decompose the first image (reference to warp everthing into this image)
 % into its fileparts:
 [paths,fns,exts] = fileparts(deblank(P(1, :)));
@@ -489,11 +391,11 @@ if ~isdeployed
     evalc('cfg_util(''run'', fns_seg_batch);');
 else
     if ispc
-        exe_cmd = strcat('!', fullfile(defaults.deployed_folder, 'spm8.exe'));
+        exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8.exe'));
     elseif ismac
-        exe_cmd = strcat('!', fullfile(defaults.deployed_folder, 'spm8.app/Contents/MacOS/spm8'));
+        exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8.app/Contents/MacOS/spm8'));
     elseif isunix
-        exe_cmd = strcat('!', fullfile(defaults.deployed_folder, 'spm8'));
+        exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8'));
     else
         disp('The platform is unkonwn!!');
         return
@@ -503,19 +405,9 @@ else
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% Manifest-owned bone reduction and cleanup policy.
-% Bone reduction is mandatory; cleanup/retention is manifest-owned and
-% PSEUDOCT_KEEP_TMP cannot alter it.
+% Apply bone reduction when enabled by the selected profile.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-[cleanup_policy, ignored_keep_tmp] = cleanup_owner();
-if ~isempty(ignored_keep_tmp)
-    fprintf(1, '[atlas_based_attenuation_map] cleanup policy = %s (ignored env)\n', cleanup_policy);
-else
-    fprintf(1, '[atlas_based_attenuation_map] cleanup policy = %s\n', cleanup_policy);
-end
-
-[bone_cleanup_enabled, ~] = fixed_bone_cleanup();
-if bone_cleanup_enabled
+if config.bone_enabled
     for ii=1:6
         aux = strcat(paths, filesep, 'rc', num2str(ii), fns, exts);
         %copyfile(aux, strcat(paths, filesep, 'rc', num2str(ii), fns, '_orig', exts))
@@ -674,18 +566,9 @@ subj_mask_dil = imdilate(subj_mask, ones(7,7,7));
 subj_mask_eroded = imerode(subj_mask, ones(13,13,13)); % For version 1.6;
 diff = (subj_mask_dil - subj_mask_eroded).* (att_map < 0.08).* (orig_mprage > 20); % For version 1.6
 I = find(diff); att_map(I) = 0.096;
-% Optionally multiply by the subject mask. Historical Launchpad output keeps
-% these background values, so the compatibility default is 'No'.
-zero_background_defaults = @defaults_pseudo_CT;
-if isstruct(processing_policy)
-    zero_background = pseudo_CT_zero_background_enabled(processing_policy);
-elseif isdeployed && exist('defaults', 'var') && isstruct(defaults)
-    zero_background_defaults = @(defstr) defaults.(defstr);
-    zero_background = pseudo_CT_zero_background_enabled(zero_background_defaults);
-else
-    zero_background = pseudo_CT_zero_background_enabled(zero_background_defaults);
-end
-if strcmp(zero_background, 'Yes')
+% Optionally multiply by the subject mask. The selected profile owns this
+% compatibility policy.
+if strcmp(config.zero_background, 'Yes')
     att_map = att_map.*((subj_mask_dil + (orig_mprage > 20)) > 0);
 end
 % Rename the filename to save it!

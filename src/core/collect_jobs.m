@@ -1,4 +1,4 @@
-function jobs = collect_jobs(manifest, varargin)
+function jobs = collect_jobs(config, varargin)
 %COLLECT_JOBS Collect pseudo-CT jobs from GUI, batch mode, or subject list.
 %   JOBS = COLLECT_JOBS(MANIFEST) opens the existing single-subject GUI
 %   (LOAD_MR_4_AC) and returns a job struct for one subject.
@@ -17,9 +17,7 @@ function jobs = collect_jobs(manifest, varargin)
 %   the anti-aliasing flag. CORRECT_ALIASING should be numeric or logical:
 %   use 1/true to enable the correction and 0/false to disable it.
 %
-%   MANIFEST is the profile manifest struct. It must contain the fields
-%   'aliasing_default' and 'aliasing_override' used by
-%   PSEUDO_CT_VALIDATE_ALIASING.
+%   CONFIG is the selected profile config.
 %
 %   Returns a struct array with fields: mprage_fn, umap_fn, correct_aliasing.
 %   Returns empty when the GUI is cancelled or when no subjects are provided.
@@ -42,11 +40,11 @@ if ~isdeployed && ~isempty(varargin)
     end
 
     if ~isempty(subject_list)
-        correct_aliasing = manifest.aliasing_default;
+        correct_aliasing = config.aliasing_default;
         if numel(varargin) > 1
             correct_aliasing = varargin{2};
         end
-        correct_aliasing = pseudo_CT_validate_aliasing(correct_aliasing, manifest);
+        correct_aliasing = validate_aliasing(correct_aliasing);
         jobs = build_jobs_from_subject_list(subject_list, correct_aliasing);
         return;
     end
@@ -62,10 +60,19 @@ if ~ischar(mprage_fn) || ~ischar(ute_fn) || ~ischar(umap_fn)
     return
 end
 
-correct_aliasing = pseudo_CT_validate_aliasing(correct_aliasing, manifest);
+correct_aliasing = validate_aliasing(correct_aliasing);
 
 jobs(1).mprage_fn = mprage_fn;
 jobs(1).umap_fn = umap_fn;
 jobs(1).correct_aliasing = correct_aliasing;
 
+end
+
+function value = validate_aliasing(value)
+if ~(isnumeric(value) || islogical(value)) || ~isscalar(value) || ...
+        ~ismember(double(value), [0 1])
+    error('pseudo_CT:InvalidAliasing', ...
+        'Aliasing correction must be a scalar numeric or logical 0 or 1.');
+end
+value = double(value);
 end

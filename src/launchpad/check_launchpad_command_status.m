@@ -3,6 +3,12 @@
 
 function [ss_tot, queue_time, run_time] = check_launchpad_command_status(jobname, varargin)
 
+if nargin < 6 || ~isstruct(varargin{5})
+    error('pseudo_CT:ProfileRequired', ...
+        'check_launchpad_command_status requires the selected profile config.');
+end
+config = varargin{5};
+
 pause_time = 30;
 init_pause = 90;
 jobnum = 1;
@@ -14,7 +20,7 @@ if nargin > 1
 else
     [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
         'WindowName', 'Enter your Martinos Login and Password to connect to Launchpad and check your jobs!');
-    HOSTNAME = defaults_pseudo_CT_launchpad('HOSTNAME');
+    HOSTNAME = config.launchpad.host;
 
     disp('Starting the ssh connection to Launchpad to check the job status  ... (be patient!)');
     ssh2_conn = ssh2_config(HOSTNAME, USERNAME, PASSWORD);

@@ -23,6 +23,12 @@
 
 function [sts] = run_launchpad_cmd(cmd, varargin)
 
+if nargin < 3 || ~isstruct(varargin{2})
+    error('pseudo_CT:ProfileRequired', ...
+        'run_launchpad_cmd requires the selected profile config.');
+end
+config = varargin{2};
+
 if strcmp(cmd(1), '"') == 0
     disp(sprintf('The command should start (and finish) with "'));
     disp(sprintf('For further details read: \nhttp://www.nmr.mgh.harvard.edu/martinos/userInfo/computer/launchpad.php'));
@@ -37,31 +43,19 @@ if nargin > 1
 else
     [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
         'WindowName', 'Enter your Martinos Login and Password to connect to Launchpad and use FreeSurfer!');
-    HOSTNAME = defaults_pseudo_CT('HOSTNAME'); % Address of Launchpad computer!
+    HOSTNAME = config.launchpad.host;
 
     ssh_log = {USERNAME, PASSWORD, HOSTNAME};
 
     disp('Starting the ssh connection to Launchpad to run the Normalization process  ... (be patient!)');
     ssh2_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD);
 end
-if nargin > 2
-    if ~isdeployed
-        pause_time = varargin{2};
-    else
-        defaults = varargin{2};
-    end
-end
-
 if nargin > 3
     init_pause = varargin{3} - pause_time;
     init_pause = init_pause.*(init_pause > 0); % To avoid negative numbers!
 end
 
-%source_command = 'source /usr/local/freesurfer/nmr-stable53-env'; % To run FreeSurfer!
-source_command = defaults_pseudo_CT('source_command'); % To run FreeSurfer!
-if isdeployed
-    source_command = defaults.source_command;
-end
+source_command = config.normalization.source_command;
 disp('Starting Launchpad command (be patient) ...');
 ssh2_conn = ssh2_command(ssh2_conn, sprintf('%s; pbsubmit -c %s', source_command, cmd), 1);
 commando = ssh2_command_response(ssh2_conn);

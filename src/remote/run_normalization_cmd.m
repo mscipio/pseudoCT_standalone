@@ -5,8 +5,7 @@
 % Inputs: - cmd: the command to run on the external machine;
 %         - ssh2_conn: (optional) if available, the ssh connection to a
 %         host;
-%         - defaults: (optional, deployed only) defaults struct;
-%         - manifest: (optional) profile-resource-authority manifest;
+%         - config: selected profile config;
 %
 % Output: - sts: the exit status of the command (from the external machine). If 0 then
 %           command finshed properly, otherwise there was some problem.
@@ -17,50 +16,16 @@
 % Athinoula A. Martinos Center.
 % Harvard University / Mass. General Hospital. Boston.
 
-function [sts] = run_normalization_cmd(cmd, varargin)
+function [sts] = run_normalization_cmd(cmd, ssh2_conn, config)
 
 sts = 0;
-manifest = [];
-
-if nargin > 1
-    ssh2_conn = varargin{1};
-else
-%     [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
-%         'WindowName', 'Enter your Martinos Login and Password to connect to the external machine and use FreeSurfer!');
-%     HOSTNAME = defaults_pseudo_CT('HOSTNAME'); % Address of Launchpad computer!
-% 
-%     ssh_log = {USERNAME, PASSWORD, HOSTNAME};
-% 
-%     disp('Starting the ssh connection to run the Normalization process  ... (be patient!)');
-%     ssh2_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD);
-    ssh2_conn = ssh_login_pseudo_CT();
+if nargin ~= 3 || ~isstruct(config)
+    error('pseudo_CT:ProfileRequired', ...
+        'run_normalization_cmd requires the selected profile config.');
 end
 
-if nargin > 2
-    if isdeployed
-        defaults = varargin{2};
-    else
-        manifest = varargin{2};
-    end
-end
-
-if nargin > 3 && isdeployed
-    manifest = varargin{3};
-end
-
-% Resolve manifest-owned or legacy normalization resources.
-if ~isempty(manifest)
-    [source_command, child_lib_path, ignored_fs_lib] = pseudo_CT_normalization_runtime(manifest);
-    if ~isempty(ignored_fs_lib)
-        fprintf(1, '[run_normalization_cmd] source_command from manifest (ignored %s)\n', ignored_fs_lib);
-    end
-else
-    source_command = defaults_pseudo_CT('source_command'); % To run FreeSurfer!
-    if isdeployed
-        source_command = defaults.source_command;
-    end
-    child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
-end
+source_command = config.normalization.source_command;
+child_lib_path = config.normalization.child_lib_path;
 
 aa = strfind(cmd, ' ');
 norm_fn = strtrim(cmd((aa(end)+1):end));
@@ -104,8 +69,6 @@ return
 
 function local_cmd = local_prepare_source_command(source_command, cmd, child_lib_path)
 
-ids = pseudo_CT_error_ids();
-
 source_command = strtrim(source_command);
 if isempty(source_command)
     local_cmd = cmd;
@@ -126,13 +89,16 @@ end
 % ANY interpolation, not just child_lib_path.  (R1-001 full remediation.)
 shell_meta = '[;&|`$(){\}\[\]<>!\\''"]';
 if ~isempty(regexp(child_lib_path, shell_meta, 'once'))
-    error(ids.NORMALIZATION.ShellMetachar, 'PSEUDOCT_FS_LIBSTDCPP_ROOT contains shell metacharacters: %s', child_lib_path);
+    error('pseudo_CT:UnsafeNormalizationCommand', ...
+        'Normalization library path contains shell metacharacters: %s', child_lib_path);
 end
 if ~isempty(regexp(source_command, shell_meta, 'once'))
-    error(ids.NORMALIZATION.ShellMetachar, 'source_command contains shell metacharacters: %s', source_command);
+    error('pseudo_CT:UnsafeNormalizationCommand', ...
+        'Normalization source command contains shell metacharacters: %s', source_command);
 end
 if ~isempty(regexp(cmd, shell_meta, 'once'))
-    error(ids.NORMALIZATION.ShellMetachar, 'Normalization command contains shell metacharacters: %s', cmd);
+    error('pseudo_CT:UnsafeNormalizationCommand', ...
+        'Normalization command contains shell metacharacters: %s', cmd);
 end
 
 if length(source_command) >= 6 && strcmpi(source_command(1:6), 'source')

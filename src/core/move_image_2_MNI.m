@@ -7,7 +7,7 @@ function [Pout] = move_image_2_MNI(Pin, varargin)
 
 autom_select_template = 1;
 isPET = 0;
-if nargin == 2
+if nargin >= 2
     if isnumeric(varargin{1})
         Vt = [];
         Imt = varargin{1};
@@ -24,6 +24,12 @@ if nargin == 2
         end
     end
 end
+
+if nargin < 3 || ~isstruct(varargin{2})
+    error('pseudo_CT:ProfileRequired', ...
+        'move_image_2_MNI requires the selected profile config.');
+end
+config = varargin{2};
     
 if autom_select_template
     batch_dir = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'Batch_atlas');
@@ -66,7 +72,7 @@ maxi = max(mm(1,:)); mini = min(mm(1,:));
 rl_centre_t = mean([maxi mini]); % right-left centre in mm (should be zero, as is in AP centre);
 
 % On axial plane:
-pca_fn = pseudo_CT_pca_resolver();
+pca_fn = pseudo_CT_pca_resolver(config);
 [I] = find(slt_a == 1); [rt, ct] = ind2sub(size(mt), I);
 Mt = [rt, ct];
 [coef_t, score_t, latent_t] = pca_fn(Mt);
@@ -241,4 +247,3 @@ evalc('spm_run_coreg_estimate(job);'); % Estimate but don't reslice!
 %close(fh);
 
 return
-

@@ -1,8 +1,9 @@
-function [ssh2_conn,HOSTNAME,USERNAME] = ssh_login_pseudo_CT(varargin)
-HOSTNAME = defaults_pseudo_CT('HOSTNAME');
-if nargin > 0
-    HOSTNAME = varargin{1};
+function [ssh2_conn,HOSTNAME,USERNAME] = ssh_login_pseudo_CT(config)
+if nargin ~= 1 || ~isstruct(config)
+    error('pseudo_CT:ProfileRequired', ...
+        'ssh_login_pseudo_CT requires the selected profile config.');
 end
+HOSTNAME = config.normalization.host;
 ssh2_conn_exist = evalin('caller','exist(''ssh2_conn'',''var'')');
 if ssh2_conn_exist; ssh2_conn = evalin('caller','ssh2_conn'); end
 if strcmp(HOSTNAME, '127.0.0.1') || strcmpi(HOSTNAME, 'localhost')

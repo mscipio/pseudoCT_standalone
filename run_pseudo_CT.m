@@ -7,18 +7,16 @@ function run_pseudo_CT(varargin)
 %   RUN_PSEUDO_CT('profile', NAME, 'subjects', SUBJECT_LIST) batch mode.
 %
 %   Named parameters:
-%     'profile'          - Execution profile (default: 'local-current').
-%                          Valid profiles are discovered by scanning
-%                          src/config/spm_profiles/ for .m configuration
-%                          files. See that directory for available profiles.
+%     'profile'          - Required in CLI/script mode. Valid profiles are
+%                          discovered from src/config/profiles/.
 %     'subjects'         - Cell or char array of MPRAGE filenames, or
 %                          the string 'batch' to open an SPM multi-select
 %                          file picker. Omit to use the single-subject GUI.
-%     'correct_aliasing' - 0 or 1 to override the profile manifest's
-%                          anti-aliasing default. Omit to use the manifest
+%     'correct_aliasing' - 0 or 1 to override the profile's
+%                          anti-aliasing default. Omit to use the profile
 %                          default.
 %
-%   Profiles are auto-discovered from src/config/spm_profiles/. Each .m
+%   Profiles are auto-discovered from src/config/profiles/. Each .m
 %   file in that directory defines one execution profile. To add a new
 %   profile, add a new .m file to that directory.
 %
@@ -51,17 +49,9 @@ addpath(fullfile(pathp, 'src', 'config'), '-begin');
 addpath(fullfile(pathp, 'src', 'ui'), '-begin');
 
 %% === 1. Handle deployed mode (before any argument parsing) ===
-defaults = '';
 if isdeployed
-    if nargin == 1
-        load(varargin{1});  % Load variable defaults! (creates 'defaults' struct)
-    else
-        disp('The Deployed application requires the defaults *.mat file!!');
-        return;
-    end
-    profile_name = 'local-current';
-    subjects_arg = '';
-    aliasing_arg = [];
+    [profile_name, subjects_arg, aliasing_arg] = ...
+        parse_deployed_arguments(varargin{:});
     
     %% === Interactive mode (no args): show profile selector ===
 elseif nargin == 0
@@ -75,7 +65,7 @@ elseif nargin == 0
     %% === CLI/script mode: parse named arguments ===
 else
     p = inputParser;
-    p.addParamValue('profile', 'local-current', @(x) ischar(x));
+    p.addParamValue('profile', '', @(x) ischar(x));
     p.addParamValue('subjects', '', @(x) ischar(x) || iscell(x));
     p.addParamValue('correct_aliasing', [], ...
         @(x) isempty(x) || (isnumeric(x) && isscalar(x) && ismember(x, [0 1])));
@@ -86,13 +76,20 @@ else
     aliasing_arg = p.Results.correct_aliasing;
 end
 
-%% === Validate profile name against discovered profiles ===
-valid_profiles = discover_profile_names(pathp);
-if ~ismember(profile_name, valid_profiles)
+%% === Validate profile name against available profile files ===
+available_profiles = pseudo_CT_list_profiles(fullfile(pathp, 'src', 'config'));
+valid_profiles = {available_profiles.name}';
+if isempty(profile_name)
+    error('run_pseudo_CT:ProfileRequired', ...
+        'CLI/script invocation requires an explicit profile.');
+end
+requested_profile_name = profile_name;
+profile_name = canonical_profile_name(requested_profile_name, available_profiles);
+if isempty(profile_name)
     profile_list = join_strings(valid_profiles, ', ');
     error('run_pseudo_CT:InvalidProfile', ...
         'Unknown profile: ''%s''. Available profiles are: %s', ...
-        profile_name, profile_list);
+        requested_profile_name, profile_list);
 end
 
 %% === Warning suppression ===
@@ -100,42 +97,32 @@ end
 warning('off', 'all');
 warn_cleanup = onCleanup(@() warning(orig_warn));
 
-%% === Resolve and patch manifest ===
-manifest = pseudo_CT_resolve_profile(profile_name, pathp);
-
-% If near-parity profile on non-R2010b MATLAB: warn and bypass runtime guard
-if ~isempty(strfind(lower(profile_name), 'near-parity'))
-    v = ver('MATLAB');
-    if ~isempty(v)
-        release = v.Release;  % e.g. '(R2023b)'
-        if isempty(strfind(release, 'R2010b'))
-            warning(['Profile ''%s'' selected on MATLAB %s. ', ...
-                     'Results may differ from expected near-parity output.'], ...
-                     profile_name, release);
-            manifest.runtime_guard = 'supported_matlab';
-        end
-    end
+%% === Load the selected profile once and set up its resources ===
+config = pseudo_CT_load_profile(profile_name, fullfile(pathp, 'src', 'config'));
+if ~isempty(config.required_matlab_release) && ...
+        ~strcmp(version('-release'), config.required_matlab_release)
+    warning(['Profile ''%s'' requires MATLAB R%s; running R%s. ', ...
+             'Results may differ from the intended profile output.'], ...
+        profile_name, config.required_matlab_release, version('-release'));
 end
-
-manifest = pseudo_CT_preflight(manifest, pathp);
-setup_pseudo_CT_paths(pathp, manifest);
-dir_batch_templates = pseudo_CT_resolve_batch_atlas_path(pathp, manifest);
+setup_pseudo_CT_paths(pathp, config);
+dir_batch_templates = config.atlas_root;
 
 %% === Collect jobs ===
 if isempty(subjects_arg)
-    jobs = collect_jobs(manifest);
+    jobs = collect_jobs(config);
 elseif ischar(subjects_arg) && size(subjects_arg, 1) == 1 && ...
        strcmpi(strtrim(subjects_arg), 'batch')
     if isempty(aliasing_arg)
-        jobs = collect_jobs(manifest, 'batch');
+        jobs = collect_jobs(config, 'batch');
     else
-        jobs = collect_jobs(manifest, 'batch', aliasing_arg);
+        jobs = collect_jobs(config, 'batch', aliasing_arg);
     end
 else
     if isempty(aliasing_arg)
-        jobs = collect_jobs(manifest, subjects_arg);
+        jobs = collect_jobs(config, subjects_arg);
     else
-        jobs = collect_jobs(manifest, subjects_arg, aliasing_arg);
+        jobs = collect_jobs(config, subjects_arg, aliasing_arg);
     end
 end
 
@@ -144,35 +131,12 @@ if isempty(jobs)
     return;
 end
 
-%% === Dispatch by profile ===
+%% === Dispatch by configured execution mode ===
 num_success = 0;
 num_failed = 0;
 
-switch profile_name
+switch config.mode
     
-    case {'local-current', 'local-near-parity-r2010b'}
-        % ============================================================
-        % LOCAL EXECUTION PATH
-        % ============================================================
-        show_subject_dialog = (length(jobs) == 1);
-        for jj = 1:length(jobs)
-            if length(jobs) > 1
-                disp(sprintf('\nStarting local pseudo-CT subject %d of %d:\n%s\n', ...
-                    jj, length(jobs), jobs(jj).mprage_fn));
-            end
-            if local_run_subject(jobs(jj), dir_batch_templates, defaults, ...
-                    show_subject_dialog, manifest)
-                num_success = num_success + 1;
-            else
-                num_failed = num_failed + 1;
-            end
-        end
-        
-        if ~isdeployed && length(jobs) > 1
-            disp(sprintf('\nLocal pseudo-CT batch finished.  Success: %d  Failed: %d\n', ...
-                num_success, num_failed));
-        end
-        
     case 'launchpad'
         % ============================================================
         % LAUNCHPAD EXECUTION PATH
@@ -200,7 +164,7 @@ switch profile_name
             
             % Print and save profile summary (first subject only)
             if ii == 1
-                pseudo_CT_print_profile_summary(manifest, processing_dir);
+                pseudo_CT_print_profile_summary(profile_name, config, processing_dir);
             end
             
             if length(jobs) > 1
@@ -211,32 +175,20 @@ switch profile_name
             P(ii, 1:length(jobs(ii).seed_nii)) = jobs(ii).seed_nii;
             disp(sprintf('\n\nThis is the temporary working directory where intermediate results will be saved:\n%s\n', temp_dir));
         end
-        
+
         % SSH credentials
-        HOSTNAME = defaults_pseudo_CT_launchpad('HOSTNAME');
-        if isdeployed && isstruct(defaults) && isfield(defaults, 'HOSTNAME')
-            HOSTNAME = defaults.HOSTNAME;
-        end
+        HOSTNAME = config.launchpad.host;
         [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, ...
             'ValidatePassword', true, 'PasswordLengthMax', 50, ...
             'WindowName', sprintf('Login for: %s', HOSTNAME));
         ssh_log = {USERNAME, PASSWORD, HOSTNAME};
         clear USERNAME PASSWORD HOSTNAME
         
-        % Cleanup policy
-        [cleanup_policy, ignored_keep_tmp] = cleanup_owner(manifest);
-        if ~isempty(ignored_keep_tmp)
-            fprintf(1, '[profile-resource-authority] cleanup policy = %s (ignored env)\n', cleanup_policy);
-        else
-            fprintf(1, '[profile-resource-authority] cleanup policy = %s\n', cleanup_policy);
-        end
-        zero_background = pseudo_CT_zero_background_enabled(manifest);
-        keep_tmp_val = strcmp(cleanup_policy, 'keep_on_success');
+        keep_tmp_val = ~config.cleanup_on_success;
         [~, ~, ~, ss_tot] = batch_pseudo_CT_launchpad(P, ssh_log, ...
             'clean_folder', 0, 'keep_tmp', keep_tmp_val, ...
-            'check_aliasing', jobs(1).correct_aliasing);
+            'check_aliasing', jobs(1).correct_aliasing, config);
         
-        should_cleanup = strcmp(cleanup_policy, 'remove_on_success');
         for jj = 1:length(jobs)
             if ss_tot(jj) ~= 0
                 disp(sprintf('Pseudo-CT Launchpad processing failed for:\n%s\n', jobs(jj).mprage_fn));
@@ -250,11 +202,12 @@ switch profile_name
             end
             
             try
-                if strcmp(zero_background, 'Yes')
+                if strcmp(config.zero_background, 'Yes')
                     launchpad_apply_background_mask(jobs(jj).temp_dir);
                 end
                 pseudo_CT_write_mu_map_dicom(fullfile(jobs(jj).temp_dir, 'att_map.nii'), ...
-                    jobs(jj).save_dir, jobs(jj).umap_fn, jobs(jj).temp_dir, 0);
+                    jobs(jj).save_dir, jobs(jj).umap_fn, jobs(jj).temp_dir, ...
+                    config.fwhm);
             catch ME
                 fprintf(1, '[launchpad-debug] Failed to write mu-map DICOM for subject:\n%s\n', jobs(jj).mprage_fn);
                 tmp_list = dir(jobs(jj).temp_dir);
@@ -282,7 +235,7 @@ switch profile_name
             if ~promotion_success
                 disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', ...
                     jobs(jj).temp_dir));
-            elseif should_cleanup
+            elseif config.cleanup_on_success
                 [remove_success, msg] = rmdir(jobs(jj).temp_dir, 's');
                 if ~remove_success
                     disp(sprintf('There was an error removing the temporary directory %s\n%s', ...
@@ -297,7 +250,7 @@ switch profile_name
             end
             num_success = num_success + 1;
         end
-        
+
         if ~isdeployed && length(jobs) > 1
             disp(sprintf('\nLaunchpad pseudo-CT batch finished.  Success: %d  Failed: %d\n', ...
                 num_success, num_failed));
@@ -307,6 +260,28 @@ switch profile_name
             warndlg('Pseudo-CT image finished!!', 'Pseudo-CT finished!!');
         end
         
+    otherwise
+        % ============================================================
+        % LOCAL EXECUTION PATH
+        % ============================================================
+        show_subject_dialog = (length(jobs) == 1);
+        for jj = 1:length(jobs)
+            if length(jobs) > 1
+                disp(sprintf('\nStarting local pseudo-CT subject %d of %d:\n%s\n', ...
+                    jj, length(jobs), jobs(jj).mprage_fn));
+            end
+            if local_run_subject(jobs(jj), dir_batch_templates, ...
+                     show_subject_dialog, profile_name, config)
+                num_success = num_success + 1;
+            else
+                num_failed = num_failed + 1;
+            end
+        end
+
+        if ~isdeployed && length(jobs) > 1
+            disp(sprintf('\nLocal pseudo-CT batch finished.  Success: %d  Failed: %d\n', ...
+                num_success, num_failed));
+        end
 end
 
 %% === Restore warnings (redundant with onCleanup, but explicit) ===
@@ -318,8 +293,8 @@ end
 %% ========================================================================
 %  LOCAL SUBJECT EXECUTION
 %  ========================================================================
-function success = local_run_subject(job, dir_batch_templates, defaults, ...
-    show_dialog, manifest)
+function success = local_run_subject(job, dir_batch_templates, ...
+    show_dialog, profile_name, config)
 
 success = 0;
 
@@ -338,13 +313,10 @@ for ii = 1:length(dir_list)
 end
 
 % Print and save profile summary
-pseudo_CT_print_profile_summary(manifest, processing_dir);
+pseudo_CT_print_profile_summary(profile_name, config, processing_dir);
 
-% Resolve SSH host for FreeSurfer normalization
-HOSTNAME = defaults_pseudo_CT('HOSTNAME');
-if isdeployed && isstruct(defaults) && isfield(defaults, 'HOSTNAME')
-    HOSTNAME = defaults.HOSTNAME;
-end
+% Resolve SSH host for FreeSurfer normalization from the selected profile.
+HOSTNAME = config.normalization.host;
 if strcmp(HOSTNAME, '127.0.0.1') || strcmpi(HOSTNAME, 'localhost')
     USERNAME = getenv('USER');
     if isempty(USERNAME)
@@ -374,35 +346,27 @@ disp(sprintf('\n\nThis is the temporary working directory where intermediate res
 
 % Run the pseudo-CT code
 [Pf] = atlas_based_attenuation_map(P, dir_batch_templates, ssh_log, ...
-    job.correct_aliasing, defaults, manifest);
+    job.correct_aliasing, config);
 if ~ischar(Pf) || isempty(strtrim(Pf))
     disp('Pseudo-CT processing stopped before generating atlas outputs.');
     return;
 end
 
 % Convert att_map.nii to DICOM
-FWHM = 0;
 [temp_working_dir, ~, ~] = fileparts(deblank(Pf(end, :)));
 try
     pseudo_CT_write_mu_map_dicom(fullfile(temp_working_dir, 'att_map.nii'), ...
-        save_dir, job.umap_fn, temp_dir, FWHM);
+        save_dir, job.umap_fn, temp_dir, config.fwhm);
 catch ME
     disp(ME.message);
     return;
 end
 
-% Promote final outputs and cleanup
-[cleanup_policy, ignored_keep_tmp] = cleanup_owner(manifest);
-if ~isempty(ignored_keep_tmp)
-    fprintf(1, '[profile-resource-authority] cleanup policy = %s (ignored env)\n', cleanup_policy);
-else
-    fprintf(1, '[profile-resource-authority] cleanup policy = %s\n', cleanup_policy);
-end
-should_cleanup = strcmp(cleanup_policy, 'remove_on_success');
+% Promote final outputs and clean up according to the selected profile.
 promotion_success = pseudo_CT_promote_final_outputs(temp_working_dir, processing_dir, P);
 if ~promotion_success
     disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', temp_working_dir));
-elseif should_cleanup
+elseif config.cleanup_on_success
     [remove_success, msg] = rmdir(temp_working_dir, 's');
     if ~remove_success
         disp(sprintf('There was an error removing the temporary directory %s\n%s', ...
@@ -470,28 +434,6 @@ end
 end
 
 
-%% ========================================================================
-%  PROFILE DISCOVERY
-%  ========================================================================
-function names = discover_profile_names(repo_root)
-%DISCOVER_PROFILE_NAMES Scan spm_profiles/ for available profile names.
-%   NAMES = DISCOVER_PROFILE_NAMES(REPO_ROOT) returns a cell array of
-%   canonical profile names (e.g. 'local-current', 'launchpad') by
-%   scanning the src/config/spm_profiles/ directory for .m files.
-%   Files without a 'function' declaration are skipped. The underscore
-%   in each filename is replaced with a hyphen to form the canonical name.
-
-profile_dir = fullfile(repo_root, 'src', 'config', 'spm_profiles');
-files = dir(fullfile(profile_dir, '*.m'));
-names = {};
-for ii = 1:numel(files)
-    if files(ii).isdir, continue; end
-    [~, fname] = fileparts(files(ii).name);
-    names{end + 1, 1} = strrep(fname, '_', '-'); %#ok<AGROW>
-end
-end
-
-
 function str = join_strings(cell_arr, delimiter)
 %JOIN_STRINGS Join cell array of strings with a delimiter (R2010b-compatible).
 %   STR = JOIN_STRINGS(CELL_ARR, DELIMITER) concatenates the strings in
@@ -505,4 +447,86 @@ for ii = 1:numel(cell_arr)
     end
     str = [str, char(cell_arr{ii})]; %#ok<AGROW>
 end
+end
+
+
+function name = canonical_profile_name(requested, profiles)
+%CANONICAL_PROFILE_NAME Accept profile display names or function filenames.
+
+requested = strtrim(requested);
+requested_function = strrep(requested, '-', '_');
+name = '';
+for ii = 1:length(profiles)
+    if strcmp(requested, profiles(ii).name) || ...
+            strcmp(requested_function, profiles(ii).function_name)
+        name = profiles(ii).name;
+        return;
+    end
+end
+end
+
+
+function [profile_name, subjects_arg, aliasing_arg] = ...
+    parse_deployed_arguments(varargin)
+%PARSE_DEPLOYED_ARGUMENTS Require an explicit profile in deployed mode.
+
+subjects_arg = '';
+aliasing_arg = [];
+
+if nargin == 1 && ischar(varargin{1}) && exist(varargin{1}, 'file') == 2
+    loaded = load(varargin{1});
+    defaults = loaded;
+    if isfield(loaded, 'defaults') && isstruct(loaded.defaults)
+        defaults = loaded.defaults;
+    end
+    profile_name = deployed_profile_name(loaded, defaults);
+    return;
+end
+
+if nargin == 0
+    error('run_pseudo_CT:DeployedProfileRequired', ...
+        'Deployed invocation requires an explicit profile selection.');
+end
+
+p = inputParser;
+p.addParamValue('profile', '', @(x) ischar(x));
+p.addParamValue('subjects', '', @(x) ischar(x) || iscell(x));
+p.addParamValue('correct_aliasing', [], ...
+    @(x) isempty(x) || (isnumeric(x) && isscalar(x) && ismember(x, [0 1])));
+p.parse(varargin{:});
+profile_name = p.Results.profile;
+subjects_arg = p.Results.subjects;
+aliasing_arg = p.Results.correct_aliasing;
+if isempty(profile_name)
+    error('run_pseudo_CT:DeployedProfileRequired', ...
+        'Deployed invocation requires an explicit profile selection.');
+end
+end
+
+
+function profile_name = deployed_profile_name(loaded, defaults)
+%DEPLOYED_PROFILE_NAME Read the canonical profile from a compatibility MAT.
+
+profile_name = '';
+containers = {defaults, loaded};
+field_names = {'profile_name'; 'profile'; 'execution_profile'};
+for ii = 1:length(containers)
+    candidate = containers{ii};
+    if ~isstruct(candidate)
+        continue;
+    end
+    for jj = 1:length(field_names)
+        field_name = field_names{jj};
+        if isfield(candidate, field_name) && ischar(candidate.(field_name))
+            profile_name = strtrim(candidate.(field_name));
+            if ~isempty(profile_name)
+                return;
+            end
+        end
+    end
+end
+
+error('run_pseudo_CT:DeployedProfileRequired', ...
+    ['Deployed defaults MAT does not declare profile_name, profile, ', ...
+     'or execution_profile. Silent local-current fallback is disabled.']);
 end

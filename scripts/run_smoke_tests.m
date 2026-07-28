@@ -78,50 +78,27 @@ changelog = read_text(fullfile(root_dir, 'CHANGELOG.md'));
 first_line = strtrim(strtok(changelog, char(10)));
 check('CHANGELOG.md top version is 2.7.0', strcmp(first_line, '2.7.0'), first_line);
 
-config_dir = fullfile(root_dir, 'src', 'config');
-addpath(config_dir);
-cleanup_config_path = onCleanup(@() rmpath(config_dir)); %#ok<NASGU>
-original_env = getenv('PSEUDOCT_ZERO_BACKGROUND');
-cleanup_env = onCleanup(@() setenv('PSEUDOCT_ZERO_BACKGROUND', original_env)); %#ok<NASGU>
-
-setenv('PSEUDOCT_ZERO_BACKGROUND', '');
-check('zero-background helper resolves defaults Yes', ...
-    strcmp(pseudo_CT_zero_background_enabled(@defaults_yes), 'Yes'), 'expected Yes');
-check('zero-background helper resolves defaults No', ...
-    strcmp(pseudo_CT_zero_background_enabled(@defaults_no), 'No'), 'expected No');
-check('zero-background helper safely handles missing key', ...
-    strcmp(pseudo_CT_zero_background_enabled(@defaults_missing), 'No'), 'expected No');
-check('zero-background helper safely handles defaults error', ...
-    strcmp(pseudo_CT_zero_background_enabled(@defaults_error), 'No'), 'expected No');
-setenv('PSEUDOCT_ZERO_BACKGROUND', 'true');
-check('zero-background environment is ignored', ...
-    strcmp(pseudo_CT_zero_background_enabled(@defaults_no), 'No'), 'expected No');
-setenv('PSEUDOCT_ZERO_BACKGROUND', '');
-
-local_defaults = read_text(fullfile(config_dir, 'defaults_pseudo_CT.m'));
-launchpad_defaults = read_text(fullfile(config_dir, 'defaults_pseudo_CT_launchpad.m'));
-check('local defaults set zero_background to No', ...
-    ~isempty(strfind(local_defaults, 'zero_background = ''No''')), 'default missing');
-check('Launchpad defaults set zero_background to No', ...
-    ~isempty(strfind(launchpad_defaults, 'zero_background = ''No''')), 'default missing');
-check('local defaults set recenter_before_normalization to No', ...
-    ~isempty(strfind(local_defaults, 'recenter_before_normalization = ''No''')), 'default missing');
-check('Launchpad defaults set recenter_before_normalization to No', ...
-    ~isempty(strfind(launchpad_defaults, 'recenter_before_normalization = ''No''')), 'default missing');
-check('defaults document normalized Launchpad recenter bypass', ...
-    ~isempty(strfind(local_defaults, '_normalized.nii')) && ...
-    ~isempty(strfind(launchpad_defaults, '_normalized.nii')), 'bypass explanation missing');
+try
+    test_profile_authority();
+    check('simple dynamic profile system', true, '');
+catch ME
+    check('simple dynamic profile system', false, ME.message);
+end
 
 atlas_source = read_text(fullfile(root_dir, 'src', 'core', 'atlas_based_attenuation_map.m'));
 check('local final subject mask is policy-gated', ...
-    ~isempty(strfind(atlas_source, 'pseudo_CT_zero_background_enabled(zero_background_defaults)')) && ...
+    ~isempty(strfind(atlas_source, 'config.zero_background')) && ...
     ~isempty(strfind(atlas_source, 'att_map.*((subj_mask_dil + (orig_mprage > 20)) > 0)')), ...
     'local policy gate not found');
-check('bone reduction remains enabled', ...
-    ~isempty(strfind(atlas_source, 'fixed_bone_cleanup()')) && ...
+check('bone reduction consumes profile setting', ...
+    ~isempty(strfind(atlas_source, 'if config.bone_enabled')) && ...
     ~isempty(strfind(atlas_source, 'reduce_bone_segment(Prc_old)')), 'bone cleanup not found');
+entry_source = read_text(fullfile(root_dir, 'run_pseudo_CT.m'));
+check('final FWHM consumes profile setting', ...
+    ~isempty(strfind(entry_source, 'temp_dir, config.fwhm')), ...
+    'config.fwhm is not passed to DICOM output');
 
-launchpad_source = read_text(fullfile(root_dir, 'deprecated', 'run_pseudo_CT_launchpad.m'));
+launchpad_source = entry_source;
 mask_call = strfind(launchpad_source, 'launchpad_apply_background_mask(jobs(jj).temp_dir)');
 dicom_call = strfind(launchpad_source, 'pseudo_CT_write_mu_map_dicom');
 promote_call = strfind(launchpad_source, 'pseudo_CT_promote_final_outputs');
@@ -179,23 +156,7 @@ if fid == -1
     text = '';
     return;
 end
+
 text = fread(fid, inf, '*char')';
 fclose(fid);
-end
-
-function value = defaults_yes(~)
-value = 'Yes';
-end
-
-function value = defaults_no(~)
-value = 'No';
-end
-
-function value = defaults_missing(~)
-value = -1;
-end
-
-function value = defaults_error(~)
-error('test:missingDefault', 'missing default');
-value = 'No'; %#ok<UNRCH>
 end
