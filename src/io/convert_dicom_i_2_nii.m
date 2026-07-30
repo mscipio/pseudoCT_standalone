@@ -25,9 +25,47 @@ dcmnew = '';
 current_dir = pwd;
 
 for ii=1:nf
-    [pathd,fnd,extd] = fileparts(deblank(P(ii, :)));
+    input_path = deblank(P(ii, :));
+    [pathd,fnd,extd] = fileparts(input_path);
     str_f = strfind(pathd, filesep); ll = length(str_f);
     cd(pathd);
+    input_lower = lower(input_path);
+    is_compressed_nifti = length(input_lower) >= 7 && ...
+        strcmp(input_lower(end-6:end), '.nii.gz');
+    if is_compressed_nifti
+        if has_dir_final
+            stage_dir = tempname(dir_final);
+            [success, msg] = mkdir(stage_dir);
+            if ~success
+                error('convert_dicom_i_2_nii:CreateNiftiStageFailed', ...
+                    'Could not create compressed NIfTI staging folder %s: %s', stage_dir, msg);
+            end
+            stage_cleanup = onCleanup(@() local_cleanup_stage(stage_dir));
+            staged_archive = fullfile(stage_dir, 'mprage.nii.gz');
+            [success, msg] = copyfile(input_path, staged_archive);
+            if ~success
+                error('convert_dicom_i_2_nii:StageCompressedNiftiFailed', ...
+                    'Could not stage compressed NIfTI %s: %s', input_path, msg);
+            end
+            gunzip(staged_archive, stage_dir);
+            staged_nifti = fullfile(stage_dir, 'mprage.nii');
+            if exist(staged_nifti, 'file') ~= 2
+                error('convert_dicom_i_2_nii:DecompressedNiftiMissing', ...
+                    'Decompressed NIfTI was not created: %s', staged_nifti);
+            end
+            aux2 = fullfile(dir_final, nii_name);
+            [success, msg] = movefile(staged_nifti, aux2, 'f');
+            if ~success
+                error('convert_dicom_i_2_nii:PromoteCompressedNiftiFailed', ...
+                    'Could not promote decompressed NIfTI to %s: %s', aux2, msg);
+            end
+            Pnew(ii, 1:length(aux2)) = aux2;
+            clear stage_cleanup;
+        else
+            Pnew(ii, 1:length(input_path)) = input_path;
+        end
+        continue
+    end
 %     if length(strfind(extd, '.ima')) | length(strfind(extd, '.IMA'))
 %         disp('Converting the *.IMA into *.dcm');
 %         renameima2dcm; % To convert the *.ima into *.dcm!
@@ -149,3 +187,10 @@ end
 cd(current_dir);
 
 return
+end
+
+function local_cleanup_stage(stage_dir)
+if exist(stage_dir, 'dir') == 7
+    rmdir(stage_dir, 's');
+end
+end
