@@ -1,3 +1,25 @@
+2.7.1
+
+## 2.7.1 — Profile UX, MPRAGE-Only Workflows, and Compressed NIfTI Input
+
+### Profile Selection and Policies
+- Added a grouped, R2010b-compatible profile selector with Recommended and Specialized sections.
+- Profile display names and descriptions are now independent from stable canonical CLI keys.
+- Added explicit profile presentation metadata and deterministic selector ordering.
+- Added `local-mprage-only` and `launchpad-mprage-only` profiles for workflows without UMAP references.
+- Added validated I/O policies for reference discovery, output format, and GUI mode, including compatibility-baseline drift checks.
+
+### Input and Output Safety
+- Added case-insensitive `.nii.gz` MPRAGE input support with destination-local decompression staging.
+- Compressed input archives are preserved byte-for-byte and temporary staging artifacts are cleaned up on success or failure.
+- Output promotion now stages files before promotion to reduce the risk of partially written final outputs.
+- MPRAGE-only workflows skip UTE/UMAP discovery and DICOM generation according to profile policy.
+
+### Verification
+- Added regression coverage for compressed NIfTI input, profile authority, MPRAGE-only collection, policy validation, and deterministic ordering.
+- MATLAB R2010b and R2026a focused checks passed.
+- Full smoke suite: 92 passed, 0 failed.
+
 2.7.0
 
 ## 2.7.0 — Unified Entrypoint Migration and Profile Architecture (BREAKING)
