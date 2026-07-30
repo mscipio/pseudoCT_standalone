@@ -57,6 +57,7 @@ function load_mr_4_AC_OpeningFcn(hObject, eventdata, handles, varargin)
 handles.mprage_fn = 0;
 handles.ute_fn = 0;
 handles.umap_fn = 0;
+handles.gui_mode = 'mMR';
 
 if nargin > 3
     switch varargin{1}
@@ -68,6 +69,14 @@ if nargin > 3
         case 'mMR'
             set(handles.load_ute_edit, 'Visible', 'Off');
             set(handles.load_ute_button, 'Visible', 'Off');
+            set(handles.load_mprage_button, 'String', 'Load MPRAGE');
+            set(handles.load_mprage_edit, 'String', '"Load MPRAGE image (dicom or nifty)"');
+        case 'mprage-only'
+            handles.gui_mode = 'mprage-only';
+            set(handles.load_ute_edit, 'Visible', 'Off');
+            set(handles.load_ute_button, 'Visible', 'Off');
+            set(handles.load_umap_edit, 'Visible', 'Off');
+            set(handles.load_umap_button, 'Visible', 'Off');
             set(handles.load_mprage_button, 'String', 'Load MPRAGE');
             set(handles.load_mprage_edit, 'String', '"Load MPRAGE image (dicom or nifty)"');
         otherwise
@@ -123,17 +132,21 @@ end
 
 handles.mprage_fn = P;
 set(handles.load_mprage_edit, 'String', handles.mprage_fn);
-[handles.ute_fn, handles.umap_fn] = pseudo_CT_discover_ute_umap(P);
-
-if isstr(handles.ute_fn)
-    set(handles.load_ute_edit, 'String', handles.ute_fn);
+if strcmp(handles.gui_mode, 'mprage-only')
+    handles.ute_fn = '';
+    handles.umap_fn = '';
 else
-    %set(handles.load_ute_edit, 'String', 'No UTE_2 filename found!! Find your UTE_2 file!');
-end
-if isstr(handles.umap_fn)
-    set(handles.load_umap_edit, 'String', handles.umap_fn);
-else
-    set(handles.load_umap_edit, 'String', 'No UMAP filename found!! Find your UMAP file!');
+    [handles.ute_fn, handles.umap_fn] = pseudo_CT_discover_ute_umap(P);
+    if isstr(handles.ute_fn)
+        set(handles.load_ute_edit, 'String', handles.ute_fn);
+    else
+        %set(handles.load_ute_edit, 'String', 'No UTE_2 filename found!! Find your UTE_2 file!');
+    end
+    if isstr(handles.umap_fn)
+        set(handles.load_umap_edit, 'String', handles.umap_fn);
+    else
+        set(handles.load_umap_edit, 'String', 'No UMAP filename found!! Find your UMAP file!');
+    end
 end
 
 % Update handles structure
@@ -157,17 +170,21 @@ if ~ischar(fn) | exist(fn) ~= 2
 end
 
 handles.mprage_fn = fn;
-[handles.ute_fn, handles.umap_fn] = pseudo_CT_discover_ute_umap(fn);
-
-if isstr(handles.ute_fn)
-    set(handles.load_ute_edit, 'String', handles.ute_fn);
+if strcmp(handles.gui_mode, 'mprage-only')
+    handles.ute_fn = '';
+    handles.umap_fn = '';
 else
-    set(handles.load_ute_edit, 'String', 'No UTE_2 filename found!! Find your UTE_2 file!');
-end
-if isstr(handles.umap_fn)
-    set(handles.load_umap_edit, 'String', handles.umap_fn);
-else
-    set(handles.load_umap_edit, 'String', 'No UMAP filename found!! Find your UMAP file!');
+    [handles.ute_fn, handles.umap_fn] = pseudo_CT_discover_ute_umap(fn);
+    if isstr(handles.ute_fn)
+        set(handles.load_ute_edit, 'String', handles.ute_fn);
+    else
+        set(handles.load_ute_edit, 'String', 'No UTE_2 filename found!! Find your UTE_2 file!');
+    end
+    if isstr(handles.umap_fn)
+        set(handles.load_umap_edit, 'String', handles.umap_fn);
+    else
+        set(handles.load_umap_edit, 'String', 'No UMAP filename found!! Find your UMAP file!');
+    end
 end
 
 % Update handles structure
@@ -304,15 +321,20 @@ if ~isstr(handles.mprage_fn) | exist(handles.mprage_fn) ~= 2
     handles.mprage_fn = 0;
     warndlg('The MPRAGE file does not exist!!', 'Filename does NOT exist!');
 else
-    handles.ute_fn = get(handles.load_ute_edit, 'String');
-    if ~isstr(handles.ute_fn) | exist(handles.ute_fn) ~= 2
+    if strcmp(handles.gui_mode, 'mprage-only')
         handles.ute_fn = '';
-        %warndlg('The UTE_2 file does not exist!!', 'Filename does NOT exist!');
-    end
-    handles.umap_fn = get(handles.load_umap_edit, 'String');
-    if ~isstr(handles.umap_fn) | exist(handles.umap_fn) ~= 2
-        handles.umap_fn = 0;
-        warndlg('The UMAP file does not exist!!', 'Filename does NOT exist!');
+        handles.umap_fn = '';
+    else
+        handles.ute_fn = get(handles.load_ute_edit, 'String');
+        if ~isstr(handles.ute_fn) | exist(handles.ute_fn) ~= 2
+            handles.ute_fn = '';
+            %warndlg('The UTE_2 file does not exist!!', 'Filename does NOT exist!');
+        end
+        handles.umap_fn = get(handles.load_umap_edit, 'String');
+        if ~isstr(handles.umap_fn) | exist(handles.umap_fn) ~= 2
+            handles.umap_fn = 0;
+            warndlg('The UMAP file does not exist!!', 'Filename does NOT exist!');
+        end
     end
 end
 

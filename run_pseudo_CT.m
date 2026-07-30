@@ -34,6 +34,7 @@ function run_pseudo_CT(varargin)
 %
 %   Outputs:
 %       - final DICOM pseudo-muMAP images are written to MR/pseudo_muMAP
+%         when the selected profile declares nifti-and-dicom output
 %       - final NIfTI/QC/version files are written to MR_PET
 %       - intermediate files are staged in MR_PET/tmp and removed on
 %         successful completion
@@ -150,7 +151,9 @@ for ii = 1:length(jobs)
     jobs(ii).subject_started = tic;
     local_ensure_directory(processing_dir);
     local_ensure_directory(temp_dir);
-    local_ensure_directory(save_dir);
+    if strcmp(config.io_policy.output, 'nifti-and-dicom')
+        local_ensure_directory(save_dir);
+    end
     jobs(ii).log_file = fullfile(processing_dir, ...
         sprintf('pseudo_CT_%s_%s.log', profile_name, run_id));
     all_log_files{end + 1} = jobs(ii).log_file; %#ok<AGROW>
@@ -256,14 +259,18 @@ switch config.mode
                 pseudo_CT_output('SUCCESS', context, ...
                     'Local post-processing completed (elapsed %s).', ...
                     local_elapsed(toc(stage_started)));
-                context = local_stage_context(context, 6);
-                stage_started = tic;
-                pseudo_CT_output('INFO', context, 'Writing DICOM output.');
-                pseudo_CT_write_mu_map_dicom(fullfile(jobs(jj).temp_dir, 'att_map.nii'), ...
-                    jobs(jj).save_dir, jobs(jj).umap_fn, jobs(jj).temp_dir, ...
-                    config.fwhm);
-                pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
-                    local_elapsed(toc(stage_started)));
+                if strcmp(config.io_policy.output, 'nifti-and-dicom')
+                    context = local_stage_context(context, 6);
+                    stage_started = tic;
+                    pseudo_CT_output('INFO', context, 'Writing DICOM output.');
+                    pseudo_CT_write_mu_map_dicom(fullfile(jobs(jj).temp_dir, 'att_map.nii'), ...
+                        jobs(jj).save_dir, jobs(jj).umap_fn, jobs(jj).temp_dir, ...
+                        config.fwhm);
+                    pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
+                        local_elapsed(toc(stage_started)));
+                else
+                    pseudo_CT_output('INFO', context, 'Skipping DICOM output by profile policy.');
+                end
             catch ME
                 % Legacy output: fprintf(1, '[launchpad-debug] Failed to write mu-map DICOM for subject:\n%s\n', jobs(jj).mprage_fn);
                 tmp_list = dir(jobs(jj).temp_dir);
@@ -401,7 +408,10 @@ subject_started = job.subject_started;
 
 [pathr, ~, ~] = fileparts(deblank(job.mprage_fn));
 [processing_dir, temp_dir, save_dir] = pseudo_CT_resolve_output_dirs(pathr);
-dir_list = {processing_dir, temp_dir, save_dir};
+dir_list = {processing_dir, temp_dir};
+if strcmp(config.io_policy.output, 'nifti-and-dicom')
+    dir_list{end + 1} = save_dir;
+end
 for ii = 1:length(dir_list)
     if exist(dir_list{ii}, 'dir') ~= 7
         [mkdir_success, msg] = mkdir(dir_list{ii});
@@ -460,20 +470,24 @@ if ~ischar(Pf) || isempty(strtrim(Pf))
     return;
 end
 
-% Convert att_map.nii to DICOM
+% Convert att_map.nii to DICOM only when the selected policy requests it.
 [temp_working_dir, ~, ~] = fileparts(deblank(Pf(end, :)));
-try
-    context = local_stage_context(context, 7);
-    stage_started = tic;
-    pseudo_CT_output('INFO', context, 'Writing DICOM output.');
-    pseudo_CT_write_mu_map_dicom(fullfile(temp_working_dir, 'att_map.nii'), ...
-        save_dir, job.umap_fn, temp_dir, config.fwhm);
-    pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
-        local_elapsed(toc(stage_started)));
-catch ME
-    % Legacy output: disp(ME.message);
-    pseudo_CT_output('ERROR', context, 'DICOM output failed: %s', ME.message);
-    return;
+if strcmp(config.io_policy.output, 'nifti-and-dicom')
+    try
+        context = local_stage_context(context, 7);
+        stage_started = tic;
+        pseudo_CT_output('INFO', context, 'Writing DICOM output.');
+        pseudo_CT_write_mu_map_dicom(fullfile(temp_working_dir, 'att_map.nii'), ...
+            save_dir, job.umap_fn, temp_dir, config.fwhm);
+        pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
+            local_elapsed(toc(stage_started)));
+    catch ME
+        % Legacy output: disp(ME.message);
+        pseudo_CT_output('ERROR', context, 'DICOM output failed: %s', ME.message);
+        return;
+    end
+else
+    pseudo_CT_output('INFO', context, 'Skipping DICOM output by profile policy.');
 end
 
 % Promote final outputs and clean up according to the selected profile.

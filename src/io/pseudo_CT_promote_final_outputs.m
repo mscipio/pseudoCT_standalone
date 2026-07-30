@@ -39,7 +39,10 @@ if ~isempty(normalized_source)
 end
 
 required_att_map = fullfile(processing_dir, 'att_map.nii');
+stage_specs = cell(0, 4);
 
+% Stage every available output without deleting an existing final file. The
+% required attenuation map is committed last, after all staging succeeds.
 for ii=1:size(copy_specs, 1)
     source_file = copy_specs{ii, 1};
     destination_file = copy_specs{ii, 2};
@@ -55,30 +58,83 @@ for ii=1:size(copy_specs, 1)
         continue;
     end
 
-    if exist(destination_file, 'file') == 2
-        delete(destination_file);
+    stage_file = [destination_file '.stage'];
+    if exist(stage_file, 'file') == 2
+        delete(stage_file);
     end
-
-    [copy_success, msg] = copyfile(source_file, destination_file);
+    [copy_success, msg] = copyfile(source_file, stage_file);
     if copy_success == 0
         % Legacy output: disp(sprintf('There was an error copying the output file\n%s\nto\n%s\n%s', source_file, destination_file, msg));
         pseudo_CT_output('ERROR', context, 'Could not promote output file: %s', msg);
         pseudo_CT_output('INFO', context, '    %s', source_file);
         pseudo_CT_output('INFO', context, '    %s', destination_file);
+        local_cleanup_stages(stage_specs, stage_file);
         return;
     end
+    if exist(stage_file, 'file') ~= 2
+        pseudo_CT_output('ERROR', context, 'Staged output was not created.');
+        pseudo_CT_output('INFO', context, '    %s', stage_file);
+        local_cleanup_stages(stage_specs, stage_file);
+        return;
+    end
+    stage_specs(end + 1, :) = {stage_file, destination_file, is_required, source_file}; %#ok<AGROW>
+end
+
+% Commit optional diagnostics first; leave the prior final map untouched if
+% an optional replacement fails. Commit the required map only at the end.
+for ii=1:size(stage_specs, 1)
+    if stage_specs{ii, 3}
+        continue;
+    end
+    [move_success, msg] = movefile(stage_specs{ii, 1}, stage_specs{ii, 2}, 'f');
+    if move_success == 0
+        pseudo_CT_output('ERROR', context, 'Could not promote output file: %s', msg);
+        local_cleanup_stages(stage_specs);
+        return;
+    end
+end
+
+required_index = 1;
+for ii=1:size(stage_specs, 1)
+    if stage_specs{ii, 3}
+        required_index = ii;
+        break;
+    end
+end
+[move_success, msg] = movefile(stage_specs{required_index, 1}, ...
+    required_att_map, 'f');
+if move_success == 0
+    pseudo_CT_output('ERROR', context, 'Could not promote attenuation map: %s', msg);
+    local_cleanup_stages(stage_specs);
+    return;
 end
 
 if exist(required_att_map, 'file') ~= 2
     % Legacy output: disp(sprintf('Required output file not found:\n%s\n', required_att_map));
     pseudo_CT_output('ERROR', context, 'Promoted attenuation map was not found.');
     pseudo_CT_output('INFO', context, '    %s', required_att_map);
+    local_cleanup_stages(stage_specs);
     return;
 end
 
 success = 1;
 
 return
+end
+
+function local_cleanup_stages(stage_specs, extra_stage)
+if nargin < 2
+    extra_stage = '';
+end
+for ii=1:size(stage_specs, 1)
+    if exist(stage_specs{ii, 1}, 'file') == 2
+        delete(stage_specs{ii, 1});
+    end
+end
+if ~isempty(extra_stage) && exist(extra_stage, 'file') == 2
+    delete(extra_stage);
+end
+end
 
 function source_file = local_find_seed_source(temp_dir, seed_nii)
 
@@ -95,6 +151,7 @@ if exist(candidate, 'file') == 2
 end
 
 return
+end
 
 function source_file = local_find_normalized_source(temp_dir, seed_nii)
 
@@ -130,3 +187,4 @@ for ii=1:length(list_norm)
 end
 
 return
+end

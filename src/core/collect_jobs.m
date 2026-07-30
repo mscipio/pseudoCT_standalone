@@ -24,7 +24,8 @@ function [jobs, stats] = collect_jobs(config, varargin)
 %
 %   Minimum supported MATLAB: R2010b.
 
-jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {});
+jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {}, ...
+    'io_policy', {});
 stats = struct('requested', 0, 'skipped', 0, 'skipped_subjects', {{}});
 
 if ~isdeployed && ~isempty(varargin)
@@ -46,17 +47,26 @@ if ~isdeployed && ~isempty(varargin)
             correct_aliasing = varargin{2};
         end
         correct_aliasing = validate_aliasing(correct_aliasing);
-        [jobs, stats] = build_jobs_from_subject_list(subject_list, correct_aliasing);
+        [jobs, stats] = build_jobs_from_subject_list(subject_list, correct_aliasing, ...
+            config.io_policy);
         return;
     end
 end
 
-[mprage_fn, ute_fn, umap_fn, correct_aliasing] = load_mr_4_AC('mMR');
+[mprage_fn, ute_fn, umap_fn, correct_aliasing] = ...
+    load_mr_4_AC(config.io_policy.gui);
 
 if mprage_fn == 0
     return;
 end
-if ~ischar(mprage_fn) || ~ischar(ute_fn) || ~ischar(umap_fn)
+if strcmp(config.io_policy.reference, 'none')
+    if ~ischar(mprage_fn) || exist(strtrim(mprage_fn), 'file') ~= 2
+        warndlg('The MPRAGE file does not exist', 'Files missing!');
+        return;
+    end
+    ute_fn = '';
+    umap_fn = '';
+elseif ~ischar(mprage_fn) || ~ischar(ute_fn) || ~ischar(umap_fn)
     warndlg('There are some of the filenames missing', 'Files missing!');
     return
 end
@@ -66,6 +76,7 @@ correct_aliasing = validate_aliasing(correct_aliasing);
 jobs(1).mprage_fn = mprage_fn;
 jobs(1).umap_fn = umap_fn;
 jobs(1).correct_aliasing = correct_aliasing;
+jobs(1).io_policy = config.io_policy;
 stats.requested = 1;
 
 end

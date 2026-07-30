@@ -27,6 +27,11 @@ lines{end+1} = sprintf('Bone enabled:       %s', mat2str(config.bone_enabled));
 lines{end+1} = sprintf('FWHM:               %g mm', config.fwhm);
 lines{end+1} = sprintf('Aliasing default:   %d', config.aliasing_default);
 lines{end+1} = sprintf('PCA backend:        %s', pca_backend);
+lines{end+1} = '';
+lines{end+1} = '--- I/O Policy ---';
+lines{end+1} = sprintf('Reference:          %s', config.io_policy.reference);
+lines{end+1} = sprintf('Output:             %s', config.io_policy.output);
+lines{end+1} = sprintf('GUI:                %s', config.io_policy.gui);
 if ~isempty(config.required_matlab_release)
     lines{end+1} = sprintf('Required MATLAB:    R%s', config.required_matlab_release);
 end
