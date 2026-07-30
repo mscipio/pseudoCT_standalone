@@ -1,10 +1,10 @@
-function config = local_near_parity_r2010b()
-%LOCAL_NEAR_PARITY_R2010B Local profile for MATLAB R2010b parity work.
+function config = local_mprage_only()
+%LOCAL_MPRAGE_ONLY Local MPRAGE-only profile matching LOCAL_CURRENT.
 
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'local';
 % SPM installation used by this profile.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/spm8-dan';
+config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/spm8-r6313';
 % Atlas images and SPM batch templates used by the pipeline.
 config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/Batch_atlas';
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
@@ -14,9 +14,9 @@ config.zero_background = 'No';
 % Remove temporary files after successful output promotion.
 config.cleanup_on_success = false;
 % PCA implementations to try in order.
-config.pca_order = {'repo_legacy'; 'callable_pca'};
+config.pca_order = {'callable_pca'; 'repo_legacy'};
 % Required MATLAB release without the leading R; empty accepts any release.
-config.required_matlab_release = '2010b';
+config.required_matlab_release = '';
 % Apply the bone-segmentation cleanup step.
 config.bone_enabled = true;
 % Final attenuation-map Gaussian smoothing width in millimetres.
@@ -25,23 +25,23 @@ config.fwhm = 0;
 config.aliasing_default = 1;
 % Reference policy: 'umap-required' discovers and validates a UMAP reference;
 % 'none' uses MPRAGE-only collection.
-config.io_policy.reference = 'umap-required';
+config.io_policy.reference = 'none';
 % Output policy: 'nifti-and-dicom' promotes NIfTI and writes DICOM;
 % 'nifti-only' skips DICOM output.
-config.io_policy.output = 'nifti-and-dicom';
+config.io_policy.output = 'nifti-only';
 % GUI policy: 'mMR' uses the MPRAGE+UTE/UMAP UI;
 % 'mprage-only' keeps MPRAGE/aliasing controls but bypasses UTE/UMAP controls.
-config.io_policy.gui = 'mMR';
+config.io_policy.gui = 'mprage-only';
 % Compatibility baseline: empty disables baseline drift comparison;
 % a profile name requires all non-policy settings to match that baseline.
-config.compatibility_profile = '';
+config.compatibility_profile = 'local-current';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'Local MATLAB (Near-Parity to Launchpad)';
+config.presentation.display_name = '[Bay8] Local MATLAB - MPRAGE Only';
 config.presentation.description = ...
-    '[Matlab 7.11 R2010b REQUIRED] customized configuration aimed at best approximating Launchpad results.';
+    'Generate NIfTI-only pseudoCT locally from MPRAGE without requiring a UMAP reference.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
-config.presentation.order = 99;
+config.presentation.order = 10;
 
 % FreeSurfer environment command.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';

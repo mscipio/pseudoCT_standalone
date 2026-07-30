@@ -23,6 +23,25 @@ config.bone_enabled = true;
 config.fwhm = 0;
 % Default nose/back aliasing correction for batch and explicit subject lists.
 config.aliasing_default = 1;
+% Reference policy: 'umap-required' discovers and validates a UMAP reference;
+% 'none' uses MPRAGE-only collection.
+config.io_policy.reference = 'umap-required';
+% Output policy: 'nifti-and-dicom' promotes NIfTI and writes DICOM;
+% 'nifti-only' skips DICOM output.
+config.io_policy.output = 'nifti-and-dicom';
+% GUI policy: 'mMR' uses the MPRAGE+UTE/UMAP UI;
+% 'mprage-only' keeps MPRAGE/aliasing controls but bypasses UTE/UMAP controls.
+config.io_policy.gui = 'mMR';
+% Compatibility baseline: empty disables baseline drift comparison;
+% a profile name requires all non-policy settings to match that baseline.
+config.compatibility_profile = '';
+% Human-facing selector metadata; runtime identity remains filename-derived.
+config.presentation.display_name = 'Local MATLAB (Current)';
+config.presentation.description = ...
+    'Run the full MPRAGE + UMAP workflow locally on your workstation.';
+config.presentation.group = 'recommended';
+config.presentation.recommended = true;
+config.presentation.order = 10;
 
 % FreeSurfer environment command.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';

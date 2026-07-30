@@ -56,6 +56,27 @@ catch ME
     check('simple dynamic profile system', false, ME.message);
 end
 
+try
+    test_mprage_only_profile();
+    check('MPRAGE-only collection and promotion seams', true, '');
+catch ME
+    check('MPRAGE-only collection and promotion seams', false, ME.message);
+end
+
+try
+    test_compressed_nifti_input();
+    check('compressed NIfTI input staging', true, '');
+catch ME
+    check('compressed NIfTI input staging', false, ME.message);
+end
+
+profile_source = read_text(fullfile(root_dir, 'src', 'config', ...
+    'profiles', 'local_mprage_only.m'));
+check('MPRAGE-only profile declares explicit policy', ...
+    ~isempty(strfind(profile_source, 'config.io_policy.reference = ''none''')) && ...
+    ~isempty(strfind(profile_source, 'config.io_policy.output = ''nifti-only''')), ...
+    'MPRAGE-only policy fields are missing');
+
 atlas_source = read_text(fullfile(root_dir, 'src', 'core', 'atlas_based_attenuation_map.m'));
 check('local final subject mask is policy-gated', ...
     ~isempty(strfind(atlas_source, 'config.zero_background')) && ...
