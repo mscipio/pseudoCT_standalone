@@ -33,7 +33,7 @@ names = {profiles.name};
 [ordered_profiles, default_index] = pseudo_CT_prepare_profile_choices(profiles);
 assert(isequal({ordered_profiles.name}, ...
     {'local-current', 'launchpad', 'local-mprage-only', ...
-     'launchpad-mprage-only', 'local-near-parity-r2010b'}));
+     'launchpad-mprage-only', 'local-near-parity-r2010b', 'devel'}));
 assert(strcmp(ordered_profiles(default_index).name, 'local-current'));
 without_local = profiles(~strcmp({profiles.name}, 'local-current'));
 [without_local, fallback_index] = pseudo_CT_prepare_profile_choices(without_local);
@@ -41,9 +41,8 @@ assert(strcmp(without_local(fallback_index).name, 'launchpad'));
 assert(isequal({ordered_profiles(1:2).group}, ...
     {'recommended', 'recommended'}));
 assert(all([ordered_profiles(1:2).recommended]));
-assert(isequal({ordered_profiles(3:5).group}, ...
-    {'specialized', 'specialized', 'specialized'}));
-assert(~any([ordered_profiles(3:5).recommended]));
+assert(all(strcmp({ordered_profiles(3:end).group}, 'specialized')));
+assert(~any([ordered_profiles(3:end).recommended]));
 for ii = 1:length(profiles)
     assert(~isempty(strtrim(profiles(ii).display_name)));
     assert(~isempty(strtrim(profiles(ii).description)));
@@ -159,6 +158,8 @@ launchpad_source = read_text(fullfile(root_dir, 'src', 'launchpad', ...
 assert(~isempty(strfind(entry_source, 'switch config.mode')));
 assert(isempty(strfind(selector_source, 'listdlg')));
 assert(~isempty(strfind(selector_source, '''Style'', ''radiobutton''')));
+assert(~isempty(strfind(selector_source, 'pseudo_CT_profile_selector_layout')));
+assert(~isempty(strfind(selector_source, '''Style'', ''slider''')));
 assert(~isempty(strfind(selector_source, 'profiles(selected_index).name')));
 assert(length(strfind(entry_source, 'config.fwhm')) >= 2);
 assert(~isempty(strfind(atlas_source, 'if config.bone_enabled')));

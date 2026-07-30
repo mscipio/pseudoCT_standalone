@@ -12,7 +12,7 @@ config.recenter_before_normalization = 'No';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
 config.zero_background = 'No';
 % Remove temporary files after successful output promotion.
-config.cleanup_on_success = false;
+config.cleanup_on_success = true;
 % PCA implementations to try in order; remote means the backend owns PCA.
 config.pca_order = {'remote'};
 % Required local MATLAB release; empty accepts any release.

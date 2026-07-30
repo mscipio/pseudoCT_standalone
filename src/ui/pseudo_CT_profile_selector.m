@@ -11,29 +11,61 @@ config_root = fullfile(fileparts(mfilename('fullpath')), '..', 'config');
 profile = '';
 radio_buttons = cell(length(profiles), 1);
 
-dialog_width = 780;
-dialog_height = 500;
+recommended_count = sum(strcmp({profiles.group}, 'recommended'));
+specialized_count = sum(strcmp({profiles.group}, 'specialized'));
+layout = pseudo_CT_profile_selector_layout(recommended_count, ...
+    specialized_count, get_screen_height());
 dialog = figure('Name', 'Pseudo-CT Profile', 'NumberTitle', 'off', ...
     'MenuBar', 'none', 'ToolBar', 'none', 'Resize', 'off', ...
-    'WindowStyle', 'modal', 'Position', [100 100 dialog_width dialog_height], ...
+    'WindowStyle', 'modal', 'Units', 'pixels', ...
+    'Position', [100 100 layout.dialog_width layout.dialog_height], ...
     'CloseRequestFcn', @cancel_selection);
 
 uicontrol('Parent', dialog, 'Style', 'text', ...
     'String', 'Select a pseudo-CT execution profile', ...
     'HorizontalAlignment', 'left', 'FontSize', 12, 'FontWeight', 'bold', ...
-    'Position', [24 458 730 24]);
+    'Position', [24 layout.dialog_height - 38 730 24]);
 uicontrol('Parent', dialog, 'Style', 'text', ...
     'String', 'Profile labels describe the workflow; scripts continue to use the stable canonical key.', ...
-    'HorizontalAlignment', 'left', 'Position', [24 436 730 18]);
+    'HorizontalAlignment', 'left', ...
+    'Position', [24 layout.dialog_height - 60 730 18]);
 
-recommended_panel = uipanel('Parent', dialog, 'Title', 'Recommended', ...
-    'FontWeight', 'bold', 'Position', [0.03 0.49 0.94 0.36]);
-specialized_panel = uipanel('Parent', dialog, ...
-    'Title', 'Specialized / Development', 'FontWeight', 'bold', ...
-    'Position', [0.03 0.15 0.94 0.31]);
+viewport = uipanel('Parent', dialog, 'BorderType', 'none', 'Units', 'pixels', ...
+    'Position', [layout.horizontal_margin layout.bottom_height ...
+    layout.viewport_width layout.viewport_height]);
+if layout.scroll_needed
+    content_y = -layout.maximum_scroll;
+else
+    content_y = layout.viewport_height - layout.content_height;
+end
+content_panel = uipanel('Parent', viewport, 'BorderType', 'none', ...
+    'Units', 'pixels', 'Position', [0 content_y layout.content_width ...
+    layout.content_height]);
 
-recommended_count = sum(strcmp({profiles.group}, 'recommended'));
-specialized_count = sum(strcmp({profiles.group}, 'specialized'));
+recommended_panel = [];
+if recommended_count > 0
+    recommended_panel = uipanel('Parent', content_panel, ...
+        'Title', 'Recommended', 'FontWeight', 'bold', 'Units', 'pixels', ...
+        'Position', layout.recommended_panel_position);
+end
+specialized_panel = [];
+if specialized_count > 0
+    specialized_panel = uipanel('Parent', content_panel, ...
+        'Title', 'Specialized / Development', 'FontWeight', 'bold', ...
+        'Units', 'pixels', 'Position', layout.specialized_panel_position);
+end
+
+if layout.scroll_needed
+    step = min(1, layout.row_height / layout.maximum_scroll);
+    page_step = min(1, layout.viewport_height / layout.maximum_scroll);
+    uicontrol('Parent', dialog, 'Style', 'slider', 'Units', 'pixels', ...
+        'Min', 0, 'Max', layout.maximum_scroll, ...
+        'Value', layout.maximum_scroll, 'SliderStep', [step page_step], ...
+        'Position', [layout.horizontal_margin + layout.content_width + ...
+        layout.scrollbar_gap layout.bottom_height layout.scrollbar_width ...
+        layout.viewport_height], 'Callback', @scroll_content);
+end
+
 recommended_row = 0;
 specialized_row = 0;
 for ii = 1:length(profiles)
@@ -41,26 +73,27 @@ for ii = 1:length(profiles)
         panel = recommended_panel;
         recommended_row = recommended_row + 1;
         row = recommended_row;
-        count = recommended_count;
     else
         panel = specialized_panel;
         specialized_row = specialized_row + 1;
         row = specialized_row;
-        count = specialized_count;
     end
-    row_height = 1 / max(count, 1);
-    row_top = 1 - row * row_height;
+    panel_position = get(panel, 'Position');
+    row_bottom = panel_position(4) - layout.panel_header_height - ...
+        row * layout.row_height;
     label = profiles(ii).display_name;
     if profiles(ii).recommended
         label = sprintf('%s  [Recommended]', label);
     end
     radio_buttons{ii} = uicontrol('Parent', panel, 'Style', 'radiobutton', ...
         'String', label, 'FontWeight', 'bold', 'HorizontalAlignment', 'left', ...
-        'Units', 'normalized', 'Position', [0.025 row_top + 0.48 * row_height 0.94 0.34 * row_height], ...
+        'Units', 'pixels', 'Position', [18 row_bottom + 30 ...
+        panel_position(3) - 36 20], ...
         'Value', ii == selected_index, 'Callback', {@select_profile, ii});
     uicontrol('Parent', panel, 'Style', 'text', ...
         'String', profiles(ii).description, 'HorizontalAlignment', 'left', ...
-        'Units', 'normalized', 'Position', [0.065 row_top + 0.08 * row_height 0.90 0.34 * row_height]);
+        'Units', 'pixels', 'Position', [50 row_bottom + 6 ...
+        panel_position(3) - 68 20]);
 end
 
 uicontrol('Parent', dialog, 'Style', 'pushbutton', 'String', 'Cancel', ...
@@ -94,4 +127,18 @@ end
         profile = '';
         uiresume(dialog);
     end
+
+    function scroll_content(source, ~)
+        position = get(content_panel, 'Position');
+        position(2) = -get(source, 'Value');
+        set(content_panel, 'Position', position);
+    end
+end
+
+function screen_height = get_screen_height()
+root_units = get(0, 'Units');
+cleanup = onCleanup(@() set(0, 'Units', root_units));
+set(0, 'Units', 'pixels');
+screen_size = get(0, 'ScreenSize');
+screen_height = screen_size(4);
 end

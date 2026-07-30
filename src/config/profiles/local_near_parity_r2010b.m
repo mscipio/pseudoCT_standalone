@@ -12,7 +12,7 @@ config.recenter_before_normalization = 'No';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
 config.zero_background = 'No';
 % Remove temporary files after successful output promotion.
-config.cleanup_on_success = false;
+config.cleanup_on_success = true;
 % PCA implementations to try in order.
 config.pca_order = {'repo_legacy'; 'callable_pca'};
 % Required MATLAB release without the leading R; empty accepts any release.
@@ -41,7 +41,7 @@ config.presentation.description = ...
     '[Matlab 7.11 R2010b REQUIRED] customized configuration aimed at best approximating Launchpad results.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
-config.presentation.order = 99;
+config.presentation.order = 90;
 
 % FreeSurfer environment command.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';

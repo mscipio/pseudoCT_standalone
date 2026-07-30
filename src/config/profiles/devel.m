@@ -1,5 +1,5 @@
-function config = local_mprage_only()
-%LOCAL_MPRAGE_ONLY Local MPRAGE-only profile matching LOCAL_CURRENT.
+function config = devel()
+%DEVEL Local MATLAB profile using the current installed release.
 
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'local';
@@ -12,7 +12,7 @@ config.recenter_before_normalization = 'No';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
 config.zero_background = 'No';
 % Remove temporary files after successful output promotion.
-config.cleanup_on_success = true;
+config.cleanup_on_success = false;
 % PCA implementations to try in order.
 config.pca_order = {'callable_pca'; 'repo_legacy'};
 % Required MATLAB release without the leading R; empty accepts any release.
@@ -25,23 +25,23 @@ config.fwhm = 0;
 config.aliasing_default = 1;
 % Reference policy: 'umap-required' discovers and validates a UMAP reference;
 % 'none' uses MPRAGE-only collection.
-config.io_policy.reference = 'none';
+config.io_policy.reference = 'umap-required';
 % Output policy: 'nifti-and-dicom' promotes NIfTI and writes DICOM;
 % 'nifti-only' skips DICOM output.
-config.io_policy.output = 'nifti-only';
+config.io_policy.output = 'nifti-and-dicom';
 % GUI policy: 'mMR' uses the MPRAGE+UTE/UMAP UI;
 % 'mprage-only' keeps MPRAGE/aliasing controls but bypasses UTE/UMAP controls.
-config.io_policy.gui = 'mprage-only';
+config.io_policy.gui = 'mMR';
 % Compatibility baseline: empty disables baseline drift comparison;
 % a profile name requires all non-policy settings to match that baseline.
-config.compatibility_profile = 'local-current';
+config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = '[Bay8] Local MATLAB - MPRAGE Only';
+config.presentation.display_name = '[DEVELOPMENT PROFILE] Local - Current MATLAB';
 config.presentation.description = ...
-    'Generate NIfTI-only pseudoCT locally from MPRAGE without requiring a UMAP reference.';
+    'DO NOT USE: This profile is for development and testing only.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
-config.presentation.order = 10;
+config.presentation.order = 99;
 
 % FreeSurfer environment command.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';

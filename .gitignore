@@ -3,6 +3,7 @@
 *.o
 *.obj
 *.log
+.gga
 Batch_atlas/
 spm8-dan/
 spm8-r6313/
