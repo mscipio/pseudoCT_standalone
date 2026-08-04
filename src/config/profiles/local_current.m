@@ -4,9 +4,9 @@ function config = local_current()
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'local';
 % SPM installation used by this profile.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/spm8-r6313';
+config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
 % Atlas images and SPM batch templates used by the pipeline.
-config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/Batch_atlas';
+config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'No';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
