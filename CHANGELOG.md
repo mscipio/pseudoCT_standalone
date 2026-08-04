@@ -1,3 +1,20 @@
+2.7.2
+
+## 2.7.2 — Standalone DICOM/NIfTI Converter Integration
+
+### Converter integration
+- Replaced legacy `convert_dicom_i_2_nii` calls with direct `dcm2nii` from the
+  standalone `dicom2nifti_standalone` converter at all three active call sites
+  (`run_pseudo_CT.m` launchpad and local paths, `mMR_nii2mu_dicom_blur_david.m`).
+- The standalone converter handles DICOM import, `.nii.gz` decompression, and
+  plain `.nii` pass-through with explicit output selection and path/cwd restoration.
+- Retired `src/io/convert_dicom_i_2_nii.m` to `deprecated/convert_dicom_i_2_nii.m`;
+  preserved unchanged for historical reference.
+- Added `dicom2nifti_standalone` to the pipeline path in `setup_pseudo_CT_paths.m`.
+- Updated Stage 1 pipeline diagrams in `docs/pipeline-local.md` and
+  `docs/pipeline-launchpad.md` to reflect the new converter.
+- Updated compressed NIfTI regression coverage to exercise the direct `dcm2nii` path.
+
 2.7.1
 
 ## 2.7.1 — Profile UX, MPRAGE-Only Workflows, and Compressed NIfTI Input

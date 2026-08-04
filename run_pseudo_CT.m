@@ -211,7 +211,7 @@ switch config.mode
                 % Legacy output: disp(sprintf('\nPreparing Launchpad pseudo-CT subject %d of %d:\n%s\n', ...
                 %     ii, length(jobs), jobs(ii).mprage_fn));
             end
-            jobs(ii).seed_nii = convert_dicom_i_2_nii(jobs(ii).mprage_fn, 'mprage.nii', jobs(ii).temp_dir);
+            jobs(ii).seed_nii = dcm2nii(jobs(ii).mprage_fn, fullfile(jobs(ii).temp_dir, 'mprage.nii'), 'Overwrite', true);
             P(ii, 1:length(jobs(ii).seed_nii)) = jobs(ii).seed_nii;
             % Legacy output: disp(sprintf('\n\nThis is the temporary working directory where intermediate results will be saved:\n%s\n', temp_dir));
             pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
@@ -453,7 +453,7 @@ clear USERNAME PASSWORD HOSTNAME
 context = local_stage_context(context, 1);
 stage_started = tic;
 pseudo_CT_output('INFO', context, 'Preparing input MPRAGE.');
-P = convert_dicom_i_2_nii(job.mprage_fn, 'mprage.nii', temp_dir);
+P = dcm2nii(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), 'Overwrite', true);
 pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
     local_elapsed(toc(stage_started)));
 

@@ -21,9 +21,9 @@ legend:
 ## Stage 1 — Input Preparation
 
 ```
-  MPRAGE DICOM (IMA/DCM)   or   MPRAGE NIfTI (.nii)
+  MPRAGE DICOM (IMA/DCM)   or   MPRAGE NIfTI (.nii / .nii.gz)
   │
-  ~~~ convert_dicom_i_2_nii ~~~
+  ~~~ dcm2nii (dicom2nifti_standalone) ~~~
   │
   └── MR_PET/tmp/mprage.nii
 ```
@@ -32,9 +32,9 @@ Called by `run_pseudo_CT → local_run_subject`. The input can be either:
 
 - **DICOM** (`.dcm`, `.DCM`, `.ima`, `.IMA`): converted to NIfTI via SPM's DICOM
   import. A separate UMAP DICOM file is needed for the DICOM output geometry.
-- **NIfTI** (`.nii`): **copied** directly to `tmp/mprage.nii` preserving the
-  original file. A UMAP reference is still required for DICOM output (discovered
-  from the sibling `MR/` directory tree).
+- **NIfTI** (`.nii`, `.nii.gz`): staged into `tmp/mprage.nii` by the standalone
+  `dcm2nii` converter. A UMAP reference is still required for DICOM output
+  (discovered from the sibling `MR/` directory tree).
 
 ### NIfTI input
 
@@ -66,9 +66,11 @@ original untouched.
 - `MR_PET/tmp/mprage.nii` — the working MPRAGE in NIfTI format (copy of input).
 
 **Tools used:**
-- `convert_dicom_i_2_nii` (`src/io/`) — for DICOM wraps SPM's `spm_dicom_convert`
-  (overridden by `vers/spm_dicom_convert.m` in local profiles for R2010b
-  compatibility); for NIfTI performs a direct file copy.
+- `dcm2nii` (`dicom2nifti_standalone/`) — standalone DICOM-to-NIfTI converter that
+  handles DICOM import (via SPM's `spm_dicom_convert`, overridden by
+  `vers/spm_dicom_convert.m` for R2010b compatibility), `.nii.gz` decompression,
+  and plain `.nii` pass-through.
+  The legacy `convert_dicom_i_2_nii` helper has been retired to `deprecated/`.
 
 ---
 

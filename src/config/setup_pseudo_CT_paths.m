@@ -59,6 +59,11 @@ end
 if exist(fullfile(root_dir, 'ssh2_v2_m1_r5'), 'dir') == 7
     addpath(genpath(fullfile(root_dir, 'ssh2_v2_m1_r5')), '-begin');
 end
+% Standalone DICOM-to-NIfTI converter (sibling repository).
+d2n_root = fullfile(root_dir, '..', 'dicom2nifti_standalone');
+if exist(d2n_root, 'dir') == 7
+    addpath(d2n_root, '-begin');
+end
 addpath(vers_path, '-begin');
 clear spm_vol_nifti spm_preproc_write8 spm_dicom_convert
 rehash;

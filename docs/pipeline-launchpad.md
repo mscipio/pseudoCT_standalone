@@ -22,9 +22,9 @@ legend:
 ## Stage 1 — Input Preparation (local)
 
 ```
-  MPRAGE DICOM (IMA/DCM)   or   MPRAGE NIfTI (.nii)
+  MPRAGE DICOM (IMA/DCM)   or   MPRAGE NIfTI (.nii / .nii.gz)
   │
-  ~~~ convert_dicom_i_2_nii ~~~
+  ~~~ dcm2nii (dicom2nifti_standalone) ~~~
   │
   └── MR_PET/tmp/mprage.nii
 ```
@@ -33,7 +33,7 @@ Identical to the local pipeline. Each subject's primary MPRAGE is staged into
 the local temporary working directory. Input can be either:
 
 - **DICOM** (`.dcm`, `.DCM`, `.ima`, `.IMA`): converted via SPM DICOM import.
-- **NIfTI** (`.nii`): copied directly to `tmp/mprage.nii`.
+- **NIfTI** (`.nii`, `.nii.gz`): staged by the standalone `dcm2nii` converter.
 
 For NIfTI input in `MR_PET/`, the UMAP auto-discovery uses the sibling `MR/`
 directory to find the reference UMAP. See [Local Pipeline Stage 1](pipeline-local.md#stage-1--input-preparation)
@@ -43,7 +43,8 @@ for the NIfTI layout and usage example.
 - `MR_PET/tmp/mprage.nii`.
 
 **Tools used:**
-- `convert_dicom_i_2_nii` (`src/io/`) — wraps SPM DICOM import or direct copy.
+- `dcm2nii` (`dicom2nifti_standalone/`) — standalone DICOM-to-NIfTI converter.
+  The legacy `convert_dicom_i_2_nii` helper has been retired to `deprecated/`.
 
 ---
 

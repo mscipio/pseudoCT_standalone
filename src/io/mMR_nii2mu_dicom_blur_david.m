@@ -111,7 +111,7 @@ spm_write_vol(V_scale, Im_scale);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%
 % Convert the ref_file into nifti:
-[Pnew] = convert_dicom_i_2_nii(mu_ref, 'ref_file.nii', temp_dir);
+Pnew = dcm2nii(mu_ref, fullfile(temp_dir, 'ref_file.nii'), 'Overwrite', true);
 
 %%%%%%%%%%%%%%%%%%%%%%%
 % Now reslice the V_scale into the ref_file:
