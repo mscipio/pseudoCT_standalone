@@ -1,3 +1,18 @@
+2.7.3
+
+## 2.7.3 — Profile-Configurable dicom2nifti Path
+
+### Configuration
+- Moved `dicom2nifti_standalone` path from hardcoded sibling-relative convention
+  to a profile-configurable `d2n_root` field, consistent with `spm_root` and
+  `atlas_root`.
+- Added `d2n_root` to the required fields in `pseudo_CT_load_profile.m`.
+- `setup_pseudo_CT_paths.m` now validates `d2n_root` in preflight and errors
+  with `D2NRootMissing` if the directory is not found.
+- Updated `scripts/test_compressed_nifti_input.m` to load the profile instead
+  of hardcoding the sibling path.
+- Installed path: `/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest`.
+
 2.7.2
 
 ## 2.7.2 — Standalone DICOM/NIfTI Converter Integration

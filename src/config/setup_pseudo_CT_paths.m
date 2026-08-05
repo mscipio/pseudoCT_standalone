@@ -12,6 +12,10 @@ if exist(config.atlas_root, 'dir') ~= 7
     error('pseudo_CT:AtlasRootMissing', ...
         'Configured atlas root not found: %s', config.atlas_root);
 end
+if exist(config.d2n_root, 'dir') ~= 7
+    error('pseudo_CT:D2NRootMissing', ...
+        'Configured dicom2nifti root not found: %s', config.d2n_root);
+end
 if strcmp(config.mode, 'launchpad')
     launchpad_files = {config.launchpad.runner; config.launchpad.defaults_mat};
     for ii = 1:length(launchpad_files)
@@ -59,10 +63,9 @@ end
 if exist(fullfile(root_dir, 'ssh2_v2_m1_r5'), 'dir') == 7
     addpath(genpath(fullfile(root_dir, 'ssh2_v2_m1_r5')), '-begin');
 end
-% Standalone DICOM-to-NIfTI converter (sibling repository).
-d2n_root = fullfile(root_dir, '..', 'dicom2nifti_standalone');
-if exist(d2n_root, 'dir') == 7
-    addpath(d2n_root, '-begin');
+% Standalone DICOM-to-NIfTI converter.
+if exist(config.d2n_root, 'dir') == 7
+    addpath(config.d2n_root, '-begin');
 end
 addpath(vers_path, '-begin');
 clear spm_vol_nifti spm_preproc_write8 spm_dicom_convert

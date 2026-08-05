@@ -43,7 +43,7 @@ for the NIfTI layout and usage example.
 - `MR_PET/tmp/mprage.nii`.
 
 **Tools used:**
-- `dcm2nii` (`dicom2nifti_standalone/`) — standalone DICOM-to-NIfTI converter.
+- `dcm2nii` (`d2n_root` from profile config) — standalone DICOM-to-NIfTI converter.
   The legacy `convert_dicom_i_2_nii` helper has been retired to `deprecated/`.
 
 ---

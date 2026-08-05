@@ -66,7 +66,7 @@ original untouched.
 - `MR_PET/tmp/mprage.nii` — the working MPRAGE in NIfTI format (copy of input).
 
 **Tools used:**
-- `dcm2nii` (`dicom2nifti_standalone/`) — standalone DICOM-to-NIfTI converter that
+- `dcm2nii` (`d2n_root` from profile config) — standalone DICOM-to-NIfTI converter that
   handles DICOM import (via SPM's `spm_dicom_convert`, overridden by
   `vers/spm_dicom_convert.m` for R2010b compatibility), `.nii.gz` decompression,
   and plain `.nii` pass-through.

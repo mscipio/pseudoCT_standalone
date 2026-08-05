@@ -2,7 +2,9 @@ function test_compressed_nifti_input()
 %TEST_COMPRESSED_NIFTI_INPUT Verify direct dcm2nii NIfTI/.nii.gz paths.
 
 root_dir = fileparts(fileparts(mfilename('fullpath')));
-d2n_root = fullfile(root_dir, '..', 'dicom2nifti_standalone');
+addpath(fullfile(root_dir, 'src', 'config', 'profiles'), '-begin');
+config = local_current();
+d2n_root = config.d2n_root;
 old_path = path;
 old_dir = pwd;
 test_root = tempname;
