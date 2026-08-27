@@ -7,6 +7,16 @@ This document describes the end-to-end local pseudo-CT pipeline as implemented b
 Section references are to sections within the same repository unless the complete
 path is shown.
 
+## External Resources
+
+The repository supplies the pipeline source and orchestration, not the SPM8 or
+atlas payloads. Before a local run, configure the selected profile's
+`config.spm_root` to an externally provisioned compatible SPM8 installation and
+`config.atlas_root` to the externally provisioned `Batch_atlas` directory.
+`setup_pseudo_CT_paths` validates both directories before changing the MATLAB
+path. Every `Batch_atlas/...` reference below means a file under
+`config.atlas_root`, not a directory expected at the repository root.
+
 ```
 legend:
   ┌─────────┐  pipeline stage
@@ -146,7 +156,7 @@ refines the affine alignment including scaling. This step is **not** governed by
 - `pseudo_CT_pca_resolver` (`src/config/`) — selects the PCA implementation
   (repo_legacy or callable_pca) from the profile's `pca_order`.
 - `spm_run_coreg_estimate` (SPM8) — affine coregistration (estimate only).
-- Reference: `Batch_atlas/ch2.nii` — the MNI T2 template.
+- Reference: `config.atlas_root/ch2.nii` from the external `Batch_atlas` tree — the MNI T2 template.
 
 ---
 
@@ -208,7 +218,7 @@ classifying background noise.
   └── MR_PET/tmp/rc6mprage_normalized_repos.nii  (cleaned Air/background)
 ```
 
-Loads `Batch_atlas/new_segment_batch.mat`, sets the channel to the masked MPRAGE,
+Loads `config.atlas_root/new_segment_batch.mat` from the external `Batch_atlas` tree, sets the channel to the masked MPRAGE,
 overrides batch parameters (`affreg=''`, `biasfwhm=30`, `warp.reg=10`), and runs
 the full New Segment pipeline:
 1. Bias-field correction → `m*` (bias-corrected image).
@@ -236,8 +246,8 @@ only the `rc*` inputs to DARTEL.
 
 **Tools used:**
 - `cfg_util` (SPM8) — batch runner for the SPM job manager.
-- `Batch_atlas/new_segment_batch.mat` — SPM batch template.
-- `Batch_atlas/TPM.nii` — tissue probability maps.
+- `config.atlas_root/new_segment_batch.mat` — external SPM batch template.
+- `config.atlas_root/TPM.nii` — external tissue probability maps.
 - `reduce_bone_segment` (`src/core/`) — reclassifies WM→Bone.
 
 ---
@@ -252,7 +262,7 @@ only the `rc*` inputs to DARTEL.
   └── MR_PET/tmp/u_rc1mprage_normalized_repos.nii  (flow field)
 ```
 
-Loads `Batch_atlas/dartel_existing_template_batch.mat`, populates the 6 tissue
+Loads `config.atlas_root/dartel_existing_template_batch.mat` from the external `Batch_atlas` tree, populates the 6 tissue
 images, sets the templates from `Batch_atlas/Template_*.nii` (Large FOV templates),
 and runs DARTEL (existing template) to compute the flow field that maps the subject
 to the atlas space.
@@ -262,8 +272,8 @@ to the atlas space.
 
 **Tools used:**
 - `cfg_util` (SPM8) — batch runner.
-- `Batch_atlas/dartel_existing_template_batch.mat` — batch template.
-- `Batch_atlas/Template_1.nii` through `Template_6.nii` — DARTEL templates.
+- `config.atlas_root/dartel_existing_template_batch.mat` — external batch template.
+- `config.atlas_root/Template_1.nii` through `Template_6.nii` — external DARTEL templates.
 
 ---
 
@@ -277,11 +287,11 @@ to the atlas space.
   ├── MR_PET/tmp/w*Atlas*_u_rc1mprage_normalized_repos.nii
 ```
 
-Loads `Batch_atlas/create_inverse_warped_batch.mat`, sets the flow field and atlas
+Loads `config.atlas_root/create_inverse_warped_batch.mat` from the external `Batch_atlas` tree, sets the flow field and atlas
 images, and runs the inverse warp to project all atlases from atlas-space back
 into subject DARTEL-space.
 
-The atlases are discovered at runtime from `Batch_atlas/*Atlas*.nii`:
+The atlases are discovered at runtime from the external `config.atlas_root/*Atlas*.nii`:
 - `*Atlas_rCT*` — CT atlas (converted to att_map later).
 - `*Atlas_rMPRAGE*` — MPRAGE atlas.
 - `*Atlas_rUTE1*` — UTE1 atlas.
@@ -294,7 +304,7 @@ The atlases are discovered at runtime from `Batch_atlas/*Atlas*.nii`:
 
 **Tools used:**
 - `cfg_util` (SPM8) — batch runner.
-- `Batch_atlas/create_inverse_warped_batch.mat` — batch template.
+- `config.atlas_root/create_inverse_warped_batch.mat` — external batch template.
 
 ---
 

@@ -5,6 +5,13 @@ fundamentally from the local path: the local MATLAB layer handles DICOM I/O and
 output promotion, while the compiled `Pseudo_CT_launchpad` backend (MATLAB Compiler
 Runtime 7.11 / R2010b) runs on a remote PBS cluster via SSH.
 
+The repository is not a self-contained Launchpad distribution. The local layer
+still requires externally provisioned SPM8 and `Batch_atlas` resources through
+`config.spm_root` and `config.atlas_root`. The compiled backend, its runner/MCR,
+defaults MAT, and remote atlas/template directory must be provisioned separately
+and supplied through the `config.launchpad.*` fields; this repository and its
+release archives do not distribute those payloads.
+
 ```
 legend:
   ┌─────────┐  pipeline stage (local MATLAB)
@@ -123,7 +130,8 @@ results from the default queue for the same binary and input. See
 ```
 
 Polls the remote PBS job status every 60 seconds with a 10-minute timeout per
-subject. The remote job is self-contained and processes exactly one subject.
+subject. The remote job processes exactly one subject and relies on the separately
+provisioned Launchpad deployment and configured external resources.
 
 **Tools used:**
 - `check_launchpad_command_status` (`src/remote/`) — PBS job polling.
@@ -181,11 +189,13 @@ are deleted after download.
   ╚══════════════════════════════════════════════════════╝
 ```
 
-The compiled backend uses a **self-contained SPM8 installation** bundled with
-the MCR deployment and the same `Batch_atlas` templates. Its pipeline stages are
-structurally identical to the local pipeline Stages 3–10. The key difference is
-that New Segment runs through the compiled MCR path (R2010b base) instead of the
-local MATLAB interpreter.
+The compiled backend uses the SPM8 and atlas/template resources provisioned with
+the separate Launchpad deployment; `config.launchpad.batch_templates` supplies
+the remote `Batch_atlas` directory. These resources are not bundled in this
+repository or its release archives. Its pipeline stages are structurally
+identical to the local pipeline Stages 3–10. The key difference is that New
+Segment runs through the compiled MCR path (R2010b base) instead of the local
+MATLAB interpreter.
 
 **The remote backend produces the same intermediate files as the local pipeline:**
 - `mprage_normalized_repos.nii` (MNI repos)

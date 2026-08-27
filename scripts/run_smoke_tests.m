@@ -51,7 +51,7 @@ end
 
 changelog = read_text(fullfile(root_dir, 'CHANGELOG.md'));
 first_line = strtrim(strtok(changelog, char(10)));
-check('CHANGELOG.md top version is 2.8.2', strcmp(first_line, '2.8.2'), first_line);
+check('CHANGELOG.md top version is 2.8.3', strcmp(first_line, '2.8.3'), first_line);
 
 try
     test_profile_authority();

@@ -1,4 +1,9 @@
-2.8.2
+2.8.3
+
+## 2.8.3 — External Prerequisite Documentation Correction
+
+- Clarified that `Batch_atlas` and SPM8 are externally provisioned prerequisites, not bundled repository or release-archive content.
+- Removed stale `Batch_atlas` Git LFS rules because no atlas payloads are tracked; no external payloads or pipeline behavior were changed.
 
 ## 2.8.2 — Repository Layout and Release Archive Policy
 

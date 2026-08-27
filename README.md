@@ -21,16 +21,43 @@ The former entrypoints `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` a
 - `run_pseudo_CT.m`: primary user-facing entry point.
 - `deprecated/`: legacy helper implementations preserved for reference only; not active runtime dependencies and excluded from release archives.
 - `src/`: project-owned MATLAB source files grouped by function.
-- `Batch_atlas/`: atlas images and SPM batch templates used by the pseudo-CT pipeline.
-- `spm8-r6313/`: bundled SPM8 tree.
+- External `Batch_atlas/`: atlas images and SPM batch templates used by the pseudo-CT pipeline; configured through `atlas_root` and not included here.
+- External `spm8-r6313/`: deployment-provided SPM8 installation; configured through `spm_root` and not included here.
 - `vers/`: local SPM overrides required by this pipeline.
 - `ssh2_v2_m1_r5/`: bundled SSH/SCP toolbox used by the Launchpad path.
 - `imgaussian/`: external image filtering dependency.
 
+## External Prerequisites and Provisioning
+
+This repository and its release archives are **not self-contained**. They do not
+include or distribute the atlas data/templates in `Batch_atlas/` or an SPM8 tree
+such as `spm8-r6313/`. Provision compatible external resources before running the
+pipeline:
+
+- Provision the required atlas NIfTI files and SPM batch templates, then set the
+  selected profile's `config.atlas_root` to that external `Batch_atlas` directory.
+  The directory must contain the templates and atlas files used by the selected
+  workflow (including `ch2.nii`, `TPM.nii`, `Template_*.nii`, the batch `.mat`
+  files, and the `*Atlas*.nii` files).
+- Provision a compatible SPM8 installation and set the selected profile's
+  `config.spm_root` to its absolute path. The checked-in profiles show the site
+  defaults; deployment-specific paths may be substituted while preserving the
+  profile's MATLAB/SPM compatibility requirements.
+- For `launchpad`, provision the separate remote Launchpad deployment and set
+  `config.launchpad.runner`, `config.launchpad.mcr_root`,
+  `config.launchpad.defaults_mat`, and `config.launchpad.batch_templates` to the
+  corresponding external files/directories. `batch_templates` must resolve to the
+  remote provisioned atlas/template directory.
+
+`setup_pseudo_CT_paths` checks the configured resource directories and required
+Launchpad files before changing the MATLAB path. A missing external prerequisite
+therefore fails during setup; it is not supplied by cloning this repository or
+downloading a release archive.
+
 ## Source Tree
 
 - `src/config/`: runtime defaults and environment setup.
-  Contains the local and Launchpad defaults functions plus the local FreeSurfer setup script.
+  Contains the profile files, resource path setup, and the local FreeSurfer setup script.
 - `src/core/`: pseudo-CT processing logic.
   Contains atlas warping, attenuation-map generation, masking, aliasing correction, and subject centering.
 - `src/io/`: input/output helpers.
@@ -195,28 +222,28 @@ with these defaults):
 
 The GitHub repository retains maintainer/test/reference content in `scripts/`,
 `docs/`, and `deprecated/`, plus tracked maintainer metadata such as
-`.gitattributes` and `.gitignore`. These paths are excluded from v2.8.2 release
+`.gitattributes` and `.gitignore`. These paths are excluded from v2.8.3 release
 archives; deployable runtime paths, `README.md`, and `CHANGELOG.md` remain
-included.
+included. External `Batch_atlas/` and SPM8 resources are not included in the
+repository or release archives, so the release is not self-contained.
 
-## Defaults
+## Configuration
 
-Configuration remains in the two legacy defaults functions:
+Runtime configuration is owned by the selected profile in
+`src/config/profiles/`:
 
-- `src/config/defaults_pseudo_CT.m` controls local execution.
-- `src/config/defaults_pseudo_CT_launchpad.m` controls Launchpad execution.
+- `config.spm_root` points to the externally provisioned SPM8 installation.
+- `config.atlas_root` points to the externally provisioned `Batch_atlas` tree.
+- `config.launchpad.*` points to the separately provisioned Launchpad files and
+  remote batch-template directory when the `launchpad` profile is selected.
 
-Both define `recenter_before_normalization = 'No'` and
+All profiles define `recenter_before_normalization = 'No'` and
 `zero_background = 'No'`. Setting `zero_background` to `'Yes'` opts into final
 subject-mask background zeroing. On the Launchpad path this is a local
 post-fetch operation performed before DICOM conversion; the compiled backend is
 unchanged. Older deployed defaults without the key safely retain `'No'`.
 
-The existing environment overrides remain available for maintainer workflows:
-`PSEUDOCT_BATCH_ATLAS`, `PSEUDOCT_KEEP_TMP`, `PSEUDOCT_SPM_ROOT`,
-`PSEUDOCT_SPM_VARIANT`, and `PSEUDOCT_ZERO_BACKGROUND`.
-
 ## Version History
 
 See [CHANGELOG.md](CHANGELOG.md) for release history. The current release is
-**2.8.2** (repository layout and release archive policy update).
+**2.8.3** (external prerequisite documentation correction).
