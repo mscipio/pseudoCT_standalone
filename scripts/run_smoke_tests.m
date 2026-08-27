@@ -1,7 +1,11 @@
 function run_smoke_tests()
 %RUN_SMOKE_TESTS Fast package integrity and policy checks.
 
-root_dir = fileparts(fileparts(mfilename('fullpath')));
+scripts_dir = fileparts(mfilename('fullpath'));
+root_dir = fileparts(scripts_dir);
+old_path = path();
+addpath(scripts_dir, '-begin');
+cleanup = onCleanup(@() path(old_path)); %#ok<NASGU>
 fprintf('=== pseudo-CT Smoke Tests ===\n');
 fprintf('Root: %s\n\n', root_dir);
 
@@ -20,9 +24,9 @@ num_failed = 0;
 
 entry_files = {'run_pseudo_CT.m'};
 for i=1:numel(entry_files)
-    path = fullfile(root_dir, entry_files{i});
-    check([entry_files{i} ' exists'], exist(path, 'file') == 2, 'file not found');
-    check_parse(path, entry_files{i}, @check);
+    file_path = fullfile(root_dir, entry_files{i});
+    check([entry_files{i} ' exists'], exist(file_path, 'file') == 2, 'file not found');
+    check_parse(file_path, entry_files{i}, @check);
 end
 
 source_files = collect_m_files(fullfile(root_dir, 'src'));
@@ -39,15 +43,15 @@ end
 
 override_files = {'spm_vol_nifti.m', 'spm_preproc_write8.m', 'spm_dicom_convert.m'};
 for i=1:numel(override_files)
-    path = fullfile(root_dir, 'vers', override_files{i});
-    check(['vers/' override_files{i} ' exists'], exist(path, 'file') == 2, 'file not found');
-    check_parse(path, ['vers/' override_files{i}], @check);
+    file_path = fullfile(root_dir, 'vers', override_files{i});
+    check(['vers/' override_files{i} ' exists'], exist(file_path, 'file') == 2, 'file not found');
+    check_parse(file_path, ['vers/' override_files{i}], @check);
 end
 
 
 changelog = read_text(fullfile(root_dir, 'CHANGELOG.md'));
 first_line = strtrim(strtok(changelog, char(10)));
-check('CHANGELOG.md top version is 2.8.1', strcmp(first_line, '2.8.1'), first_line);
+check('CHANGELOG.md top version is 2.8.2', strcmp(first_line, '2.8.2'), first_line);
 
 try
     test_profile_authority();
@@ -105,9 +109,9 @@ check('Launchpad missing normalized MPRAGE preserves unmasked map', ...
 comparator_files = {'pct_compare_nifti_exact.m', ...
     'pct_compare_semantic_mat.m', 'test_exact_comparators.m'};
 for i=1:numel(comparator_files)
-    path = fullfile(root_dir, 'scripts', comparator_files{i});
-    check(['scripts/' comparator_files{i} ' exists'], exist(path, 'file') == 2, 'file not found');
-    check_parse(path, ['scripts/' comparator_files{i}], @check);
+    file_path = fullfile(root_dir, 'scripts', comparator_files{i});
+    check(['scripts/' comparator_files{i} ' exists'], exist(file_path, 'file') == 2, 'file not found');
+    check_parse(file_path, ['scripts/' comparator_files{i}], @check);
 end
 
 fprintf('\n=== Results: %d passed, %d failed ===\n', ...

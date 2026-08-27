@@ -10,19 +10,24 @@
 #
 #   git archive --format=tar.gz --prefix=pseudoCT_v$(VERSION)/ \
 #     -o dist/pseudoCT_v$(VERSION).tar.gz <tag-or-commit>
+#
+# This Makefile is retained under deprecated/ for maintainer checks. It can be
+# invoked from the repository root with `make -f deprecated/Makefile <target>`
+# or from another working directory without relying on the caller's cwd.
 
 .PHONY: lint test tag
 
+ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 MATLAB = matlab -nodisplay -batch
-VERSION = $(shell head -n 1 CHANGELOG.md | tr -d '[:space:]')
+VERSION = $(shell head -n 1 "$(ROOT_DIR)/CHANGELOG.md" | tr -d '[:space:]')
 
 lint:
-	$(MATLAB) "run('scripts/run_lint.m')"
+	$(MATLAB) "run('$(ROOT_DIR)/scripts/run_lint.m')"
 
 test:
-	$(MATLAB) "run('scripts/run_smoke_tests.m'), exit"
+	$(MATLAB) "run('$(ROOT_DIR)/scripts/run_smoke_tests.m'), exit"
 
 tag:
 	@[ -n "$(VERSION)" ] || (echo "ERROR: CHANGELOG.md is empty or missing" && exit 1)
-	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+	git -C "$(ROOT_DIR)" tag -a "v$(VERSION)" -m "Release v$(VERSION)"
 	@echo "Tagged v$(VERSION)"

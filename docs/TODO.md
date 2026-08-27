@@ -37,7 +37,7 @@
 
 ### 3. DICOM-to-NIfTI Conversion Tools
 
-**What they had:** The user's script calls `convert_dicom_i_2_nii` (for MPRAGE, MUMAP, and fat/water MUMAPs) and `convert_4D_PET_dicom_2nii` (for `PET_60-90`). The current package contains `src/io/convert_dicom_i_2_nii.m`, but `convert_4D_PET_dicom_2nii.m` is missing from `src/`; `src/io/convert_dicom_i_2_nii.m` calls it, so this is an unresolved dependency rather than complete coverage. The user needs these to work standalone for pre-processing steps (bias correction, denoising, and coregistration) before pseudo-CT generation.
+**What they had:** The user's script calls `convert_dicom_i_2_nii` (for MPRAGE, MUMAP, and fat/water MUMAPs) and `convert_4D_PET_dicom_2nii` (for `PET_60-90`). The current package retains `deprecated/convert_dicom_i_2_nii.m` for reference, but `convert_4D_PET_dicom_2nii.m` is missing; the legacy converter calls it, so this is an unresolved dependency rather than complete coverage. The user needs these to work standalone for pre-processing steps (bias correction, denoising, and coregistration) before pseudo-CT generation.
 
 **Source files found in backup:**
 - `/Aether-bkp-05062026/david-matlab/Nifti/convert_dicom_i_2_nii.m` — 124 lines, multi-format DICOM/NIfTI converter using spm_dicom_convert

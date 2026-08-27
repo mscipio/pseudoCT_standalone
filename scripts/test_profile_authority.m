@@ -169,6 +169,20 @@ assert(~isempty(strfind(atlas_source, ...
 assert(~isempty(strfind(launchpad_source, 'config.launchpad.runner')));
 assert(isempty(strfind(launchpad_source, 'pseudo_CT_load_profile')));
 
+% Active runtime files are independent of repository-only maintainer and
+% compatibility content. Keep this assertion at the source boundary so a
+% future path refactor cannot accidentally make the pipeline depend on an
+% archive-excluded directory.
+runtime_files = [{fullfile(root_dir, 'run_pseudo_CT.m')}; ...
+    collect_m_files(fullfile(root_dir, 'src'))];
+for ii = 1:length(runtime_files)
+    runtime_source = read_text(runtime_files{ii});
+    assert(isempty(strfind(runtime_source, 'Makefile')));
+    assert(isempty(strfind(runtime_source, 'scripts/')));
+    assert(isempty(strfind(runtime_source, 'docs/')));
+    assert(isempty(strfind(runtime_source, 'deprecated/')));
+end
+
 % --- Aliasing regression checks (T003) ---
 % Production/release profiles must use the canonical shared-filesystem path.
 canonical_aliasing_root = ['/usr/pubsw/packages/mrpet/standalone_apps/' ...
@@ -208,14 +222,25 @@ deprecated_nose = fullfile(root_dir, 'deprecated', ...
     'automatic_anti_aliasing_nose_2_back.m');
 deprecated_center = fullfile(root_dir, 'deprecated', ...
     'center_subject_in_image.m');
+deprecated_converter = fullfile(root_dir, 'deprecated', ...
+    'convert_dicom_i_2_nii.m');
 active_nose = fullfile(root_dir, 'src', 'core', ...
     'automatic_anti_aliasing_nose_2_back.m');
 active_center = fullfile(root_dir, 'src', 'core', ...
     'center_subject_in_image.m');
 assert(exist(deprecated_nose, 'file') == 2);
 assert(exist(deprecated_center, 'file') == 2);
+assert(exist(deprecated_converter, 'file') == 2);
 assert(exist(active_nose, 'file') ~= 2);
 assert(exist(active_center, 'file') ~= 2);
+
+legacy_entrypoints = {fullfile(root_dir, 'run_pseudo_CT_local.m'); ...
+    fullfile(root_dir, 'run_pseudo_CT_launchpad.m'); ...
+    fullfile(root_dir, 'deprecated', 'run_pseudo_CT_local.m'); ...
+    fullfile(root_dir, 'deprecated', 'run_pseudo_CT_launchpad.m')};
+for ii = 1:length(legacy_entrypoints)
+    assert(exist(legacy_entrypoints{ii}, 'file') ~= 2);
+end
 
 assert(~isempty(strfind(atlas_source, 'correct_aliasing(')));
 assert(isempty(strfind(entry_source, 'correct_aliasing(')));
@@ -224,7 +249,8 @@ assert(~isempty(strfind(launchpad_source, 'check_aliasing')));
 
 fprintf(['Profile authority tests passed: %d dynamically discovered profiles, ', ...
     'identical schemas, explicit local/Launchpad config flow, bone and FWHM consumption, ', ...
-    'aliasing root uniform, deprecated files archived, Launchpad boundary intact.\n'], ...
+    'aliasing root uniform, deprecated helpers retained, obsolete entrypoints absent, ', ...
+    'runtime path boundary and Launchpad delegation intact.\n'], ...
     length(profiles));
 end
 

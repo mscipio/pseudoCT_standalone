@@ -15,16 +15,6 @@ for i = 1:numel(source_dirs)
     end
 end
 
-entry_files = {
-    fullfile(root_dir, 'run_pseudo_CT_local.m')
-    fullfile(root_dir, 'run_pseudo_CT_launchpad.m')
-};
-for i = 1:numel(entry_files)
-    if exist(entry_files{i}, 'file') == 2
-        matlab_files{end+1} = entry_files{i};
-    end
-end
-
 num_issues = 0;
 for i = 1:numel(matlab_files)
     result = mlint(matlab_files{i});

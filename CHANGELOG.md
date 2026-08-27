@@ -1,4 +1,10 @@
-2.8.1
+2.8.2
+
+## 2.8.2 — Repository Layout and Release Archive Policy
+
+- Moved `AGENTS.md` and `TODO.md` to `docs/`, and relocated the maintainer Makefile to `deprecated/` with cwd-independent lint, test, and tag commands.
+- Applied `.gitattributes` export-ignore rules so `scripts/`, `docs/`, `deprecated/`, and tracked maintainer metadata remain on GitHub but are excluded from the v2.8.2 release archive; deployable runtime paths, `README.md`, and `CHANGELOG.md` remain included.
+- Reconciled active documentation, version fallback, and smoke-test references with the new layout without changing pipeline behavior.
 
 ## 2.8.1 — Documentation / Version-Fallback Coherence
 

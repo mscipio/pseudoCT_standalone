@@ -14,19 +14,18 @@ This package provides a unified entrypoint `run_pseudo_CT.m` with three executio
 - `local-near-parity-r2010b`: local pipeline pinned to near-R2010b (7.11) numerical parity for consistent optimizer results across MATLAB versions.
 - `launchpad`: stages the subject to Launchpad and runs the legacy compiled `Pseudo_CT_launchpad` backend.
 
-The old entrypoints `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` have been moved to `deprecated/` and are preserved unmodified for backward compatibility.
+The former entrypoints `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` are not included in this tree. Use the unified entrypoint with an explicit profile instead; the retained files under `deprecated/` are legacy helpers for reference only.
 
 ## Top-Level Layout
 
 - `run_pseudo_CT.m`: primary user-facing entry point.
-- `deprecated/`: contains `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m`, the legacy entry points preserved unmodified for backward compatibility.
+- `deprecated/`: legacy helper implementations preserved for reference only; not active runtime dependencies and excluded from release archives.
 - `src/`: project-owned MATLAB source files grouped by function.
 - `Batch_atlas/`: atlas images and SPM batch templates used by the pseudo-CT pipeline.
 - `spm8-r6313/`: bundled SPM8 tree.
 - `vers/`: local SPM overrides required by this pipeline.
 - `ssh2_v2_m1_r5/`: bundled SSH/SCP toolbox used by the Launchpad path.
 - `imgaussian/`: external image filtering dependency.
-- `candidates_for_review/`: non-runtime files that may be removable after review.
 
 ## Source Tree
 
@@ -140,22 +139,26 @@ Note: In GUI mode (`run_pseudo_CT()` with no arguments), the profile selector di
 
 ## Documentation
 
-- **[Pipeline Stages: Local](docs/pipeline-local.md)** — step-by-step flow for
+Detailed pipeline documentation is maintained in the repository's `docs/` directory.
+That directory is intentionally excluded from release archives, so the links below
+use GitHub URLs rather than archive-relative paths.
+
+- **[Pipeline Stages: Local](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/pipeline-local.md)** — step-by-step flow for
   local profiles (`local-current`, `local-near-parity-r2010b`): which files are
   created at each stage and which tools are used.
-- **[Pipeline Stages: Launchpad](docs/pipeline-launchpad.md)** — step-by-step flow
+- **[Pipeline Stages: Launchpad](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/pipeline-launchpad.md)** — step-by-step flow
   for the `launchpad` profile: local I/O layer, remote compiled-backend internals,
   and post-processing.
-- **[Numerical Parity Assessment](docs/parity-assessment.md)** — controlled
+- **[Numerical Parity Assessment](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/parity-assessment.md)** — controlled
   comparison between local profiles and the legacy Launchpad backend: what
   diverges, why, and the practical impact on PET attenuation correction.
-- **[Legacy Launchpad Parity](docs/legacy-launchpad-parity.md)** — original
+- **[Legacy Launchpad Parity](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/legacy-launchpad-parity.md)** — original
   host-boundary finding (superseded by the broader parity assessment above).
 
 ## Numerical Compatibility
 
 Two independent sources of numerical divergence have been characterised
-(see the [full parity assessment](docs/parity-assessment.md) for detail):
+(see the [full parity assessment](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/parity-assessment.md) for detail):
 
 1. **Queue-dependent Launchpad divergence.** The same compiled `Pseudo_CT_launchpad`
    binary produces measurably different attenuation maps when submitted to
@@ -188,6 +191,14 @@ with these defaults):
 - `zero_background = 'No'`.
 - New Segment batch settings: `affreg = ''`, `biasfwhm = 30`, `warp.reg = 10`.
 
+## Repository and Release Archives
+
+The GitHub repository retains maintainer/test/reference content in `scripts/`,
+`docs/`, and `deprecated/`, plus tracked maintainer metadata such as
+`.gitattributes` and `.gitignore`. These paths are excluded from v2.8.2 release
+archives; deployable runtime paths, `README.md`, and `CHANGELOG.md` remain
+included.
+
 ## Defaults
 
 Configuration remains in the two legacy defaults functions:
@@ -208,4 +219,4 @@ The existing environment overrides remain available for maintainer workflows:
 ## Version History
 
 See [CHANGELOG.md](CHANGELOG.md) for release history. The current release is
-**2.8.1** (documentation / version-fallback coherence correction after v2.8.0).
+**2.8.2** (repository layout and release archive policy update).

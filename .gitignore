@@ -11,3 +11,5 @@ dist/
 .codegraph/
 opencode-quota/
 openspec/
+.aria/
+aria.json

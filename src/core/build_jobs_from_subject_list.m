@@ -15,10 +15,9 @@ function [jobs, stats] = build_jobs_from_subject_list(subject_list, correct_alia
 %   Returns a struct array with fields: mprage_fn, umap_fn, correct_aliasing.
 %   Returns empty when no valid subjects are found.
 %
-%   This function is extracted from the now-deprecated entrypoints
-%   run_pseudo_CT_local.m and run_pseudo_CT_launchpad.m, where it was
-%   duplicated as local_build_jobs_from_subject_list and
-%   launchpad_build_jobs_from_subject_list respectively.
+%   This function consolidates subject-list job construction formerly
+%   duplicated by the legacy entrypoint implementations. Those legacy
+%   entrypoint files are not part of this tree.
 %
 %   Minimum supported MATLAB: R2010b.
 

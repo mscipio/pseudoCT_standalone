@@ -17,15 +17,14 @@ MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR
   run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, 'correct_aliasing', 0)
   ```
 
-  The old entrypoints `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` have been moved to `deprecated/` and are preserved unmodified for backward compatibility.
+  The former entrypoints `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` are not included in this tree. Use `run_pseudo_CT.m` with an explicit profile instead.
 
 ## Repo Layout
 
 | Path | Role |
 |---|---|
 | `run_pseudo_CT.m` | Primary user-facing entry point; dispatches to the selected profile |
-| `deprecated/run_pseudo_CT_local.m`, `deprecated/run_pseudo_CT_launchpad.m` | Legacy entry points preserved for backward compatibility |
-| `deprecated/automatic_anti_aliasing_nose_2_back.m`, `deprecated/center_subject_in_image.m` | Legacy aliasing/centering implementations, preserved unmodified pending deletion |
+| `deprecated/automatic_anti_aliasing_nose_2_back.m`, `deprecated/center_subject_in_image.m`, `deprecated/convert_dicom_i_2_nii.m` | Legacy helper implementations, preserved unmodified for reference only; not active runtime dependencies |
 | `src/` | Project MATLAB source — config, core, io, remote, launchpad, qc, ui |
 | `src/config/` | Defaults: `defaults_pseudo_CT.m` (local) and `defaults_pseudo_CT_launchpad.m` (Launchpad) |
 | `src/config/fs_setenv_530_from_launchpad.sh` | FreeSurfer 5.3 env setup, referenced by defaults |
@@ -46,7 +45,7 @@ MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR
 
 ### Local Path
 
-1. `run_pseudo_CT` with a local profile (`local-current` or `local-near-parity-r2010b`) adds `src/`, the selected SPM package, `vers/`, `imgaussian/`, `ssh2_v2_m1_r5/` to MATLAB path via `setup_pseudo_CT_paths`. Calls `pseudo_CT_preflight` before any path mutation to validate all resource dependencies.
+1. `run_pseudo_CT` with a local profile adds `src/`, the selected SPM package, `vers/`, `imgaussian/`, and `ssh2_v2_m1_r5/` to the MATLAB path via `setup_pseudo_CT_paths`, which validates the configured resources before path setup.
 2. Collects jobs (GUI or batch), creates `MR_PET/`, `MR_PET/tmp/`, `MR/pseudo_muMAP/` dirs.
 3. For each subject: DICOM→NIfTI, FreeSurfer normalization (via SSH or local), SPM new segment + DARTEL + inverse warp, CT→att_map, NIfTI→DICOM, QC image, cleanup `MR_PET/tmp/`.
 
@@ -60,7 +59,7 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 - **Warning suppression** — the entrypoint calls `warning('off', 'all')` and restores on exit.
 - **Output folder discovery** — `pseudo_CT_resolve_output_dirs.m` walks up from the MPRAGE file to find the `MR/` parent. Outputs go to `<subject_root>/MR_PET/` (processing), `<subject_root>/MR_PET/tmp/` (intermediate), `<subject_root>/MR/pseudo_muMAP/` (DICOM).
 - **UMAP auto-discovery** — `pseudo_CT_auto_discover_ute_umap.m` looks for `MR/UMAP/*0001.*` or `MR/*UMAP*/*0001.*` relative to the MPRAGE path. Subjects without a detected UMAP are silently skipped in batch mode.
-- **Anti-aliasing and centering** — second positional arg controls nose/back aliasing correction. Defaults to `1` in batch/explicit-list modes. In GUI mode, set via checkbox in `load_mr_4_AC.fig`. The external `correct_aliasing` facade owns both alias correction and centering via a file-based API: `correct_aliasing(inputPath, outputPath, 'AliasCorrection', ..., 'Centering', ..., 'Overwrite', ...)`, returning a four-field result `{status, outputs, message, details}` mirroring the `dicom2nifti` pattern. Legacy in-package implementations (`automatic_anti_aliasing_nose_2_back.m`, `center_subject_in_image.m`) are preserved unmodified under `deprecated/` pending deletion.
+- **Anti-aliasing and centering** — second positional arg controls nose/back aliasing correction. Defaults to `1` in batch/explicit-list modes. In GUI mode, set via checkbox in `load_mr_4_AC.fig`. The external `correct_aliasing` facade owns both alias correction and centering via a file-based API: `correct_aliasing(inputPath, outputPath, 'AliasCorrection', ..., 'Centering', ..., 'Overwrite', ...)`, returning a four-field result `{status, outputs, message, details}` mirroring the `dicom2nifti` pattern. Legacy in-package implementations are preserved unmodified under `deprecated/` for reference only and are not on the active MATLAB path.
 - **Defaults are `eval`'d** — `defaults_pseudo_CT.m` and `defaults_pseudo_CT_launchpad.m` use `eval([defstr ';'])`. Setting names must match the variable name in the file (e.g. `'HOSTNAME'`, `'source_command'`).
 - **Historical output settings** — both defaults use `recenter_before_normalization = 'No'` and `zero_background = 'No'`. Launchpad runs `mri_normalize` first and passes `_normalized.nii`, so recentering is bypassed. Bone reduction remains enabled.
 - **New Segment host boundary** — one controlled subject matched the historical New Segment result on legacy PBS E5472/RHEL7/glibc 2.17. Celer R2010 compiled and interpreted runs matched each other but followed a different iterative numerical path. CPU dispatch and system-math effects were not isolated independently; this is not universal parity proof.
@@ -74,14 +73,18 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 **CI** — No GitHub Actions workflow is configured because this private repository cannot provide a MATLAB batch license token to GitHub-hosted runners. Run lint and smoke tests locally before release.
 
-**Lint** — `scripts/run_lint.m` runs MATLAB's built-in `mlint` over `src/`, `vers/`, and the entry script `run_pseudo_CT.m`.
+**Lint** — `scripts/run_lint.m` runs MATLAB's built-in `mlint` over `src/` and `vers/`. The smoke suite separately discovers and parses `run_pseudo_CT.m` and the maintainer scripts.
 
 **Smoke tests** — `scripts/run_smoke_tests.m` checks:
 - Primary entry script `run_pseudo_CT.m` exists and parses
-- Deprecated entry scripts `deprecated/run_pseudo_CT_local.m` and `deprecated/run_pseudo_CT_launchpad.m` exist and parse
 - All `src/**/*.m` files parse
 - The 3 `vers/` SPM overrides parse
-- Key atlas assets exist (`Batch_atlas/TPM.nii`, `ch2.nii`, the 7 `Template_*.nii` DARTEL templates, `Batch_atlas/ganymed-ssh2-build250/ganymed-ssh2-build250.jar`)
+- Maintainer/comparator scripts under `scripts/` are discovered from the script directory and parse
+- The profile-authority check confirms the three retained `deprecated/` helpers and the absence of the obsolete legacy entrypoints
+
+**Maintainer Makefile** — `deprecated/Makefile` retains only `lint`, `test`, and `tag` targets. Invoke it as `make -f deprecated/Makefile <target>` from the repository root, or pass its absolute path from any working directory; it derives the repository root from its own location. It does not build release archives. Release archives use the repository's `.gitattributes` export-ignore policy.
+
+**Repository versus release archives** — `scripts/`, `docs/`, `deprecated/`, and tracked maintainer metadata remain on GitHub for maintenance and reference, but are excluded from v2.8.2 release archives. Deployable runtime paths, `README.md`, and `CHANGELOG.md` remain included.
 
 **Targeted TDD tests** — `scripts/test_auto_discover_messages.m` is a red-green style test for the `batch-discovery-messages` change. Not wired into CI; run manually when iterating on `pseudo_CT_auto_discover_ute_umap`.
 
@@ -91,4 +94,4 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 ## Versioning
 
-Code version falls back to `2.8.1` in `atlas_based_attenuation_map.m` and otherwise reads line 1 of `CHANGELOG.md`. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.
+Code version falls back to `2.8.2` in `atlas_based_attenuation_map.m` and otherwise reads line 1 of `CHANGELOG.md`. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.
