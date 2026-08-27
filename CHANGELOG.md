@@ -1,3 +1,12 @@
+2.8.1
+
+## 2.8.1 — Documentation / Version-Fallback Coherence
+
+- Bumped fallback version in `atlas_based_attenuation_map.m` from `2.8.0` to `2.8.1` so the hardcoded fallback matches the current release line in `CHANGELOG.md`.
+- Updated `README.md` current-release pointer and `AGENTS.md` versioning section to reference `2.8.1`.
+- Updated `scripts/run_smoke_tests.m` expected top-of-CHANGELOG version to `2.8.1`.
+- No pipeline behavior change; v2.8.0 history preserved below.
+
 2.8.0
 
 ## 2.8.0 — External Anti-Aliasing Facade and Local-Only aliasing_root Boundary

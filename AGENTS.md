@@ -91,4 +91,4 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 ## Versioning
 
-Code version falls back to `2.6.5` in `atlas_based_attenuation_map.m` and otherwise reads line 1 of `CHANGELOG.md`. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.
+Code version falls back to `2.8.1` in `atlas_based_attenuation_map.m` and otherwise reads line 1 of `CHANGELOG.md`. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.

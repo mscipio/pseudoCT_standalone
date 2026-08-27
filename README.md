@@ -208,4 +208,4 @@ The existing environment overrides remain available for maintainer workflows:
 ## Version History
 
 See [CHANGELOG.md](CHANGELOG.md) for release history. The current release is
-**2.8.0** (external anti-aliasing facade and local-only aliasing_root boundary).
+**2.8.1** (documentation / version-fallback coherence correction after v2.8.0).
