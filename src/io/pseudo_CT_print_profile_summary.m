@@ -18,6 +18,9 @@ lines{end+1} = '';
 lines{end+1} = '--- Paths ---';
 lines{end+1} = sprintf('SPM root:           %s', config.spm_root);
 lines{end+1} = sprintf('Batch atlas:        %s', config.atlas_root);
+if ~strcmp(config.mode, 'launchpad')
+    lines{end+1} = sprintf('Aliasing root:      %s', config.aliasing_root);
+end
 lines{end+1} = '';
 lines{end+1} = '--- Pipeline Parameters ---';
 lines{end+1} = sprintf('Recenter:           %s', config.recenter_before_normalization);

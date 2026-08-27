@@ -36,6 +36,11 @@ assert(strcmp([base_a ext_a], [base_b ext_b]));
 assert(~isempty(regexp([base_a ext_a], ...
     '^pseudo_CT_local-current_\d{8}_\d{6}\.log$', 'once')));
 
+console_text_component = evalc(['pseudo_CT_output(''INFO'', context, ', ...
+    '''[recentering] Skipped as configured.'');']);
+assert(~isempty(regexp(console_text_component, ...
+    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] INFO\s+\[subject 2/5\] \[stage 4/8\] \[recentering\] Skipped as configured\.', 'once')));
+
 run_source = local_read(fullfile(root_dir, 'run_pseudo_CT.m'));
 helper_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_output.m'));
 profile_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_print_profile_summary.m'));
@@ -67,6 +72,51 @@ assert(~isempty(strfind(atlas_source, '% Legacy output: disp(''Whole process fin
 assert(~isempty(strfind(promote_source, '% Legacy output:')));
 assert(~isempty(strfind(profile_source, 'pseudo_CT_profile_summary.txt')));
 assert(~isempty(strfind(helper_source, 'datestr(now, ''yyyy-mm-dd HH:MM:SS'')')));
+
+% T002: correct_aliasing seam logging — five mappings for both operations
+assert(~isempty(strfind(atlas_source, '[recentering] Skipped as configured.')));
+assert(~isempty(strfind(atlas_source, '[recentering] Successfully applied.')));
+assert(~isempty(strfind(atlas_source, '[recentering] Not required.')));
+assert(~isempty(strfind(atlas_source, '[recentering] Result unavailable.')));
+assert(~isempty(strfind(atlas_source, '[recentering] Failed:')));
+assert(~isempty(strfind(atlas_source, '[aliasing correction] Skipped as configured.')));
+assert(~isempty(strfind(atlas_source, '[aliasing correction] Successfully applied.')));
+assert(~isempty(strfind(atlas_source, '[aliasing correction] Not required.')));
+assert(~isempty(strfind(atlas_source, '[aliasing correction] Result unavailable.')));
+assert(~isempty(strfind(atlas_source, '[aliasing correction] Failed:')));
+% WARN calibrated for Result unavailable
+assert(~isempty(strfind(atlas_source, '''WARN'', stage_ctx, ''[recentering] Result unavailable.''')));
+assert(~isempty(strfind(atlas_source, '''WARN'', stage_ctx, ''[aliasing correction] Result unavailable.''')));
+% Malformed optional details guarded
+assert(~isempty(strfind(atlas_source, 'isfield(result_details, ''centering'') && isstruct(result_details.centering)')));
+assert(~isempty(strfind(atlas_source, 'isfield(result_details, ''alias_correction'') && isstruct(result_details.alias_correction)')));
+% Errors structurally log before terminal early return
+recentering_error_pos = strfind(atlas_source, '[recentering] Failed:');
+early_return_pos = strfind(atlas_source, 'if ~accepted || ~has_output');
+assert(~isempty(recentering_error_pos) && ~isempty(early_return_pos) && recentering_error_pos(1) < early_return_pos(1));
+% Unchanged correction call arguments and output handling
+assert(~isempty(strfind(atlas_source, '''AliasCorrection'', aliasing_requested')));
+assert(~isempty(strfind(atlas_source, '''Centering'', recentering_requested')));
+assert(~isempty(strfind(atlas_source, '''Overwrite'', true')));
+assert(~isempty(strfind(atlas_source, 'P = result.outputs{1}')));
+% No Launchpad behavior change
+assert(isempty(strfind(batch_source, '[recentering]')));
+assert(isempty(strfind(batch_source, '[aliasing correction]')));
+
+% T003: first-output validation, ERROR conditioning, failure-log ordering
+% First-output validation: char + nonempty after trim
+assert(~isempty(strfind(atlas_source, 'ischar(candidate)')));
+assert(~isempty(strfind(atlas_source, 'strtrim(candidate)')));
+% Aliasing ERROR also precedes terminal early return
+aliasing_error_pos = strfind(atlas_source, '[aliasing correction] Failed:');
+assert(~isempty(aliasing_error_pos) && aliasing_error_pos(1) < early_return_pos(1));
+% Each ERROR branch is conditioned on corresponding request boolean
+recentering_gate_pos = strfind(atlas_source, 'if ~recentering_requested');
+aliasing_gate_pos = strfind(atlas_source, 'if ~aliasing_requested');
+assert(~isempty(recentering_gate_pos) && recentering_gate_pos(1) < recentering_error_pos(1));
+assert(~isempty(aliasing_gate_pos) && aliasing_gate_pos(1) < aliasing_error_pos(1));
+% Aliasing skip message when pre-normalization preprocessing is disabled
+assert(~isempty(strfind(atlas_source, '[aliasing correction] Skipped because pre-normalization preprocessing is disabled.')));
 
 empty_temp = fullfile(test_dir, 'empty');
 promoted = fullfile(test_dir, 'promoted');
@@ -111,7 +161,7 @@ for ii = 1:length(new_sources)
     assert(isempty(regexp(new_sources{ii}, '\btable\s*\(', 'once')));
 end
 
-fprintf('=== CLI progress output tests: 35/35 passed ===\n');
+fprintf('=== CLI progress output tests: 63/63 passed ===\n');
 % NOTE: update the count above when adding or removing assertions.
 end
 

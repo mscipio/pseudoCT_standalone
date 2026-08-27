@@ -33,6 +33,12 @@ if strcmp(config.mode, 'launchpad')
                 launchpad_dirs{ii});
         end
     end
+else
+    % Local mode: validate the external aliasing-correction standalone.
+    if exist(config.aliasing_root, 'dir') ~= 7
+        error('pseudo_CT:AliasingRootMissing', ...
+            'Configured aliasing root not found: %s', config.aliasing_root);
+    end
 end
 
 vers_path = fullfile(root_dir, 'vers');
@@ -66,6 +72,11 @@ end
 % Standalone DICOM-to-NIfTI converter.
 if exist(config.d2n_root, 'dir') == 7
     addpath(config.d2n_root, '-begin');
+end
+% Standalone aliasing correction (local mode only).
+if ~strcmp(config.mode, 'launchpad')
+    addpath(config.aliasing_root, '-begin');
+    clear correct_aliasing;
 end
 addpath(vers_path, '-begin');
 clear spm_vol_nifti spm_preproc_write8 spm_dicom_convert

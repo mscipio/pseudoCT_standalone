@@ -29,6 +29,7 @@ package:
 	cp -r imgaussian "$(PKG_DIR)/"
 	cp -r ssh2_v2_m1_r5 "$(PKG_DIR)/"
 	cp -r docs "$(PKG_DIR)/"
+	cp -r deprecated "$(PKG_DIR)/"
 	cd "$(DIST_DIR)" && tar -czf "pseudoCT_v$(VERSION).tar.gz" "pseudoCT_v$(VERSION)"
 	@echo "Package assembled: $(PKG_DIR)/"
 	@echo "Archive created:   $(DIST_DIR)/pseudoCT_v$(VERSION).tar.gz"

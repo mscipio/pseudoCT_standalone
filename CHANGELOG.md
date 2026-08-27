@@ -1,3 +1,22 @@
+2.8.0
+
+## 2.8.0 — External Anti-Aliasing Facade and Local-Only aliasing_root Boundary
+
+### Configuration
+- Added `aliasing_root` profile field (required in all 6 profiles by `pseudo_CT_load_profile.m`) pointing to the external `correct_aliasing` standalone at `/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest`.
+- `setup_pseudo_CT_paths.m` validates `aliasing_root` in preflight for local profiles only (error id `AliasingRootMissing`), adds it to the MATLAB path with `addpath(..., '-begin')`, and runs `clear correct_aliasing; rehash` after. Launchpad profiles skip this validation and import entirely.
+
+### External Facade
+- The external `correct_aliasing` standalone is now the local owner of BOTH alias correction and centering via a file-based API: `correct_aliasing(inputPath, outputPath, 'AliasCorrection', ..., 'Centering', ..., 'Overwrite', ...)`, returning a four-field result `{status, outputs, message, details}` mirroring the `dicom2nifti` pattern.
+- Legacy in-package implementations `automatic_anti_aliasing_nose_2_back.m` and `center_subject_in_image.m` moved unmodified to `deprecated/` pending deletion.
+
+### Launchpad Unchanged
+- Launchpad aliasing remains delegated to the compiled `Pseudo_CT_launchpad` via `check_aliasing`; no local package requirement before `scp_put`. No behavior change.
+
+### Verification
+- Smoke suite and profile_authority tests pass.
+- R2010b caveat: external `correct_aliasing` requires MATLAB R2019+; local aliasing correction will fail on older releases (e.g. `local-near-parity-r2010b`) if invoked.
+
 2.7.3
 
 ## 2.7.3 — Profile-Configurable dicom2nifti Path

@@ -169,8 +169,62 @@ assert(~isempty(strfind(atlas_source, ...
 assert(~isempty(strfind(launchpad_source, 'config.launchpad.runner')));
 assert(isempty(strfind(launchpad_source, 'pseudo_CT_load_profile')));
 
+% --- Aliasing regression checks (T003) ---
+% Production/release profiles must use the canonical shared-filesystem path.
+canonical_aliasing_root = ['/usr/pubsw/packages/mrpet/standalone_apps/' ...
+    'correct_aliasing/correct_aliasing_standalone-latest'];
+production_names = {'local-current', 'launchpad', 'local-mprage-only', ...
+    'launchpad-mprage-only', 'local-near-parity-r2010b'};
+for ii = 1:length(production_names)
+    idx = find(strcmp(names, production_names{ii}), 1);
+    assert(~isempty(idx));
+    assert(strcmp(configs{idx}.aliasing_root, canonical_aliasing_root), ...
+        sprintf('Profile %s aliasing_root mismatch', production_names{ii}));
+end
+
+% The devel profile intentionally uses a development path for local testing.
+devel_aliasing_root = '/autofs/cluster/catanagp/users/mscipioni/Biograph_mMR/piano_mMR_devel/correct_aliasing_standalone';
+devel_idx = find(strcmp(names, 'devel'), 1);
+assert(~isempty(devel_idx));
+assert(strcmp(configs{devel_idx}.aliasing_root, devel_aliasing_root), ...
+    'devel profile aliasing_root must use development path');
+assert(~isempty(configs{devel_idx}.aliasing_root));
+
+loader_source = read_text(fullfile(root_dir, 'src', 'config', ...
+    'pseudo_CT_load_profile.m'));
+assert(~isempty(strfind(loader_source, '''aliasing_root''')));
+
+setup_source = read_text(fullfile(root_dir, 'src', 'config', ...
+    'setup_pseudo_CT_paths.m'));
+assert(~isempty(strfind(setup_source, 'pseudo_CT:AliasingRootMissing')));
+assert(~isempty(strfind(setup_source, ...
+    'addpath(config.aliasing_root, ''-begin'')')));
+assert(~isempty(strfind(setup_source, 'clear correct_aliasing')));
+assert(~isempty(strfind(setup_source, 'rehash')));
+assert(~isempty(strfind(setup_source, ...
+    'strcmp(config.mode, ''launchpad'')')));
+
+deprecated_nose = fullfile(root_dir, 'deprecated', ...
+    'automatic_anti_aliasing_nose_2_back.m');
+deprecated_center = fullfile(root_dir, 'deprecated', ...
+    'center_subject_in_image.m');
+active_nose = fullfile(root_dir, 'src', 'core', ...
+    'automatic_anti_aliasing_nose_2_back.m');
+active_center = fullfile(root_dir, 'src', 'core', ...
+    'center_subject_in_image.m');
+assert(exist(deprecated_nose, 'file') == 2);
+assert(exist(deprecated_center, 'file') == 2);
+assert(exist(active_nose, 'file') ~= 2);
+assert(exist(active_center, 'file') ~= 2);
+
+assert(~isempty(strfind(atlas_source, 'correct_aliasing(')));
+assert(isempty(strfind(entry_source, 'correct_aliasing(')));
+assert(~isempty(strfind(entry_source, '''check_aliasing''')));
+assert(~isempty(strfind(launchpad_source, 'check_aliasing')));
+
 fprintf(['Profile authority tests passed: %d dynamically discovered profiles, ', ...
-    'identical schemas, explicit local/Launchpad config flow, bone and FWHM consumption.\n'], ...
+    'identical schemas, explicit local/Launchpad config flow, bone and FWHM consumption, ', ...
+    'aliasing root uniform, deprecated files archived, Launchpad boundary intact.\n'], ...
     length(profiles));
 end
 

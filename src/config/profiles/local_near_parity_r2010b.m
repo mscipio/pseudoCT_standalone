@@ -9,6 +9,8 @@ config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_20
 config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
 % Standalone DICOM-to-NIfTI converter (sibling repository).
 config.d2n_root = '/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest';
+% Standalone nose/back aliasing correction (external standalone app).
+config.aliasing_root = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest';
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'No';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.

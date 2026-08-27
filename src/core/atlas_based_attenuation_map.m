@@ -88,7 +88,7 @@ function [Pf] = atlas_based_attenuation_map(varargin)
 
 % Resolve code version from CHANGELOG.md line 1 at the repo root; fall back to
 % hardcoded value if the file cannot be read.
-code_version = '2.7.0';  % fallback
+code_version = '2.8.0';  % fallback
 try
     root_dir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
     fid = fopen(fullfile(root_dir, 'CHANGELOG.md'), 'r');
@@ -214,13 +214,151 @@ end
 recenter_before_normalization = ...
     strcmpi(config.recenter_before_normalization, 'yes');
 
-if recenter_before_normalization && length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0 & length(strfind(deblank(P(1, :)), '_moved.nii')) == 0
-    [P, aliasing] =  center_subject_in_image(P, check_aliasing);
-    if aliasing
+aliasing_requested = logical(check_aliasing);
+recentering_requested = recenter_before_normalization;
+gate_condition = length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0 & ...
+                 length(strfind(deblank(P(1, :)), '_moved.nii')) == 0;
+
+if recentering_requested && gate_condition
+    % Use external correct_aliasing package for both alias correction and centering
+    [path_in, name_in, ext_in] = fileparts(deblank(P(1, :)));
+    output_path = fullfile(path_in, [name_in, '_corrected', ext_in]);
+
+    result = correct_aliasing(deblank(P(1, :)), output_path, ...
+        'AliasCorrection', aliasing_requested, ...
+        'Centering', recentering_requested, ...
+        'Overwrite', true);
+
+    % Defensively normalize facade result
+    result_status = '';
+    result_message = '';
+    result_outputs = {};
+    result_details = struct();
+    if isstruct(result)
+        if isfield(result, 'status')
+            if ischar(result.status)
+                result_status = strtrim(result.status);
+            elseif isnumeric(result.status) && ~isempty(result.status)
+                result_status = strtrim(char(result.status));
+            end
+        end
+        if isfield(result, 'message')
+            if ischar(result.message)
+                result_message = strtrim(result.message);
+            elseif isnumeric(result.message) && ~isempty(result.message)
+                result_message = strtrim(char(result.message));
+            end
+        end
+        if isfield(result, 'outputs') && iscell(result.outputs)
+            result_outputs = result.outputs;
+        end
+        if isfield(result, 'details') && isstruct(result.details)
+            result_details = result.details;
+        end
+    end
+
+    accepted = strcmpi(result_status, 'success') || strcmpi(result_status, 'partial');
+    has_output = false;
+    if ~isempty(result_outputs)
+        candidate = result_outputs{1};
+        if ischar(candidate) && ~isempty(strtrim(candidate))
+            has_output = true;
+        end
+    end
+
+    if accepted && has_output
+        P = result.outputs{1};
+    end
+
+    % Log recentering outcome
+    stage_ctx = local_stage_context(output_context, 1);
+    if ~recentering_requested
+        pseudo_CT_output('INFO', stage_ctx, '[recentering] Skipped as configured.');
+    elseif accepted && has_output
+        recentering_performed = [];
+        if isfield(result_details, 'centering') && isstruct(result_details.centering) && isfield(result_details.centering, 'performed')
+            raw = result_details.centering.performed;
+            if islogical(raw)
+                recentering_performed = raw;
+            elseif isnumeric(raw) && ~isempty(raw)
+                recentering_performed = logical(raw(1));
+            elseif ischar(raw)
+                trimmed = strtrim(raw);
+                if strcmpi(trimmed, 'true') || strcmp(trimmed, '1')
+                    recentering_performed = true;
+                elseif strcmpi(trimmed, 'false') || strcmp(trimmed, '0')
+                    recentering_performed = false;
+                end
+            end
+        end
+        if isempty(recentering_performed)
+            pseudo_CT_output('WARN', stage_ctx, '[recentering] Result unavailable.');
+        elseif recentering_performed
+            pseudo_CT_output('SUCCESS', stage_ctx, '[recentering] Successfully applied.');
+        else
+            pseudo_CT_output('INFO', stage_ctx, '[recentering] Not required.');
+        end
+    else
+        error_msg = result_message;
+        if isempty(error_msg)
+            error_msg = result_status;
+        end
+        if isempty(error_msg)
+            error_msg = 'unknown';
+        end
+        pseudo_CT_output('ERROR', stage_ctx, '[recentering] Failed: %s.', error_msg);
+    end
+
+    % Log aliasing outcome
+    if ~aliasing_requested
+        pseudo_CT_output('INFO', stage_ctx, '[aliasing correction] Skipped as configured.');
+    elseif accepted && has_output
+        aliasing_performed = [];
+        if isfield(result_details, 'alias_correction') && isstruct(result_details.alias_correction) && isfield(result_details.alias_correction, 'performed')
+            raw = result_details.alias_correction.performed;
+            if islogical(raw)
+                aliasing_performed = raw;
+            elseif isnumeric(raw) && ~isempty(raw)
+                aliasing_performed = logical(raw(1));
+            elseif ischar(raw)
+                trimmed = strtrim(raw);
+                if strcmpi(trimmed, 'true') || strcmp(trimmed, '1')
+                    aliasing_performed = true;
+                elseif strcmpi(trimmed, 'false') || strcmp(trimmed, '0')
+                    aliasing_performed = false;
+                end
+            end
+        end
+        if isempty(aliasing_performed)
+            pseudo_CT_output('WARN', stage_ctx, '[aliasing correction] Result unavailable.');
+        elseif aliasing_performed
+            pseudo_CT_output('SUCCESS', stage_ctx, '[aliasing correction] Successfully applied.');
+        else
+            pseudo_CT_output('INFO', stage_ctx, '[aliasing correction] Not required.');
+        end
+    else
+        error_msg = result_message;
+        if isempty(error_msg)
+            error_msg = result_status;
+        end
+        if isempty(error_msg)
+            error_msg = 'unknown';
+        end
+        pseudo_CT_output('ERROR', stage_ctx, '[aliasing correction] Failed: %s.', error_msg);
+    end
+
+    % Preserve early-return behavior
+    if ~accepted || ~has_output
         return;
     end
-elseif ~recenter_before_normalization
-    % Legacy output: disp('Skipping pre-normalization recentering step.');
+elseif ~recentering_requested
+    stage_ctx = local_stage_context(output_context, 1);
+    pseudo_CT_output('INFO', stage_ctx, '[recentering] Skipped as configured.');
+    if aliasing_requested
+        pseudo_CT_output('INFO', stage_ctx, '[aliasing correction] Skipped because pre-normalization preprocessing is disabled.');
+    else
+        pseudo_CT_output('INFO', stage_ctx, '[aliasing correction] Skipped as configured.');
+    end
 end
 
 
@@ -369,7 +507,7 @@ P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), ...
 sm_fn = fullfile(pathm, strcat('s',fnm,extm)); % The new smoothed file filename!
 spm_smooth(P(1, :), sm_fn, 4);
 Ims = spm_read_vols(spm_vol(sm_fn));
-[~, subj_mask] = head_mask_mprage(Ims, 15); % Create the mask!; Before v1.8 it was 20; 
+[~, subj_mask] = head_mask_mprage(Ims, 15); % Create the mask!; Before v1.8 it was 20;
 mm = imdilate(subj_mask, ones(13,13,13)); % Dilate the mask to compensate for the previous erosion in head_mask_mprage;
 V_aux = spm_vol(deblank(P(1, :)));
 Ims = spm_read_vols(V_aux);
@@ -396,7 +534,7 @@ matlabbatch{1}.spm.tools.preproc8.channel(1).biasfwhm = 30; % FWHM to 30mm;
 matlabbatch{1}.spm.tools.preproc8.warp.reg = 10; % Warping regularization to 10;
 for ii=2:nf
     matlabbatch{1}.spm.tools.preproc8.channel(ii) = matlabbatch{1}.spm.tools.preproc8.channel(1);
-    matlabbatch{1}.spm.tools.preproc8.channel(ii).vols = {deblank(P(ii, :))};    
+    matlabbatch{1}.spm.tools.preproc8.channel(ii).vols = {deblank(P(ii, :))};
 end
 % Let's include the right path to the template TPM.nii files:
 for ii=1:6
@@ -571,7 +709,7 @@ att_map = att_map.*mask;
 
 % Now let's save the attenuation map in the same space:
 fn_att_map = fullfile(paths, 'att_map_no_filled.nii');
-V_att_map = V_CT; 
+V_att_map = V_CT;
 V_att_map.fname = fn_att_map;
 V_att_map.dt = [16 0]; % To save it as float32;
 

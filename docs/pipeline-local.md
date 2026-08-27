@@ -89,18 +89,26 @@ Runs `mri_normalize` on the MPRAGE to correct intensity non-uniformity. When
 `system()`. Otherwise, the MPRAGE is SCP'd to the remote host, `mri_normalize`
 runs there, and the result is SCP'd back.
 
-Optionally preceded by `center_subject_in_image` if
+Optionally preceded by the external `correct_aliasing` standalone when
 `config.recenter_before_normalization = 'Yes'` (default: `'No'` on all profiles).
+The external facade owns BOTH nose/back alias correction and subject centering
+via a file-based API. Legacy in-package implementations (`center_subject_in_image`,
+`automatic_anti_aliasing_nose_2_back`) are preserved unmodified in `deprecated/`
+pending deletion.
 
 **Conditional file (only when recenter enabled):**
-- `MR_PET/tmp/mprage_moved.nii` — recentered MPRAGE (never seen in normal use).
+- `MR_PET/tmp/mprage_corrected.nii` — alias-corrected and recentered MPRAGE
+  (produced by external `correct_aliasing` standalone).
 
 **Files created:**
 - `MR_PET/tmp/mprage_normalized.nii` — intensity-normalized MPRAGE.
 
 **Tools used:**
-- `center_subject_in_image` (`src/core/`) — wraps pixel data to centre the head
-  (only when enabled).
+- `correct_aliasing` (external standalone at `aliasing_root` from profile config) —
+  owns both nose/back alias correction and subject centering for local profiles.
+  Requires MATLAB R2019+; local aliasing correction will fail on older releases
+  (e.g. `local-near-parity-r2010b`) if invoked. Launchpad profiles delegate
+  aliasing to the compiled backend and do not require the local standalone.
 - `mri_normalize` (FreeSurfer 5.3) — via SSH or local `system()` call.
 - `ssh_login_pseudo_CT` / `ssh2_config` (`src/remote/`) — SSH connection.
 - `scp_put_david` / `scp_get_david` — file transfer when remote.

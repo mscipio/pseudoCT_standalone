@@ -25,6 +25,7 @@ MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR
 |---|---|
 | `run_pseudo_CT.m` | Primary user-facing entry point; dispatches to the selected profile |
 | `deprecated/run_pseudo_CT_local.m`, `deprecated/run_pseudo_CT_launchpad.m` | Legacy entry points preserved for backward compatibility |
+| `deprecated/automatic_anti_aliasing_nose_2_back.m`, `deprecated/center_subject_in_image.m` | Legacy aliasing/centering implementations, preserved unmodified pending deletion |
 | `src/` | Project MATLAB source — config, core, io, remote, launchpad, qc, ui |
 | `src/config/` | Defaults: `defaults_pseudo_CT.m` (local) and `defaults_pseudo_CT_launchpad.m` (Launchpad) |
 | `src/config/fs_setenv_530_from_launchpad.sh` | FreeSurfer 5.3 env setup, referenced by defaults |
@@ -39,6 +40,7 @@ MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR
 - **MATLAB** with SPM8 (bundled)
 - **FreeSurfer 5.3** — `fs_setenv_530_from_launchpad.sh` points to `/usr/local/freesurfer/stable5_3_0`. For local execution, `defaults_pseudo_CT.m` sets `HOSTNAME = '127.0.0.1'` to run FS commands on localhost.
 - **Java SSH library** — `ganymed-ssh2-build250.jar` in `Batch_atlas/`; added to javaclasspath automatically by `atlas_based_attenuation_map.m`.
+- **correct_aliasing (local profiles only)** — external standalone at `/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest`. Path is configured via the `aliasing_root` profile field (required in all 6 profiles by `pseudo_CT_load_profile.m`). `setup_pseudo_CT_paths.m` validates `aliasing_root` in preflight for local profiles only (error id `AliasingRootMissing`), adds it to the MATLAB path with `addpath(..., '-begin')`, and runs `clear correct_aliasing; rehash` after. Launchpad profiles skip this validation and import — aliasing remains delegated to the compiled `Pseudo_CT_launchpad` via `check_aliasing`, unchanged. Requires MATLAB R2019+; local aliasing correction will fail on older releases (e.g. `local-near-parity-r2010b`) if invoked.
 
 ## Execution Model
 
@@ -58,7 +60,7 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 - **Warning suppression** — the entrypoint calls `warning('off', 'all')` and restores on exit.
 - **Output folder discovery** — `pseudo_CT_resolve_output_dirs.m` walks up from the MPRAGE file to find the `MR/` parent. Outputs go to `<subject_root>/MR_PET/` (processing), `<subject_root>/MR_PET/tmp/` (intermediate), `<subject_root>/MR/pseudo_muMAP/` (DICOM).
 - **UMAP auto-discovery** — `pseudo_CT_auto_discover_ute_umap.m` looks for `MR/UMAP/*0001.*` or `MR/*UMAP*/*0001.*` relative to the MPRAGE path. Subjects without a detected UMAP are silently skipped in batch mode.
-- **Anti-aliasing** — second positional arg controls nose/back aliasing correction. Defaults to `1` in batch/explicit-list modes. In GUI mode, set via checkbox in `load_mr_4_AC.fig`.
+- **Anti-aliasing and centering** — second positional arg controls nose/back aliasing correction. Defaults to `1` in batch/explicit-list modes. In GUI mode, set via checkbox in `load_mr_4_AC.fig`. The external `correct_aliasing` facade owns both alias correction and centering via a file-based API: `correct_aliasing(inputPath, outputPath, 'AliasCorrection', ..., 'Centering', ..., 'Overwrite', ...)`, returning a four-field result `{status, outputs, message, details}` mirroring the `dicom2nifti` pattern. Legacy in-package implementations (`automatic_anti_aliasing_nose_2_back.m`, `center_subject_in_image.m`) are preserved unmodified under `deprecated/` pending deletion.
 - **Defaults are `eval`'d** — `defaults_pseudo_CT.m` and `defaults_pseudo_CT_launchpad.m` use `eval([defstr ';'])`. Setting names must match the variable name in the file (e.g. `'HOSTNAME'`, `'source_command'`).
 - **Historical output settings** — both defaults use `recenter_before_normalization = 'No'` and `zero_background = 'No'`. Launchpad runs `mri_normalize` first and passes `_normalized.nii`, so recentering is bypassed. Bone reduction remains enabled.
 - **New Segment host boundary** — one controlled subject matched the historical New Segment result on legacy PBS E5472/RHEL7/glibc 2.17. Celer R2010 compiled and interpreted runs matched each other but followed a different iterative numerical path. CPU dispatch and system-math effects were not isolated independently; this is not universal parity proof.
