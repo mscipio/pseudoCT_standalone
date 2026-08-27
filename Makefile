@@ -1,6 +1,13 @@
 # Release archives are built with git archive; export-ignore rules in
 # .gitattributes exclude maintainer/test/AI-only content automatically.
 #
+# git archive reads attributes from the selected tree, so the ref (tag or
+# commit) must contain the committed archive policy for the exclusions to
+# apply. Use a policy-bearing ref such as the current main commit or a
+# future release tag created after policy adoption. Existing v2.8.0 and
+# v2.8.1 tags are immutable pre-policy releases and do not carry these
+# export-ignore rules.
+#
 #   git archive --format=tar.gz --prefix=pseudoCT_v$(VERSION)/ \
 #     -o dist/pseudoCT_v$(VERSION).tar.gz <tag-or-commit>
 
