@@ -89,9 +89,14 @@ original untouched.
 ```
   MR_PET/tmp/mprage.nii
   │
-  ~~~ atlas_based_attenuation_map ~~~
+  ├─ if aliasing OR recentering is requested and the input is not already
+  │  `_normalized.nii` or `_moved.nii`
+  │  ~~~ correct_aliasing (independent AliasCorrection/Centering flags) ~~~
+  │  └── MR_PET/tmp/mprage_corrected.nii
   │
-  ├── MR_PET/tmp/mprage_normalized.nii
+  ~~~ mri_normalize (FreeSurfer 5.3) ~~~
+  │
+  └── MR_PET/tmp/mprage_normalized.nii
 ```
 
 Runs `mri_normalize` on the MPRAGE to correct intensity non-uniformity. When
@@ -99,16 +104,43 @@ Runs `mri_normalize` on the MPRAGE to correct intensity non-uniformity. When
 `system()`. Otherwise, the MPRAGE is SCP'd to the remote host, `mri_normalize`
 runs there, and the result is SCP'd back.
 
-Optionally preceded by the external `correct_aliasing` standalone when
-`config.recenter_before_normalization = 'Yes'` (default: `'No'` on all profiles).
-The external facade owns BOTH nose/back alias correction and subject centering
-via a file-based API. Legacy in-package implementations (`center_subject_in_image`,
+Before normalization, local jobs carry two independent permissions:
+`correct_aliasing` for nose/back aliasing correction and
+`recenter_before_normalization` for MPRAGE recentering. The selected profile
+supplies their defaults (`aliasing_default = 1` and
+`recenter_before_normalization = 'Yes'` in all shipped profiles), and the GUI
+controls can change them independently.
+
+The local preprocessing gate is OR-based. When either permission is enabled and
+the input is not already `_normalized.nii` or `_moved.nii`, the external
+`correct_aliasing` standalone is called with independent named arguments:
+
+```matlab
+result = correct_aliasing(inputPath, outputPath, ...
+    'AliasCorrection', aliasing_requested, ...
+    'Centering', recentering_requested, 'Overwrite', true)
+```
+
+When both permissions are false, the facade is not called and the original input
+continues unchanged. The four-field result (`status`, `outputs`, `message`, and
+`details`) is reported per operation: `details.centering.performed` and
+`details.alias_correction.performed` distinguish “Successfully applied” from a
+successful “Not required” no-op; missing or unusable operation details are
+reported as unavailable without changing the operation's result handling.
+
+The external facade requires MATLAB R2019+. On R2010b, the compatibility guard
+does not call or inspect it: requested operations are reported unavailable, the
+original input is retained, and the historical pipeline continues without
+failing or falling back to the deprecated in-package implementations.
+
+Legacy in-package implementations (`center_subject_in_image`,
 `automatic_anti_aliasing_nose_2_back`) are preserved unmodified in `deprecated/`
 pending deletion.
 
-**Conditional file (only when recenter enabled):**
-- `MR_PET/tmp/mprage_corrected.nii` — alias-corrected and recentered MPRAGE
-  (produced by external `correct_aliasing` standalone).
+**Conditional file (when local preprocessing is invoked):**
+- `MR_PET/tmp/mprage_corrected.nii` — MPRAGE produced by the external
+  `correct_aliasing` standalone (alias-corrected and/or recentered according to
+  the two independent requests).
 
 **Files created:**
 - `MR_PET/tmp/mprage_normalized.nii` — intensity-normalized MPRAGE.
@@ -116,9 +148,10 @@ pending deletion.
 **Tools used:**
 - `correct_aliasing` (external standalone at `aliasing_root` from profile config) —
   owns both nose/back alias correction and subject centering for local profiles.
-  Requires MATLAB R2019+; local aliasing correction will fail on older releases
-  (e.g. `local-near-parity-r2010b`) if invoked. Launchpad profiles delegate
-  aliasing to the compiled backend and do not require the local standalone.
+  It is guarded on older releases (e.g. `local-near-parity-r2010b`) because it
+  requires MATLAB R2019+; requested operations are reported unavailable without
+  failing the historical path. Launchpad profiles delegate aliasing to the
+  compiled backend and do not require the local standalone.
 - `mri_normalize` (FreeSurfer 5.3) — via SSH or local `system()` call.
 - `ssh_login_pseudo_CT` / `ssh2_config` (`src/remote/`) — SSH connection.
 - `scp_put_david` / `scp_get_david` — file transfer when remote.

@@ -16,16 +16,19 @@ function [jobs, stats] = collect_jobs(config, varargin)
 %   JOBS = COLLECT_JOBS(MANIFEST, SUBJECT_LIST, CORRECT_ALIASING) overrides
 %   the anti-aliasing flag. CORRECT_ALIASING should be numeric or logical:
 %   use 1/true to enable the correction and 0/false to disable it.
+%   A fourth argument can override RECENTER_BEFORE_NORMALIZATION for batch
+%   and explicit-list collection.
 %
 %   CONFIG is the selected profile config.
 %
-%   Returns a struct array with fields: mprage_fn, umap_fn, correct_aliasing.
+%   Returns a struct array with fields: mprage_fn, umap_fn, correct_aliasing,
+%   recenter_before_normalization.
 %   Returns empty when the GUI is cancelled or when no subjects are provided.
 %
 %   Minimum supported MATLAB: R2010b.
 
 jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {}, ...
-    'io_policy', {});
+    'recenter_before_normalization', {}, 'io_policy', {});
 stats = struct('requested', 0, 'skipped', 0, 'skipped_subjects', {{}});
 
 if ~isdeployed && ~isempty(varargin)
@@ -42,19 +45,26 @@ if ~isdeployed && ~isempty(varargin)
     end
 
     if ~isempty(subject_list)
-        correct_aliasing = config.aliasing_default;
+        correct_aliasing = get_config_default(config, 'aliasing_default', 1);
+        recenter_before_normalization = get_config_default(config, ...
+            'recenter_before_normalization', false);
         if numel(varargin) > 1
             correct_aliasing = varargin{2};
         end
+        if numel(varargin) > 2
+            recenter_before_normalization = varargin{3};
+        end
         correct_aliasing = validate_aliasing(correct_aliasing);
+        recenter_before_normalization = validate_recentering( ...
+            recenter_before_normalization);
         [jobs, stats] = build_jobs_from_subject_list(subject_list, correct_aliasing, ...
-            config.io_policy);
+            config.io_policy, recenter_before_normalization);
         return;
     end
 end
 
-[mprage_fn, ute_fn, umap_fn, correct_aliasing] = ...
-    load_mr_4_AC(config.io_policy.gui);
+[mprage_fn, ute_fn, umap_fn, correct_aliasing, ...
+    recenter_before_normalization] = load_mr_4_AC(config.io_policy.gui, config);
 
 if mprage_fn == 0
     return;
@@ -72,10 +82,13 @@ elseif ~ischar(mprage_fn) || ~ischar(ute_fn) || ~ischar(umap_fn)
 end
 
 correct_aliasing = validate_aliasing(correct_aliasing);
+recenter_before_normalization = validate_recentering( ...
+    recenter_before_normalization);
 
 jobs(1).mprage_fn = mprage_fn;
 jobs(1).umap_fn = umap_fn;
 jobs(1).correct_aliasing = correct_aliasing;
+jobs(1).recenter_before_normalization = recenter_before_normalization;
 jobs(1).io_policy = config.io_policy;
 stats.requested = 1;
 
@@ -87,5 +100,32 @@ if ~(isnumeric(value) || islogical(value)) || ~isscalar(value) || ...
     error('pseudo_CT:InvalidAliasing', ...
         'Aliasing correction must be a scalar numeric or logical 0 or 1.');
 end
-value = double(value);
+value = logical(value);
+end
+
+function value = validate_recentering(value)
+if ischar(value)
+    normalized = lower(strtrim(value));
+    if ismember(normalized, {'yes'; 'true'; 'on'; '1'})
+        value = true;
+    elseif ismember(normalized, {'no'; 'false'; 'off'; '0'})
+        value = false;
+    else
+        error('pseudo_CT:InvalidRecentering', ...
+            'Recentering must be Yes/No or a scalar logical 0 or 1.');
+    end
+elseif ~(isnumeric(value) || islogical(value)) || ~isscalar(value) || ...
+        ~ismember(double(value), [0 1])
+    error('pseudo_CT:InvalidRecentering', ...
+        'Recentering must be Yes/No or a scalar logical 0 or 1.');
+else
+    value = logical(value);
+end
+end
+
+function value = get_config_default(config, field_name, fallback)
+value = fallback;
+if isstruct(config) && isfield(config, field_name)
+    value = config.(field_name);
+end
 end

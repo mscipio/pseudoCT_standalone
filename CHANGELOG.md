@@ -1,4 +1,10 @@
-2.8.3
+2.8.4
+
+## 2.8.4 — GUI Control Alignment
+
+- Added matching, aligned checkboxes for independent nose/back aliasing
+  correction and MPRAGE recentering.
+- Processing and API behavior are unchanged.
 
 ## 2.8.3 — External Prerequisite Documentation Correction
 
@@ -18,8 +24,6 @@
 - Updated `scripts/run_smoke_tests.m` expected top-of-CHANGELOG version to `2.8.1`.
 - No pipeline behavior change; v2.8.0 history preserved below.
 
-2.8.0
-
 ## 2.8.0 — External Anti-Aliasing Facade and Local-Only aliasing_root Boundary
 
 ### Configuration
@@ -37,8 +41,6 @@
 - Smoke suite and profile_authority tests pass.
 - R2010b caveat: external `correct_aliasing` requires MATLAB R2019+; local aliasing correction will fail on older releases (e.g. `local-near-parity-r2010b`) if invoked.
 
-2.7.3
-
 ## 2.7.3 — Profile-Configurable dicom2nifti Path
 
 ### Configuration
@@ -51,8 +53,6 @@
 - Updated `scripts/test_compressed_nifti_input.m` to load the profile instead
   of hardcoding the sibling path.
 - Installed path: `/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest`.
-
-2.7.2
 
 ## 2.7.2 — Standalone DICOM/NIfTI Converter Integration
 
@@ -68,8 +68,6 @@
 - Updated Stage 1 pipeline diagrams in `docs/pipeline-local.md` and
   `docs/pipeline-launchpad.md` to reflect the new converter.
 - Updated compressed NIfTI regression coverage to exercise the direct `dcm2nii` path.
-
-2.7.1
 
 ## 2.7.1 — Profile UX, MPRAGE-Only Workflows, and Compressed NIfTI Input
 
@@ -134,8 +132,6 @@
 ### BREAKING
 - Scripts calling `run_pseudo_CT_local(...)` or `run_pseudo_CT_launchpad(...)` must be updated to `run_pseudo_CT('profile', ...)` with the appropriate profile. Old files remain under `deprecated/`.
 - `spm8-r6313/` is no longer tracked. Deployers must link the correct SPM package via `src/config/spm_profiles/`.
-
-2.6.6
 
 ## 2.6.6 — Profile Resource Authority (external SPM)
 - **External SPM packages:** All canonical profiles now use deployment-provided SPM packages. The repository no longer ships a tracked SPM tree. The deployer is responsible for linking the correct SPM package to each profile via `src/config/spm_profiles/`.

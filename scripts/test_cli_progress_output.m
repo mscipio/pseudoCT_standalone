@@ -103,6 +103,77 @@ assert(~isempty(strfind(atlas_source, 'P = result.outputs{1}')));
 assert(isempty(strfind(batch_source, '[recentering]')));
 assert(isempty(strfind(batch_source, '[aliasing correction]')));
 
+% T004: independent local seam and Launchpad boundary regressions.
+assert(~isempty(strfind(atlas_source, ...
+    'aliasing_requested = logical(check_aliasing);')));
+assert(~isempty(strfind(atlas_source, ...
+    'recentering_requested = recenter_before_normalization;')));
+gate_text = 'if (aliasing_requested || recentering_requested) && gate_condition';
+gate_pos = strfind(atlas_source, gate_text);
+call_pos = strfind(atlas_source, 'result = correct_aliasing(');
+assert(length(gate_pos) == 1 && length(call_pos) == 1 && ...
+    gate_pos(1) < call_pos(1));
+assert(local_active_occurrences(atlas_source, 'correct_aliasing(') == 1);
+assert(~isempty(strfind(atlas_source, 'elseif ~recentering_requested')));
+assert(isempty(strfind(atlas_source, ...
+    '''AliasCorrection'', recentering_requested')));
+assert(isempty(strfind(atlas_source, ...
+    '''Centering'', aliasing_requested')));
+
+% Exercise the four request tuples at the local dispatch seam: only the
+% strict both-false tuple bypasses the external call.
+flag_tuples = [0 0; 0 1; 1 0; 1 1];
+expected_external_call = [false; true; true; true];
+for ii = 1:size(flag_tuples, 1)
+    requested = logical(flag_tuples(ii, 1)) || logical(flag_tuples(ii, 2));
+    assert(requested == expected_external_call(ii));
+end
+
+% No-op/performed result details remain operation-specific and successful
+% false values map to the existing "Not required" diagnostics.
+assert(~isempty(strfind(atlas_source, ...
+    'isfield(result_details, ''centering'') && isstruct(result_details.centering)')));
+assert(~isempty(strfind(atlas_source, ...
+    'isfield(result_details, ''alias_correction'') && isstruct(result_details.alias_correction)')));
+assert(~isempty(strfind(atlas_source, 'if isempty(recentering_performed)')));
+assert(~isempty(strfind(atlas_source, 'elseif recentering_performed')));
+assert(~isempty(strfind(atlas_source, 'if isempty(aliasing_performed)')));
+assert(~isempty(strfind(atlas_source, 'elseif aliasing_performed')));
+assert(~isempty(strfind(atlas_source, '[recentering] Not required.')));
+assert(~isempty(strfind(atlas_source, '[aliasing correction] Not required.')));
+
+% R2010b must not call or inspect the incompatible facade, and must leave P
+% on the historical path.  The guard is intentionally before the one call.
+guard_text = 'if ~local_correct_aliasing_supported()';
+guard_pos = strfind(atlas_source, guard_text);
+assert(length(guard_pos) == 1 && guard_pos(1) < call_pos(1));
+guard_source = atlas_source(guard_pos(1):call_pos(1) - 1);
+assert(~isempty(strfind(guard_source, 'release = version(''-release'')')));
+assert(~isempty(strfind(guard_source, ...
+    'correct_aliasing requires MATLAB R2019+')));
+assert(~isempty(strfind(guard_source, 'continue with original P.')));
+assert(isempty(strfind(guard_source, 'correct_aliasing(')));
+assert(isempty(strfind(guard_source, 'P = result.outputs{1}')));
+assert(~isempty(strfind(atlas_source, 'release_year >= 2019')));
+assert(~isempty(strfind(atlas_source, 'release_text(1) == ''R''')));
+
+assert(~isempty(strfind(run_source, ...
+    'job.correct_aliasing, context, job.recenter_before_normalization, config')));
+assert(~isempty(strfind(batch_source, ...
+    'check_aliasing = config.aliasing_default;')));
+assert(~isempty(strfind(batch_source, 'case ''check_aliasing''')));
+assert(~isempty(strfind(batch_source, ...
+    'check_aliasing = varargin{ii+1};')));
+assert(~isempty(strfind(batch_source, ...
+    'vari = sprintf(''%s %s %d %d %s'', lc_fn, launchpad_batch_templates, 0, check_aliasing')));
+assert(isempty(strfind(batch_source, 'Centering')));
+assert(isempty(strfind(batch_source, 'recentering')));
+assert(isempty(strfind(batch_source, 'atlas_based_attenuation_map')));
+assert(~isempty(strfind(run_source, ...
+    '''check_aliasing'', jobs(1).correct_aliasing')));
+assert(isempty(strfind(run_source, ...
+    '''recenter_before_normalization'', jobs(1).recenter_before_normalization')));
+
 % T003: first-output validation, ERROR conditioning, failure-log ordering
 % First-output validation: char + nonempty after trim
 assert(~isempty(strfind(atlas_source, 'ischar(candidate)')));
@@ -161,7 +232,7 @@ for ii = 1:length(new_sources)
     assert(isempty(regexp(new_sources{ii}, '\btable\s*\(', 'once')));
 end
 
-fprintf('=== CLI progress output tests: 63/63 passed ===\n');
+fprintf('=== CLI progress output tests: 98/98 passed ===\n');
 % NOTE: update the count above when adding or removing assertions.
 end
 

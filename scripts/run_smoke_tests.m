@@ -51,7 +51,7 @@ end
 
 changelog = read_text(fullfile(root_dir, 'CHANGELOG.md'));
 first_line = strtrim(strtok(changelog, char(10)));
-check('CHANGELOG.md top version is 2.8.3', strcmp(first_line, '2.8.3'), first_line);
+check('CHANGELOG.md top version is 2.8.4', strcmp(first_line, '2.8.4'), first_line);
 
 try
     test_profile_authority();
@@ -65,6 +65,13 @@ try
     check('MPRAGE-only collection and promotion seams', true, '');
 catch ME
     check('MPRAGE-only collection and promotion seams', false, ME.message);
+end
+
+try
+    test_cli_progress_output();
+    check('CLI progress and local preprocessing seams', true, '');
+catch ME
+    check('CLI progress and local preprocessing seams', false, ME.message);
 end
 
 try

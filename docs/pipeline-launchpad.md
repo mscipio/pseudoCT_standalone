@@ -73,8 +73,11 @@ for the NIfTI layout and usage example.
   └── Remote PBS job (qsub)
 ```
 
-**2a — Upload.** The MPRAGE NIfTI is SCP'd to the Launchpad SSH host under
-`/cluster/scratch/monday/<user>/<rand>/`.
+**2a — Upload and preprocessing boundary.** The MPRAGE NIfTI is SCP'd to the
+Launchpad SSH host under `/cluster/scratch/monday/<user>/<rand>/`. The GUI still
+shows independent aliasing and recentering controls, initialized from the
+selected profile, but Launchpad does not run the local `correct_aliasing`
+facade or perform local recentering.
 
 **2b — FreeSurfer normalization.** `mri_normalize` runs on the remote host
 (or via cluster submission if `config.normalization.cluster = 'Yes'`).
@@ -90,6 +93,14 @@ qsub [-q <queue>] run_Pseudo_CT_launchpad.sh <MCR_ROOT> \
 
 Environment variables `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` are set to eliminate
 DARTEL thread-count non-determinism.
+
+The `<check_aliasing>` slot is the only aliasing/recentering operation control
+forwarded from the local layer: it carries the aliasing request to the compiled
+remote backend. Shipped profiles default `aliasing_default` to `1` and
+`recenter_before_normalization` to `'Yes'`, but only the former becomes the
+remote flag. The local recentering value is not forwarded, and there is no
+local per-operation `details.*.performed` result; the compiled backend owns its
+remote behavior.
 
 **Queue selection:**
 - If `config.launchpad.queue` is set (e.g. `'p60'`), it overrides the default.
@@ -197,6 +208,10 @@ identical to the local pipeline Stages 3–10. The key difference is that New
 Segment runs through the compiled MCR path (R2010b base) instead of the local
 MATLAB interpreter.
 
+The backend receives the remotely normalized MPRAGE and remains responsible for
+the remote `check_aliasing` behavior. No local recentering step is inserted
+before upload or after download.
+
 **The remote backend produces the same intermediate files as the local pipeline:**
 - `mprage_normalized_repos.nii` (MNI repos)
 - `c1..6*.nii`, `rc1..6*.nii`, `m*.nii` (New Segment)
@@ -300,6 +315,7 @@ preserved by default (configurable).
 | SPM execution | Local MATLAB interpreter | Compiled MCR 7.11 (R2010b) |
 | New Segment host | Local workstation | PBS cluster node (variable) |
 | Normalization | Local or SSH to remote host | Always on cluster head node |
+| Aliasing/recentering controls | Independent local facade requests | Only remote `check_aliasing`; no local recentering |
 | Pipeline stages | All in one MATLAB session | Split across local + remote |
 | Output promotion | From `tmp/` to `MR_PET/` | SCP fetch → local processing → promote |
 | Debug access | All intermediates available immediately | Requires `keep_tmp` on remote |

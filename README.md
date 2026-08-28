@@ -2,7 +2,7 @@
 
 Maintained by Michele Scipioni, PhD  
 mscipioni@mgh.harvard.edu  
-Last updated: July 28, 2026.
+Last updated: August 28, 2026.
 
 If you use this method, or parts of it, please, quote this paper:
 >D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.
@@ -100,6 +100,30 @@ run_pseudo_CT('profile', 'local-current', 'subjects', subject_list)
 run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, 'correct_aliasing', 0)
 ```
 
+#### Independent aliasing and recentering controls
+
+The input GUI presents nose/back aliasing correction and MPRAGE recentering as
+two independent, matching, aligned checkboxes.
+Each control is initialized from the selected profile (`aliasing_default` and
+`recenter_before_normalization`); all shipped profiles default both permissions
+to enabled. The selected values remain independent in each job. Batch and
+explicit-list collection also uses these profile-driven defaults, while the
+existing `correct_aliasing` argument can override the aliasing value.
+
+For local profiles, preprocessing is OR-gated: the external `correct_aliasing`
+standalone is called only when aliasing or recentering is requested, and the
+input is not already named `_normalized.nii` or `_moved.nii`. The call passes
+independent `AliasCorrection` and `Centering` flags. If both are false, the
+facade is not called and the original input proceeds unchanged. Its result
+reports status, outputs, message, and per-operation details; a requested
+operation with `details.*.performed = false` is reported as “Not required”,
+while successful operations are reported separately.
+
+The local facade requires MATLAB R2019 or newer. On R2010b, the compatibility
+guard does not call or inspect that facade: it reports the requested operation
+as unavailable, keeps the original input, and continues the historical pipeline
+without failing or substituting the deprecated local implementation.
+
 Near-parity profile:
 
 ```matlab
@@ -164,6 +188,10 @@ run_pseudo_CT('profile', 'launchpad', 'subjects', subject_list, 'correct_aliasin
 
 Note: In GUI mode (`run_pseudo_CT()` with no arguments), the profile selector dialog is shown first, enabling GUI-based profile choice before subject selection.
 
+Launchpad forwards only the aliasing control as the remote `check_aliasing`
+argument to the compiled backend. It does not forward the local recentering
+value, call the local `correct_aliasing` facade, or perform local recentering.
+
 ## Documentation
 
 Detailed pipeline documentation is maintained in the repository's `docs/` directory.
@@ -210,10 +238,13 @@ runs the job. A cross-validation period (running both Launchpad and local for th
 first batch of subjects in a new study) is recommended but expected to converge
 quickly.
 
-For historical output compatibility retain these settings (all profiles ship
-with these defaults):
+Current profile defaults are:
 
-- `recenter_before_normalization = 'No'`.
+- `aliasing_default = 1` and `recenter_before_normalization = 'Yes'`.
+- Local profiles apply those two permissions independently through the external
+  `correct_aliasing` facade; the OR-gated call is skipped when both are false.
+- On R2010b, requested local facade operations are reported unavailable and do
+  not fail the run; the original input is retained.
 - Bone-segmentation reduction enabled.
 - `zero_background = 'No'`.
 - New Segment batch settings: `affreg = ''`, `biasfwhm = 30`, `warp.reg = 10`.
@@ -222,7 +253,7 @@ with these defaults):
 
 The GitHub repository retains maintainer/test/reference content in `scripts/`,
 `docs/`, and `deprecated/`, plus tracked maintainer metadata such as
-`.gitattributes` and `.gitignore`. These paths are excluded from v2.8.3 release
+`.gitattributes` and `.gitignore`. These paths are excluded from v2.8.4 release
 archives; deployable runtime paths, `README.md`, and `CHANGELOG.md` remain
 included. External `Batch_atlas/` and SPM8 resources are not included in the
 repository or release archives, so the release is not self-contained.
@@ -237,13 +268,21 @@ Runtime configuration is owned by the selected profile in
 - `config.launchpad.*` points to the separately provisioned Launchpad files and
   remote batch-template directory when the `launchpad` profile is selected.
 
-All profiles define `recenter_before_normalization = 'No'` and
-`zero_background = 'No'`. Setting `zero_background` to `'Yes'` opts into final
-subject-mask background zeroing. On the Launchpad path this is a local
-post-fetch operation performed before DICOM conversion; the compiled backend is
-unchanged. Older deployed defaults without the key safely retain `'No'`.
+All profiles define `aliasing_default = 1`,
+`recenter_before_normalization = 'Yes'`, and `zero_background = 'No'`.
+For local profiles, aliasing and recentering are independent requests to the
+external `correct_aliasing` API and are sent only when either request is true.
+The API's per-operation `performed` result distinguishes an applied operation
+from a successful “Not required” no-op. The local R2010b path reports the
+R2019+ facade limitation without failing and continues with the original input.
+On Launchpad, only `check_aliasing` is forwarded to the compiled remote
+backend; no local recentering is performed. Setting `zero_background` to
+`'Yes'` opts into final subject-mask background zeroing. On the Launchpad path
+this is a local post-fetch operation performed before DICOM conversion; the
+compiled backend is unchanged. Older deployed defaults without the key safely
+retain `'No'`.
 
 ## Version History
 
 See [CHANGELOG.md](CHANGELOG.md) for release history. The current release is
-**2.8.3** (external prerequisite documentation correction).
+**2.8.4** (independent aliasing and recentering controls).

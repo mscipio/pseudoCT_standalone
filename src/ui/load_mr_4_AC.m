@@ -59,6 +59,20 @@ handles.ute_fn = 0;
 handles.umap_fn = 0;
 handles.gui_mode = 'mMR';
 
+aliasing_default = 1;
+recentering_default = 0;
+if numel(varargin) > 1 && isstruct(varargin{2}) && isscalar(varargin{2})
+    gui_defaults = varargin{2};
+    if isfield(gui_defaults, 'aliasing_default')
+        aliasing_default = gui_defaults.aliasing_default;
+    elseif isfield(gui_defaults, 'correct_aliasing')
+        aliasing_default = gui_defaults.correct_aliasing;
+    end
+    if isfield(gui_defaults, 'recenter_before_normalization')
+        recentering_default = gui_defaults.recenter_before_normalization;
+    end
+end
+
 if nargin > 3
     switch varargin{1}
         case 0
@@ -83,8 +97,10 @@ if nargin > 3
     end
 end
 
-handles.correct_aliasing = 1;
+handles.correct_aliasing = normalize_gui_flag(aliasing_default, true);
+handles.recenter_before_normalization = normalize_gui_flag(recentering_default, false);
 set(handles.aliasing_button, 'Value', handles.correct_aliasing);
+set(handles.recentering_button, 'Value', handles.recenter_before_normalization);
 
 % Update handles structure
 guidata(hObject, handles);
@@ -106,6 +122,9 @@ varargout{1} = handles.mprage_fn;
 varargout{2} = handles.ute_fn;
 varargout{3} = handles.umap_fn;
 varargout{4} = handles.correct_aliasing;
+if nargout > 4
+    varargout{5} = handles.recenter_before_normalization;
+end
 
 delete(handles.load_mr_4_AC);
 
@@ -356,6 +375,9 @@ handles.mprage_fn = 0;
 handles.ute_fn = 0;
 handles.umap_fn = 0;
 handles.correct_aliasing = 0;
+handles.recenter_before_normalization = 0;
+set(handles.aliasing_button, 'Value', handles.correct_aliasing);
+set(handles.recentering_button, 'Value', handles.recenter_before_normalization);
 
 % Update handles structure
 guidata(hObject, handles);
@@ -373,9 +395,45 @@ function aliasing_button_Callback(hObject, eventdata, handles)
 
 % Hint: get(hObject,'Value') returns toggle state of aliasing_button
 
-handles.correct_aliasing = get(hObject,'Value');
+handles.correct_aliasing = logical(get(hObject,'Value'));
 
 % Update handles structure
 guidata(hObject, handles);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% --- Executes on button press in recentering_button.
+function recentering_button_Callback(hObject, eventdata, handles)
+% hObject    handle to recentering_button (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Hint: get(hObject,'Value') returns toggle state of recentering_button
+
+handles.recenter_before_normalization = logical(get(hObject,'Value'));
+
+% Update handles structure
+guidata(hObject, handles);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+function value = normalize_gui_flag(value, fallback)
+%NORMALIZE_GUI_FLAG Normalize profile/default values for GUIDE controls.
+
+input_value = value;
+value = logical(fallback);
+if islogical(input_value) && isscalar(input_value)
+    value = input_value;
+elseif isnumeric(input_value) && isscalar(input_value) && ...
+        ismember(input_value, [0 1])
+    value = logical(input_value);
+elseif ischar(input_value)
+    input_value = lower(strtrim(input_value));
+    if ismember(input_value, {'yes'; 'true'; 'on'; '1'})
+        value = true;
+    elseif ismember(input_value, {'no'; 'false'; 'off'; '0'})
+        value = false;
+    end
+end

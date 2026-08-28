@@ -24,8 +24,12 @@
 %         aliasing is happening on the image); = 1: check (and correct if
 %         needed for aliasing). If correcting, user will need to manually
 %         confirm that the automatic correction was propery done.
-%         - varargin{5} = optional output context.
-%         - varargin{6} = selected profile config.
+%         - varargin{5} = selected profile config for the existing
+%         5-argument contract, or optional output context otherwise.
+%         - varargin{6} = optional recenter override when varargin{7} is the
+%         selected profile config.
+%         - varargin{6}/{7} = selected profile config for the existing
+%         6-argument contract, or the extended 7-argument contract.
 %
 % Outputs: - Pf: array of strings containing the names of the new created
 % atlases in subject space:
@@ -88,7 +92,7 @@ function [Pf] = atlas_based_attenuation_map(varargin)
 
 % Resolve code version from CHANGELOG.md line 1 at the repo root; fall back to
 % hardcoded value if the file cannot be read.
-code_version = '2.8.3';  % fallback
+code_version = '2.8.4';  % fallback
 try
     root_dir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
     fid = fopen(fullfile(root_dir, 'CHANGELOG.md'), 'r');
@@ -103,7 +107,7 @@ catch  %#ok<CTCH>
 end
 
 Pf = ''; % In case program quits before finishing!
-if nargin < 5 || nargin > 6 || ~isstruct(varargin{end})
+if nargin < 5 || nargin > 7 || ~isstruct(varargin{end})
     error('pseudo_CT:ProfileRequired', ...
         'atlas_based_attenuation_map requires the selected profile config.');
 end
@@ -113,8 +117,12 @@ ssh2_conn = varargin{3};
 check_aliasing = varargin{4};
 config = varargin{end};
 output_context = struct();
-if nargin == 6
+recenter_override = [];
+if nargin >= 6
     output_context = varargin{5};
+end
+if nargin == 7
+    recenter_override = varargin{6};
 end
 autom_select_folder = isempty(dir_batch_templates);
 ssh_ask_login = ~isstruct(ssh2_conn);
@@ -211,16 +219,45 @@ end
 % v.1.8: Let's try to get the subject into the center of the image to avoid
 % that the normalization process cut the nose
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-recenter_before_normalization = ...
-    strcmpi(config.recenter_before_normalization, 'yes');
+if isempty(recenter_override)
+    if isfield(config, 'recenter_before_normalization')
+        recenter_before_normalization = config.recenter_before_normalization;
+    else
+        recenter_before_normalization = false;
+    end
+else
+    recenter_before_normalization = recenter_override;
+end
+recenter_before_normalization = local_normalize_flag( ...
+    recenter_before_normalization, false);
 
 aliasing_requested = logical(check_aliasing);
 recentering_requested = recenter_before_normalization;
 gate_condition = length(strfind(deblank(P(1, :)), '_normalized.nii')) == 0 & ...
                  length(strfind(deblank(P(1, :)), '_moved.nii')) == 0;
 
-if recentering_requested && gate_condition
-    % Use external correct_aliasing package for both alias correction and centering
+if (aliasing_requested || recentering_requested) && gate_condition
+    if ~local_correct_aliasing_supported()
+        % The external facade requires MATLAB R2019+. Do not call it or
+        % inspect its result on older releases; continue with original P.
+        release = version('-release');
+        if recentering_requested
+            pseudo_CT_output('WARN', local_stage_context(output_context, 1), ...
+                '[recentering] Unavailable: correct_aliasing requires MATLAB R2019+ (running R%s).', release);
+        end
+        if aliasing_requested
+            pseudo_CT_output('WARN', local_stage_context(output_context, 1), ...
+                '[aliasing correction] Unavailable: correct_aliasing requires MATLAB R2019+ (running R%s).', release);
+        end
+        if ~recentering_requested
+            pseudo_CT_output('INFO', local_stage_context(output_context, 1), '[recentering] Skipped as configured.');
+        end
+        if ~aliasing_requested
+            pseudo_CT_output('INFO', local_stage_context(output_context, 1), '[aliasing correction] Skipped as configured.');
+        end
+    else
+    % Use external correct_aliasing package for independent alias correction
+    % and centering.
     [path_in, name_in, ext_in] = fileparts(deblank(P(1, :)));
     output_path = fullfile(path_in, [name_in, '_corrected', ext_in]);
 
@@ -350,6 +387,7 @@ if recentering_requested && gate_condition
     % Preserve early-return behavior
     if ~accepted || ~has_output
         return;
+    end
     end
 elseif ~recentering_requested
     stage_ctx = local_stage_context(output_context, 1);
@@ -793,4 +831,44 @@ function value = local_elapsed(seconds)
 seconds = max(0, floor(seconds));
 value = sprintf('%02d:%02d:%02d', floor(seconds / 3600), ...
     floor(rem(seconds, 3600) / 60), rem(seconds, 60));
+end
+
+function value = local_normalize_flag(value, default_value)
+if nargin < 1 || isempty(value)
+    value = default_value;
+elseif ischar(value)
+    normalized = lower(strtrim(value));
+    if strcmp(normalized, 'yes') || strcmp(normalized, 'true') || ...
+            strcmp(normalized, 'on') || strcmp(normalized, '1')
+        value = true;
+    elseif strcmp(normalized, 'no') || strcmp(normalized, 'false') || ...
+            strcmp(normalized, 'off') || strcmp(normalized, '0')
+        value = false;
+    else
+        error('pseudo_CT:InvalidRecentering', ...
+            'Recentering must be Yes/No or a scalar logical 0 or 1.');
+    end
+elseif (isnumeric(value) || islogical(value)) && isscalar(value) && ...
+        (double(value) == 0 || double(value) == 1)
+    value = logical(value);
+else
+    error('pseudo_CT:InvalidRecentering', ...
+        'Recentering must be Yes/No or a scalar logical 0 or 1.');
+end
+end
+
+function supported = local_correct_aliasing_supported()
+release = version('-release');
+supported = false;
+if ischar(release)
+    release_text = release;
+    if ~isempty(release_text) && ...
+            (release_text(1) == 'R' || release_text(1) == 'r')
+        release_text = release_text(2:end);
+    end
+    if length(release_text) >= 4
+        release_year = str2double(release_text(1:4));
+        supported = ~isnan(release_year) && release_year >= 2019;
+    end
+end
 end

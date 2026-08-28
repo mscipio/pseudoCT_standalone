@@ -12,7 +12,7 @@ config.d2n_root = '/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti
 % Standalone nose/back aliasing correction (external standalone app).
 config.aliasing_root = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest';
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
-config.recenter_before_normalization = 'No';
+config.recenter_before_normalization = 'Yes';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
 config.zero_background = 'No';
 % Remove temporary files after successful output promotion.

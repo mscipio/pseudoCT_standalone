@@ -463,7 +463,7 @@ pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
 
 % Run the pseudo-CT code
 [Pf] = atlas_based_attenuation_map(P, dir_batch_templates, ssh_log, ...
-    job.correct_aliasing, context, config);
+    job.correct_aliasing, context, job.recenter_before_normalization, config);
 if ~ischar(Pf) || isempty(strtrim(Pf))
     % Legacy output: disp('Pseudo-CT processing stopped before generating atlas outputs.');
     pseudo_CT_output('ERROR', context, 'Processing stopped before atlas outputs were generated.');
