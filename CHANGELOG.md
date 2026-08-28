@@ -4,7 +4,7 @@
 
 - Added matching, aligned checkboxes for independent nose/back aliasing
   correction and MPRAGE recentering.
-- Processing and API behavior are unchanged.
+- The visual GUI alignment refinement does not change processing or API behavior.
 
 ## 2.8.3 — External Prerequisite Documentation Correction
 
