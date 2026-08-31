@@ -97,7 +97,7 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 **Maintainer Makefile** — `deprecated/Makefile` retains only `lint`, `test`, and `tag` targets. Invoke it as `make -f deprecated/Makefile <target>` from the repository root, or pass its absolute path from any working directory; it derives the repository root from its own location. It does not build release archives. Release archives use the repository's `.gitattributes` export-ignore policy.
 
-**Repository versus release archives** — `scripts/`, `docs/`, `deprecated/`, and tracked maintainer metadata remain on GitHub for maintenance and reference, but are excluded by the committed `.gitattributes` policy from the intended v2.8.4 tag-based archive. Deployable runtime paths, `README.md`, and `CHANGELOG.md` remain included. The external SPM8, `Batch_atlas`, FreeSurfer, converter, aliasing, and Launchpad prerequisites are not included, so the archive is not self-contained. No public v2.8.4 tag, release, or archive exists yet; this describes release preparation rather than an already-published artifact.
+**Repository versus release archives** — `scripts/`, `docs/`, `deprecated/`, and tracked maintainer metadata remain on GitHub for maintenance and reference, but are excluded by the committed `.gitattributes` policy from the published v2.8.4 tag-based archive. Deployable runtime paths, `README.md`, and `CHANGELOG.md` remain included. The external SPM8, `Batch_atlas`, FreeSurfer, converter, aliasing, and Launchpad prerequisites are not included, so the archive is not self-contained. The public v2.8.4 release and downloadable archive now exist; this describes the published artifact.
 
 **Targeted TDD tests** — `scripts/test_auto_discover_messages.m` is a red-green style test for the `batch-discovery-messages` change. Not wired into CI; run manually when iterating on `pseudo_CT_auto_discover_ute_umap`.
 
@@ -107,4 +107,4 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 ## Versioning
 
-The source version is intended to be `2.8.4` for the current release preparation: `atlas_based_attenuation_map.m` reads line 1 of `CHANGELOG.md` and falls back to `2.8.4` when that file cannot be read. This source version does not by itself indicate that a public v2.8.4 release exists. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.
+The source version is `2.8.4`, matching the published release: `atlas_based_attenuation_map.m` reads line 1 of `CHANGELOG.md` and falls back to `2.8.4` when that file cannot be read. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.

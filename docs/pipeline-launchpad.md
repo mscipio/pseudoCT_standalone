@@ -12,8 +12,8 @@ DICOM-to-NIfTI converter through `config.spm_root`, `config.atlas_root`, and
 aliasing/recentering standalone. The compiled backend, its runner/MCR, defaults
 MAT, and remote atlas/template directory must be provisioned separately and
 supplied through the `config.launchpad.*` fields; this repository and the
-intended v2.8.4 tag-based archive do not distribute those payloads. No public
-v2.8.4 archive exists yet; this is the preparation policy.
+published v2.8.4 tag-based archive do not distribute those payloads. The public
+v2.8.4 release archive exists; this is the archive policy.
 
 ```
 legend:
@@ -212,7 +212,7 @@ scratch on success.
 The compiled backend uses the SPM8 and atlas/template resources provisioned with
 the separate Launchpad deployment; `config.launchpad.batch_templates` supplies
 the remote `Batch_atlas` directory. These resources are not bundled in this
-repository or the intended v2.8.4 tag-based archive. Its pipeline stages are structurally
+repository or the published v2.8.4 tag-based archive. Its pipeline stages are structurally
 identical to the local pipeline Stages 3–10. The key difference is that New
 Segment runs through the compiled MCR path (R2010b base) instead of the local
 MATLAB interpreter.

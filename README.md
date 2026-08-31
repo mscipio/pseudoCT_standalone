@@ -15,7 +15,7 @@ The software supports:
 - Automatic QC image generation
 - Per-subject processing logs and provenance information
 
-> **Martinos users:** use the centrally deployed version rather than cloning this repository. See the PseudoCT User Guide for step-by-step processing instructions, expected folder structure, outputs, and quality control.
+> **Martinos users:** use the centrally deployed version rather than cloning this repository. See the [PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/) for step-by-step processing instructions, expected folder structure, outputs, and quality control.
 
 ---
 
@@ -55,7 +55,7 @@ run_pseudo_CT
 
 For routine processing, select **Local MATLAB (Current)**.
 
-Detailed instructions are available in the PseudoCT User Guide.
+Detailed instructions are available in the [PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/).
 
 ---
 
@@ -69,9 +69,8 @@ pseudoCT_standalone-latest
 
 which points to the current recommended deployment.
 
-The source tree currently identifies itself as **2.8.4** for release preparation.
-Until `v2.8.4` is tagged and published, it is an intended version rather than a
-public release or downloadable archive.
+The source tree currently identifies itself as **2.8.4**, matching the published release.
+The public `v2.8.4` tag and downloadable release archive are available.
 
 For new processing, users should normally use `pseudoCT_standalone-latest`.
 
@@ -373,15 +372,15 @@ The main README is intentionally user-facing. Detailed implementation and mainta
 ## Repository and release archives
 
 The GitHub repository retains maintainer, test, legacy, and technical-reference
-content such as `scripts/`, `docs/`, and `deprecated/`. The intended v2.8.4
-tag-based archive will apply the committed `.gitattributes` `export-ignore`
+content such as `scripts/`, `docs/`, and `deprecated/`. The published v2.8.4
+tag-based archive applies the committed `.gitattributes` `export-ignore`
 policy to exclude those paths and maintainer metadata while retaining the
 deployable runtime, `README.md`, and `CHANGELOG.md`. External SPM8, atlas,
 FreeSurfer, converter, aliasing, and Launchpad resources are not bundled, so the
 archive is not self-contained.
 
-No public `v2.8.4` tag, release, or archive exists yet; the archive wording here
-describes the preparation policy rather than an already-published artifact.
+The public `v2.8.4` release and downloadable archive now exist; the archive wording here
+describes the published artifact.
 
 ---
 

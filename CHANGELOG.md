@@ -1,8 +1,8 @@
 2.8.4
 
-## 2.8.4 — Current / intended publication (2026-08-31)
-- Not yet published; prepared for publication on 2026-08-28.
-- Added matching, aligned GUI checkboxes for independent nose/back aliasing correction and MPRAGE recentering; no processing or API behavior changed.
+## 2.8.4 — Published release (2026-08-31)
+- Published release archive is available.
+- Added matching, aligned GUI checkboxes for independent nose/back aliasing correction and MPRAGE recentering; the visual GUI alignment refinement did not change processing or API behavior.
 
 ## 2.8.3 — Published release (2026-08-27): External Prerequisite Documentation Correction
 - Clarified that `Batch_atlas` and SPM8 are externally provisioned prerequisites, not bundled repository or release-archive content.
