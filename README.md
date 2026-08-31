@@ -1,288 +1,437 @@
-# Standalone Pseudo-CT Package
+# pseudoCT_standalone
 
-Maintained by Michele Scipioni, PhD  
-mscipioni@mgh.harvard.edu  
-Last updated: August 28, 2026.
+Atlas-based pseudoCT generation for PET/MR attenuation correction.
 
-If you use this method, or parts of it, please, quote this paper:
->D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.
->An SPM8-based Approach for Attenuation Correction Combining Segmentation and Non-rigid Template Formation: Application to Simultaneous PET/MR Brain Imaging. JNM. 2014. Nov;55(11):1825-30.
+`pseudoCT_standalone` is the actively maintained Martinos implementation of the SPM8-based atlas pseudoCT method described by Izquierdo-Garcia et al. It generates a subject-specific attenuation map from a T1-weighted MPRAGE for use in PET/MR attenuation correction.
 
-This package provides a unified entrypoint `run_pseudo_CT.m` with three execution profiles:
+The software supports:
 
-- `local-current` (default): runs the editable MATLAB/SPM pipeline with your system-installed MATLAB.
-- `local-near-parity-r2010b`: local pipeline pinned to near-R2010b (7.11) numerical parity for consistent optimizer results across MATLAB versions.
-- `launchpad`: stages the subject to Launchpad and runs the legacy compiled `Pseudo_CT_launchpad` backend.
+- MPRAGE input as DICOM, `.nii`, or `.nii.gz`
+- Local MATLAB processing
+- Single-subject and batch workflows
+- Automatic UMAP discovery for the standard PET/MR workflow
+- Optional MPRAGE aliasing correction and recentering
+- NIfTI and DICOM pseudoCT output
+- Automatic QC image generation
+- Per-subject processing logs and provenance information
 
-The former entrypoints `run_pseudo_CT_local.m` and `run_pseudo_CT_launchpad.m` are not included in this tree. Use the unified entrypoint with an explicit profile instead; the retained files under `deprecated/` are legacy helpers for reference only.
+> **Martinos users:** use the centrally deployed version rather than cloning this repository. See the PseudoCT User Guide for step-by-step processing instructions, expected folder structure, outputs, and quality control.
 
-## Top-Level Layout
+---
 
-- `run_pseudo_CT.m`: primary user-facing entry point.
-- `deprecated/`: legacy helper implementations preserved for reference only; not active runtime dependencies and excluded from release archives.
-- `src/`: project-owned MATLAB source files grouped by function.
-- External `Batch_atlas/`: atlas images and SPM batch templates used by the pseudo-CT pipeline; configured through `atlas_root` and not included here.
-- External `spm8-r6313/`: deployment-provided SPM8 installation; configured through `spm_root` and not included here.
-- `vers/`: local SPM overrides required by this pipeline.
-- `ssh2_v2_m1_r5/`: bundled SSH/SCP toolbox used by the Launchpad path.
-- `imgaussian/`: external image filtering dependency.
+## Citation
 
-## External Prerequisites and Provisioning
+If you use this method, please cite:
 
-This repository and its release archives are **not self-contained**. They do not
-include or distribute the atlas data/templates in `Batch_atlas/` or an SPM8 tree
-such as `spm8-r6313/`. Provision compatible external resources before running the
-pipeline:
+> D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S. Schachoff, S. Fürst, K.T. Chen, D.B. Chonde, and C. Catana.  
+> **An SPM8-based Approach for Attenuation Correction Combining Segmentation and Non-rigid Template Formation: Application to Simultaneous PET/MR Brain Imaging.**  
+> *Journal of Nuclear Medicine.* 2014;55(11):1825-1830.
 
-- Provision the required atlas NIfTI files and SPM batch templates, then set the
-  selected profile's `config.atlas_root` to that external `Batch_atlas` directory.
-  The directory must contain the templates and atlas files used by the selected
-  workflow (including `ch2.nii`, `TPM.nii`, `Template_*.nii`, the batch `.mat`
-  files, and the `*Atlas*.nii` files).
-- Provision a compatible SPM8 installation and set the selected profile's
-  `config.spm_root` to its absolute path. The checked-in profiles show the site
-  defaults; deployment-specific paths may be substituted while preserving the
-  profile's MATLAB/SPM compatibility requirements.
-- For `launchpad`, provision the separate remote Launchpad deployment and set
-  `config.launchpad.runner`, `config.launchpad.mcr_root`,
-  `config.launchpad.defaults_mat`, and `config.launchpad.batch_templates` to the
-  corresponding external files/directories. `batch_templates` must resolve to the
-  remote provisioned atlas/template directory.
+### Software acknowledgement
 
-`setup_pseudo_CT_paths` checks the configured resource directories and required
-Launchpad files before changing the MATLAB path. A missing external prerequisite
-therefore fails during setup; it is not supplied by cloning this repository or
-downloading a release archive.
+In addition to citing the methodological publication above, users are kindly asked to acknowledge **Michele Scipioni, PhD** for the development, integration, and ongoing maintenance of the Martinos pseudoCT software in publications, abstracts, presentations, and grant applications that make use of this implementation.
 
-## Source Tree
+---
 
-- `src/config/`: runtime defaults and environment setup.
-  Contains the profile files, resource path setup, and the local FreeSurfer setup script.
-- `src/core/`: pseudo-CT processing logic.
-  Contains atlas warping, attenuation-map generation, masking, aliasing correction, and subject centering.
-- `src/io/`: input/output helpers.
-  Contains DICOM to NIfTI conversion, final DICOM writing, output-folder resolution, and cleanup helpers.
-- `src/ui/`: interactive MATLAB UI helpers.
-  Contains the file-selection GUIDE dialog and password dialog.
-- `src/remote/`: SSH/SCP and remote normalization helpers.
-  Contains the login shim plus wrappers for remote command execution and file transfer.
-- `src/launchpad/`: Launchpad queue orchestration.
-  Contains job submission, job polling, and the standalone Launchpad batch wrapper.
-- `src/qc/`: quick-look quality-control utilities.
-  Contains the overlay renderer and color map used for fused MR/pseudo-CT QC images.
+## Quick start at Martinos
 
-## Execution Paths
+The centrally deployed software is located under:
 
-### Local (profiles: `local-current`, `local-near-parity-r2010b`)
+```text
+/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/
+```
 
-`run_pseudo_CT.m` with a local profile runs the editable MATLAB/SPM pipeline. It sets up the MATLAB path via `setup_pseudo_CT_paths`, collects the subject jobs, runs `atlas_based_attenuation_map`, then writes the final DICOM pseudo-muMAP output.
-
-Both local profiles support interactive, batch, and explicit-list usage:
-
-- `run_pseudo_CT()` — opens the profile selector GUI, then the single-subject selection dialog.
-- `run_pseudo_CT('profile', 'local-current')` — skips the profile selector and opens the single-subject dialog.
-- `run_pseudo_CT('profile', 'local-current', 'subjects', 'batch')` — opens a multi-select file picker for MPRAGE files and auto-discovers each subject's UMAP reference.
-- `run_pseudo_CT('profile', 'local-current', 'subjects', subject_list)` — accepts a cell array or char matrix of MPRAGE filenames and processes them sequentially.
-
-Examples:
+For normal use, add the current recommended deployment to the MATLAB path:
 
 ```matlab
-run_pseudo_CT()
-run_pseudo_CT('profile', 'local-current')
-run_pseudo_CT('profile', 'local-current', 'subjects', 'batch')
-run_pseudo_CT('profile', 'local-current', 'subjects', 'batch', 'correct_aliasing', 0)
-
-subject_list = {
-  '/path/to/subj1/MR/MEMPRAGE/file1.IMA'
-  '/path/to/subj2/MR/MEMPRAGE/file1.IMA'
-};
-run_pseudo_CT('profile', 'local-current', 'subjects', subject_list)
-run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, 'correct_aliasing', 0)
+addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-latest')
 ```
 
-#### Independent aliasing and recentering controls
-
-The input GUI presents nose/back aliasing correction and MPRAGE recentering as
-two independent, matching, aligned checkboxes.
-Each control is initialized from the selected profile (`aliasing_default` and
-`recenter_before_normalization`); all shipped profiles default both permissions
-to enabled. The selected values remain independent in each job. Batch and
-explicit-list collection also uses these profile-driven defaults, while the
-existing `correct_aliasing` argument can override the aliasing value.
-
-For local profiles, preprocessing is OR-gated: the external `correct_aliasing`
-standalone is called only when aliasing or recentering is requested, and the
-input is not already named `_normalized.nii` or `_moved.nii`. The call passes
-independent `AliasCorrection` and `Centering` flags. If both are false, the
-facade is not called and the original input proceeds unchanged. Its result
-reports status, outputs, message, and per-operation details; a requested
-operation with `details.*.performed = false` is reported as “Not required”,
-while successful operations are reported separately.
-
-The local facade requires MATLAB R2019 or newer. On R2010b, the compatibility
-guard does not call or inspect that facade: it reports the requested operation
-as unavailable, keeps the original input, and continues the historical pipeline
-without failing or substituting the deprecated local implementation.
-
-Near-parity profile:
+Then, from a convenient working directory near your data, run:
 
 ```matlab
-run_pseudo_CT('profile', 'local-near-parity-r2010b')
-run_pseudo_CT('profile', 'local-near-parity-r2010b', 'subjects', 'batch')
+run_pseudo_CT
 ```
 
-When `local-near-parity-r2010b` is selected on a MATLAB release other than R2010b, a warning is shown that results may differ from expected near-parity output, and the runtime guard is bypassed.
+For routine processing, select **Local MATLAB (Current)**.
 
-### NIfTI Input
+Detailed instructions are available in the PseudoCT User Guide.
 
-All profiles accept **pre-converted NIfTI files** in place of raw DICOM. Place
-the NIfTI in the subject's `MR_PET/` folder and pass its path to the `subjects`
-argument. The UMAP reference is discovered from the sibling `MR/` directory:
+---
 
+## Version selection and reproducibility
+
+The Martinos deployment contains numbered builds together with:
+
+```text
+pseudoCT_standalone-latest
 ```
-<subject_root>/
+
+which points to the current recommended deployment.
+
+The source tree currently identifies itself as **2.8.4** for release preparation.
+Until `v2.8.4` is tagged and published, it is an intended version rather than a
+public release or downloadable archive.
+
+For new processing, users should normally use `pseudoCT_standalone-latest`.
+
+For studies that will be processed over an extended period, it is recommended to use the same **numbered pseudoCT build or published release** for the entire study. This avoids introducing software-version changes within a dataset.
+
+New releases may add functionality or correct minor issues. If a problem is identified that makes continued use of an older release inadvisable, this will be explicitly communicated together with the reason for the change.
+
+---
+
+## Execution profiles
+
+PseudoCT uses profile-based execution.
+
+### Local MATLAB (Current)
+
+**Recommended for routine use.**
+
+Runs the full MPRAGE + UMAP workflow locally using the current Martinos MATLAB environment.
+
+Typical processing time on an average workstation is approximately 30 minutes per subject.
+
+### Launchpad (Aether Legacy Workflow)
+
+The historical Launchpad workflow uses the legacy compiled pseudoCT backend.
+
+**Launchpad is currently unavailable.**
+
+It is being replaced by an MLSC-based workflow. Until that replacement is available, Martinos users should use the Local MATLAB profile for routine processing.
+
+### Specialized profiles
+
+Additional profiles are available for specific systems, compatibility testing, validation, and development workflows.
+
+They are not intended for routine use.
+
+**If you do not already know why you need a specialized profile, do not select one.**
+
+---
+
+## Input data
+
+### Standard DICOM workflow
+
+For DICOM input, the expected subject structure is:
+
+```text
+<subject>/
+└── MR/
+    ├── MPRAGE/
+    └── UMAP/
+```
+
+Select the **first DICOM file of the MPRAGE series**.
+
+The corresponding UMAP is normally discovered automatically from the sibling `MR/UMAP/` directory.
+
+### Preprocessed NIfTI workflow
+
+A preprocessed MPRAGE may instead be supplied as `.nii` or `.nii.gz`.
+
+Place the NIfTI file under:
+
+```text
+<subject>/MR_PET/
+```
+
+For example:
+
+```text
+<subject>/
 ├── MR/
-│   ├── UMAP/         ← reference UMAP (for DICOM output geometry)
-│   └── ...
+│   ├── MPRAGE/
+│   └── UMAP/
 └── MR_PET/
-    └── mprage.nii    ← input NIfTI (processed in place)
+    └── mprage_preprocessed.nii.gz
 ```
 
-Example:
+Then select the NIfTI file as the MPRAGE input.
+
+The original input file is preserved during processing.
+
+---
+
+## MPRAGE preprocessing
+
+PseudoCT supports automatic preprocessing intended to improve segmentation and registration to the MNI atlas.
+
+The standard workflow includes two independent controls for:
+
+- nose/neck aliasing correction
+- recentering of the MPRAGE within the field of view
+
+For shipped local profiles, both are enabled by default. The historical parity
+comparison used `recenter_before_normalization = 'No'`; that is a compatibility
+setting, not the current local default. Launchpad profiles retain the local
+recentering field for the shared profile contract, but Launchpad ignores it:
+the remote compiled workflow performs normalization before pseudoCT processing;
+the current orchestration invokes `mri_normalize` before the compiled backend.
+Only the independent aliasing request is forwarded as the remote
+`check_aliasing` control.
+
+On the local path, the external preprocessing facade is called when either
+request is enabled and receives separate aliasing and recentering flags. The
+controls can therefore be changed independently; disabling one does not disable
+the other.
+
+The preprocessing tools determine whether a correction is actually required, so leaving both options enabled is recommended for routine processing.
+
+---
+
+## Batch processing
+
+To process multiple subjects:
 
 ```matlab
-run_pseudo_CT('profile', 'local-current', 'subjects', ...
-    {'/path/to/subject/MR_PET/mprage.nii'})
+run_pseudo_CT('profile', 'local-current', 'subjects', 'batch')
 ```
 
-The NIfTI is copied into `MR_PET/tmp/mprage.nii` during staging, preserving the
-original input file. All pipeline stages (UMAP discovery, DICOM output, QC,
-promotion) work identically to the DICOM input path.
+This opens a multi-file picker.
 
-For localhost execution, temporary FreeSurfer normalization staging happens under each subject's own `MR_PET/tmp` folder rather than under the hardcoded `host_folder` path in the defaults template. On successful completion, the final NIfTI/QC/version artifacts are promoted back into `MR_PET` and the `MR_PET/tmp` folder is removed.
+Select the first MPRAGE DICOM from each subject, or the corresponding NIfTI input, then click **Done**.
 
-### Launchpad (profile: `launchpad`)
+Subjects are processed sequentially.
 
-`run_pseudo_CT.m` with the `launchpad` profile uses the same local input selection and final DICOM output layer, but the core atlas processing is delegated to the legacy compiled Launchpad application through the queue helpers in `src/launchpad/`.
-
-Launchpad mode supports interactive, batch, and explicit-list usage:
-
-- `run_pseudo_CT('profile', 'launchpad')` — skips the profile selector and opens the single-subject selection dialog, then SSH login.
-- `run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch')` — opens a multi-select file picker for MPRAGE files, auto-discovers each subject's UMAP reference, and submits the batch through Launchpad.
-- `run_pseudo_CT('profile', 'launchpad', 'subjects', subject_list)` — accepts a cell array or char matrix of MPRAGE filenames and processes them sequentially through the Launchpad backend.
-
-Examples:
+An explicit subject list can also be supplied:
 
 ```matlab
-run_pseudo_CT('profile', 'launchpad')
-run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch')
-run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch', 'correct_aliasing', 0)
-
 subject_list = {
-  '/path/to/subj1/MR/MEMPRAGE/file1.IMA'
-  '/path/to/subj2/MR/MEMPRAGE/file1.IMA'
+    '/path/to/subj1/MR/MPRAGE/file1.dcm'
+    '/path/to/subj2/MR/MPRAGE/file1.dcm'
 };
-run_pseudo_CT('profile', 'launchpad', 'subjects', subject_list)
-run_pseudo_CT('profile', 'launchpad', 'subjects', subject_list, 'correct_aliasing', 0)
+
+run_pseudo_CT( ...
+    'profile', 'local-current', ...
+    'subjects', subject_list);
 ```
 
-Note: In GUI mode (`run_pseudo_CT()` with no arguments), the profile selector dialog is shown first, enabling GUI-based profile choice before subject selection.
+---
 
-Launchpad forwards only the aliasing control as the remote `check_aliasing`
-argument to the compiled backend. It does not forward the local recentering
-value, call the local `correct_aliasing` facade, or perform local recentering.
+## Outputs
 
-## Documentation
+For the standard MPRAGE + UMAP workflow, pseudoCT creates the required output directories automatically.
 
-Detailed pipeline documentation is maintained in the repository's `docs/` directory.
-That directory is intentionally excluded from release archives, so the links below
-use GitHub URLs rather than archive-relative paths.
+After a successful local run, the subject directory contains approximately:
 
-- **[Pipeline Stages: Local](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/pipeline-local.md)** — step-by-step flow for
-  local profiles (`local-current`, `local-near-parity-r2010b`): which files are
-  created at each stage and which tools are used.
-- **[Pipeline Stages: Launchpad](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/pipeline-launchpad.md)** — step-by-step flow
-  for the `launchpad` profile: local I/O layer, remote compiled-backend internals,
-  and post-processing.
-- **[Numerical Parity Assessment](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/parity-assessment.md)** — controlled
-  comparison between local profiles and the legacy Launchpad backend: what
-  diverges, why, and the practical impact on PET attenuation correction.
-- **[Legacy Launchpad Parity](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/legacy-launchpad-parity.md)** — original
-  host-boundary finding (superseded by the broader parity assessment above).
+```text
+<subject>/
+├── MR/
+│   ├── MPRAGE/
+│   ├── UMAP/
+│   └── pseudo_muMAP/
+│       └── final DICOM pseudoCT series
+│
+└── MR_PET/
+    ├── att_map.nii
+    ├── Fusion_MR_Pseudo_CT_validation.tiff
+    ├── MPRAGE_spm.nii
+    ├── MPRAGE_spm_normalized.nii
+    ├── Pseudo_CT_AC_Version.txt
+    ├── pseudo_CT_local-current_*.log
+    └── pseudo_CT_profile_summary.txt
+```
 
-## Numerical Compatibility
+Important outputs include:
 
-Two independent sources of numerical divergence have been characterised
-(see the [full parity assessment](https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/parity-assessment.md) for detail):
+- `MR/pseudo_muMAP/` — final pseudoCT DICOM series.
+- `MR_PET/att_map.nii` — final pseudoCT attenuation map in NIfTI format.
+- `MR_PET/Fusion_MR_Pseudo_CT_validation.tiff` — MPRAGE/pseudoCT fusion image for visual QC.
+- `MR_PET/pseudo_CT_local-current_*.log` — detailed processing log.
+- `MR_PET/pseudo_CT_profile_summary.txt` — concise record of the execution profile, relevant settings, and MATLAB environment used for processing.
+- `MR_PET/Pseudo_CT_AC_Version.txt` — software version and release-history information associated with the run.
 
-1. **Queue-dependent Launchpad divergence.** The same compiled `Pseudo_CT_launchpad`
-   binary produces measurably different attenuation maps when submitted to
-   different PBS queues (default vs `p60`). This is intrinsic to environment-
-   sensitive numerical software (CPU dispatch, glibc, MCR BLAS) and proves that
-   perfect parity is not achievable when moving away from the legacy execution
-   environment — the same binary already varies across hosts within the cluster.
+Intermediate files are staged under `MR_PET/tmp/`.
 
-2. **New Segment convergence differences.** Between the local
-   `local-near-parity-r2010b` profile and the Launchpad backend, the only
-   systematic divergence is in SPM New Segment's Gauss-Newton convergence path.
-   From exact cleaned `rc*` inputs, every downstream stage (DARTEL, inverse warp,
-   reslice, att_map construction) reproduces byte-identically. The divergent
-   voxels in the final `att_map.nii` (~0.23%) are functionally negligible for
-   511 keV PET attenuation correction.
+For the shipped production profiles, `cleanup_on_success = true`, so
+`MR_PET/tmp/` is removed after successful output promotion. The development
+profile intentionally sets this value to `false` for inspection. If cleanup is
+disabled, or processing is interrupted or fails, the intermediate files are
+retained.
 
-**Practical conclusion:** The `local-near-parity-r2010b` profile produces
-attenuation maps that are practically equivalent to the legacy Launchpad output
-for the purpose of PET attenuation correction. The Launchpad backend itself
-lacks a fixed numerical reference because its output depends on which PBS queue
-runs the job. A cross-validation period (running both Launchpad and local for the
-first batch of subjects in a new study) is recommended but expected to converge
-quickly.
+---
 
-Current profile defaults are:
+## Quality control
 
-- `aliasing_default = 1` and `recenter_before_normalization = 'Yes'`.
-- Local profiles apply those two permissions independently through the external
-  `correct_aliasing` facade; the OR-gated call is skipped when both are false.
-- On R2010b, requested local facade operations are reported unavailable and do
-  not fail the run; the original input is retained.
-- Bone-segmentation reduction enabled.
-- `zero_background = 'No'`.
-- New Segment batch settings: `affreg = ''`, `biasfwhm = 30`, `warp.reg = 10`.
+Every generated pseudoCT should be visually inspected before it is used for PET attenuation correction.
 
-## Repository and Release Archives
+Two QC steps are recommended.
 
-The GitHub repository retains maintainer/test/reference content in `scripts/`,
-`docs/`, and `deprecated/`, plus tracked maintainer metadata such as
-`.gitattributes` and `.gitignore`. These paths are excluded from v2.8.4 release
-archives; deployable runtime paths, `README.md`, and `CHANGELOG.md` remain
-included. External `Batch_atlas/` and SPM8 resources are not included in the
-repository or release archives, so the release is not self-contained.
+### 1. MPRAGE / pseudoCT coregistration
 
-## Configuration
+Inspect:
 
-Runtime configuration is owned by the selected profile in
-`src/config/profiles/`:
+```text
+MR_PET/Fusion_MR_Pseudo_CT_validation.tiff
+```
 
-- `config.spm_root` points to the externally provisioned SPM8 installation.
-- `config.atlas_root` points to the externally provisioned `Batch_atlas` tree.
-- `config.launchpad.*` points to the separately provisioned Launchpad files and
-  remote batch-template directory when the `launchpad` profile is selected.
+Check for:
 
-All profiles define `aliasing_default = 1`,
-`recenter_before_normalization = 'Yes'`, and `zero_background = 'No'`.
-For local profiles, aliasing and recentering are independent requests to the
-external `correct_aliasing` API and are sent only when either request is true.
-The API's per-operation `performed` result distinguishes an applied operation
-from a successful “Not required” no-op. The local R2010b path reports the
-R2019+ facade limitation without failing and continues with the original input.
-On Launchpad, only `check_aliasing` is forwarded to the compiled remote
-backend; no local recentering is performed. Setting `zero_background` to
-`'Yes'` opts into final subject-mask background zeroing. On the Launchpad path
-this is a local post-fetch operation performed before DICOM conversion; the
-compiled backend is unchanged. Older deployed defaults without the key safely
-retain `'No'`.
+- agreement between the MPRAGE and pseudoCT anatomy
+- appropriate skull and brain contour alignment
+- reasonable registration around the nose and sinuses
+- appropriate posterior-head alignment
+- missing or displaced skull regions
+- gross atlas-registration errors
+- obvious problems caused by poor positioning within the field of view
 
-## Version History
+### 2. Final pseudoCT volume
 
-See [CHANGELOG.md](CHANGELOG.md) for release history. The current release is
-**2.8.4** (independent aliasing and recentering controls).
+Open the DICOM series under:
+
+```text
+MR/pseudo_muMAP/
+```
+
+in an appropriate DICOM viewer and scroll through the complete volume.
+
+Inspect for unexpected attenuation values or other artifacts.
+
+One known failure mode occurs when noise in the background of the MPRAGE is segmented and incorrectly classified as soft tissue rather than air. This can produce spurious attenuation values outside the head.
+
+If this occurs, the MPRAGE background should be cleaned and the resulting image provided to pseudoCT as a NIfTI input before repeating processing.
+
+A dedicated MPRAGE background-cleanup tool is planned for release.
+
+---
+
+## Interrupting and restarting processing
+
+MATLAB must remain running for the duration of processing.
+
+It is safe to interrupt pseudoCT, but interruption stops the current run and leaves intermediate files generated up to that point.
+
+Starting pseudoCT again for the same subject restarts processing from the beginning and overwrites existing processing files as needed.
+
+---
+
+## External installation
+
+The GitHub repository is **not a completely self-contained installation**.
+
+The Martinos deployment relies on externally provisioned resources including:
+
+- SPM8
+- pseudoCT atlas images and SPM batch templates
+- FreeSurfer
+- the standalone DICOM-to-NIfTI converter
+- for local profiles, the standalone aliasing/recentering tool
+- remote infrastructure for legacy/compatibility workflows
+
+Runtime locations are defined by the selected profile under:
+
+```text
+src/config/profiles/
+```
+
+Every execution requires compatible SPM, atlas, and DICOM-to-NIfTI resources.
+Local profiles additionally require the external aliasing/recentering resource.
+In particular:
+
+```matlab
+config.spm_root
+config.atlas_root
+config.d2n_root
+config.aliasing_root  % local profiles
+```
+
+must point to compatible external installations.
+
+Users outside the Martinos environment should therefore expect to configure these resources before running the pipeline.
+
+For local profiles, startup validates the configured SPM, atlas, DICOM-to-NIfTI,
+and aliasing roots before adding them to the MATLAB path. FreeSurfer itself is
+also external: the selected profile's `config.normalization.source_command`
+must source a compatible installation, but that command is checked when
+normalization runs rather than by this preflight. Launchpad profiles do not
+validate or import the local aliasing standalone; they require the separately
+provisioned remote runner, MCR, defaults MAT, and batch-template directory, and
+delegate aliasing/recentering behavior to the compiled backend as described
+above.
+
+---
+
+## Technical documentation
+
+The repository contains additional technical and validation documentation under [`docs/`](docs/).
+
+Useful references include:
+
+- [Local Pipeline Stages](docs/pipeline-local.md)
+- [Launchpad Pipeline Stages](docs/pipeline-launchpad.md)
+- [Numerical Parity Assessment](docs/parity-assessment.md)
+- [Legacy Launchpad Parity](docs/legacy-launchpad-parity.md)
+- [Release History](CHANGELOG.md)
+
+The main README is intentionally user-facing. Detailed implementation and maintainer information should be kept in the technical documentation rather than duplicated here.
+
+---
+
+## Repository and release archives
+
+The GitHub repository retains maintainer, test, legacy, and technical-reference
+content such as `scripts/`, `docs/`, and `deprecated/`. The intended v2.8.4
+tag-based archive will apply the committed `.gitattributes` `export-ignore`
+policy to exclude those paths and maintainer metadata while retaining the
+deployable runtime, `README.md`, and `CHANGELOG.md`. External SPM8, atlas,
+FreeSurfer, converter, aliasing, and Launchpad resources are not bundled, so the
+archive is not self-contained.
+
+No public `v2.8.4` tag, release, or archive exists yet; the archive wording here
+describes the preparation policy rather than an already-published artifact.
+
+---
+
+## Repository structure
+
+```text
+run_pseudo_CT.m
+src/
+    config/
+    core/
+    io/
+    launchpad/
+    qc/
+    remote/
+    ui/
+docs/
+deprecated/
+scripts/
+vers/
+imgaussian/
+ssh2_v2_m1_r5/
+```
+
+Key directories:
+
+- `src/config/` — profiles, environment configuration, and path setup
+- `src/core/` — pseudoCT processing pipeline
+- `src/io/` — input/output and conversion helpers
+- `src/ui/` — MATLAB graphical user interface
+- `src/qc/` — QC image generation
+- `src/remote/` — remote execution support
+- `src/launchpad/` — legacy Launchpad orchestration
+- `docs/` — technical and validation documentation
+- `deprecated/` — historical implementations retained for reference
+
+---
+
+## Maintainer
+
+**Michele Scipioni, PhD**  
+Athinoula A. Martinos Center for Biomedical Imaging  
+Massachusetts General Hospital / Harvard Medical School
+
+Email: mscipioni@mgh.harvard.edu
+
+For processing problems, please retain the subject's:
+
+- pseudoCT processing log
+- `pseudo_CT_profile_summary.txt`
+- QC TIFF
+- pseudoCT software version
+
+when requesting support.

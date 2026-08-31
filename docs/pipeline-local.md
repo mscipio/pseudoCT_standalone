@@ -9,13 +9,17 @@ path is shown.
 
 ## External Resources
 
-The repository supplies the pipeline source and orchestration, not the SPM8 or
-atlas payloads. Before a local run, configure the selected profile's
-`config.spm_root` to an externally provisioned compatible SPM8 installation and
-`config.atlas_root` to the externally provisioned `Batch_atlas` directory.
-`setup_pseudo_CT_paths` validates both directories before changing the MATLAB
-path. Every `Batch_atlas/...` reference below means a file under
-`config.atlas_root`, not a directory expected at the repository root.
+The repository supplies the pipeline source and orchestration, not the external
+runtime payloads. Before a local run, configure the selected profile's
+`config.spm_root` to a compatible SPM8 installation, `config.atlas_root` to the
+external `Batch_atlas` directory, `config.d2n_root` to the standalone
+DICOM-to-NIfTI converter, and `config.aliasing_root` to the standalone
+aliasing/recentering facade. `setup_pseudo_CT_paths` validates these four roots
+before changing the MATLAB path. FreeSurfer is also external and is invoked via
+`config.normalization.source_command`; its installation is validated when the
+normalization command runs, not by this path preflight. Every `Batch_atlas/...`
+reference below means a file under `config.atlas_root`, not a directory expected
+at the repository root.
 
 ```
 legend:
@@ -109,7 +113,9 @@ Before normalization, local jobs carry two independent permissions:
 `recenter_before_normalization` for MPRAGE recentering. The selected profile
 supplies their defaults (`aliasing_default = 1` and
 `recenter_before_normalization = 'Yes'` in all shipped profiles), and the GUI
-controls can change them independently.
+controls can change them independently. The historical parity comparison used
+`recenter_before_normalization = 'No'`; that compatibility setting is not the
+current local default.
 
 The local preprocessing gate is OR-based. When either permission is enabled and
 the input is not already `_normalized.nii` or `_moved.nii`, the external
@@ -465,22 +471,29 @@ images suitable for the mMR reconstruction chain.
   MR_PET/tmp/att_map.nii
   MR_PET/tmp/Fusion_MR_Pseudo_CT_validation.tiff
   MR_PET/tmp/Pseudo_CT_AC_Version.txt
+  MR_PET/tmp/mprage.nii                 (when available)
+  MR_PET/tmp/mprage_normalized.nii     (when available)
   │
   ~~~ pseudo_CT_promote_final_outputs ~~~
   │
   ├── MR_PET/att_map.nii
   ├── MR_PET/Fusion_MR_Pseudo_CT_validation.tiff
   ├── MR_PET/Pseudo_CT_AC_Version.txt
+  ├── MR_PET/MPRAGE_spm.nii             (when available)
+  └── MR_PET/MPRAGE_spm_normalized.nii  (when available)
   │
   ~~~ rmdir (optional, controlled by config.cleanup_on_success) ~~~
   │
-  └── MR_PET/tmp/  (removed if cleanup enabled, default: preserved)
+  └── MR_PET/tmp/  (removed on success when cleanup is enabled)
 ```
 
-The four final deliverables (att_map.nii, QC TIFF, version log, and DICOM
-mu-map in `MR/pseudo_muMAP/`) are the persistent outputs. Intermediate NIfTIs
-in `MR_PET/tmp/` are preserved by default for debugging and are removed only when
-`config.cleanup_on_success = true`.
+The persistent outputs include `att_map.nii`, the QC TIFF, the version log,
+available promoted MPRAGE copies (`MPRAGE_spm.nii` and
+`MPRAGE_spm_normalized.nii`), and the DICOM mu-map in `MR/pseudo_muMAP/`.
+All shipped production profiles set `config.cleanup_on_success = true`, so a
+successful run removes `MR_PET/tmp/` after promotion. The development profile
+sets it to `false`; disabling cleanup, or an interrupted or failed run, retains
+the intermediate files for debugging.
 
 ---
 
@@ -494,8 +507,10 @@ in `MR_PET/tmp/` are preserved by default for debugging and are removed only whe
 │   ├── att_map.nii             ← promoted from tmp/
 │   ├── Fusion_MR_Pseudo_CT_validation.tiff  ← promoted
 │   ├── Pseudo_CT_AC_Version.txt
+│   ├── MPRAGE_spm.nii          ← promoted seed input, when available
+│   ├── MPRAGE_spm_normalized.nii ← promoted normalized input, when available
 │   ├── pseudo_CT_<profile>_<runid>.log
-│   └── tmp/                    ← all intermediate NIfTIs (preserved by default)
+│   └── tmp/                    ← retained only when cleanup is disabled or the run fails
 │       ├── mprage.nii
 │       ├── mprage_normalized.nii
 │       ├── mprage_normalized_repos.nii

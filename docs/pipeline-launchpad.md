@@ -6,11 +6,14 @@ output promotion, while the compiled `Pseudo_CT_launchpad` backend (MATLAB Compi
 Runtime 7.11 / R2010b) runs on a remote PBS cluster via SSH.
 
 The repository is not a self-contained Launchpad distribution. The local layer
-still requires externally provisioned SPM8 and `Batch_atlas` resources through
-`config.spm_root` and `config.atlas_root`. The compiled backend, its runner/MCR,
-defaults MAT, and remote atlas/template directory must be provisioned separately
-and supplied through the `config.launchpad.*` fields; this repository and its
-release archives do not distribute those payloads.
+still requires externally provisioned SPM8, `Batch_atlas`, and the standalone
+DICOM-to-NIfTI converter through `config.spm_root`, `config.atlas_root`, and
+`config.d2n_root`. Launchpad profiles do not validate or import the local
+aliasing/recentering standalone. The compiled backend, its runner/MCR, defaults
+MAT, and remote atlas/template directory must be provisioned separately and
+supplied through the `config.launchpad.*` fields; this repository and the
+intended v2.8.4 tag-based archive do not distribute those payloads. No public
+v2.8.4 archive exists yet; this is the preparation policy.
 
 ```
 legend:
@@ -95,12 +98,16 @@ Environment variables `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` are set to eliminate
 DARTEL thread-count non-determinism.
 
 The `<check_aliasing>` slot is the only aliasing/recentering operation control
-forwarded from the local layer: it carries the aliasing request to the compiled
-remote backend. Shipped profiles default `aliasing_default` to `1` and
-`recenter_before_normalization` to `'Yes'`, but only the former becomes the
-remote flag. The local recentering value is not forwarded, and there is no
-local per-operation `details.*.performed` result; the compiled backend owns its
-remote behavior.
+forwarded from the local layer: it carries the independent aliasing request to
+the compiled remote backend. Shipped profiles default `aliasing_default` to `1`
+and `recenter_before_normalization` to `'Yes'`, but only the former becomes the
+remote flag. The historical parity comparison used
+`recenter_before_normalization = 'No'`; that is not the current local default.
+The local recentering value is not forwarded: the remote Launchpad/compiled
+workflow owns normalization, with `mri_normalize` currently invoked before the
+compiled backend receives the normalized MPRAGE. There is no local
+per-operation `details.*.performed` result; the compiled backend owns its remote
+behavior.
 
 **Queue selection:**
 - If `config.launchpad.queue` is set (e.g. `'p60'`), it overrides the default.
@@ -167,7 +174,9 @@ If `att_map.nii` is absent despite a successful exit status (known failure mode
 for subject-specific issues), the subject is marked as failed with code 711.
 
 **Remote scratch cleanup:** Unless `keep_tmp` is set, the remote scratch files
-are deleted after download.
+are deleted after download. In the unified entrypoint, `keep_tmp` is derived
+from `cleanup_on_success`, so the shipped Launchpad profiles remove remote
+scratch on success.
 
 **Tools used:**
 - `scp_get` (`ssh2_v2_m1_r5/`).
@@ -203,7 +212,7 @@ are deleted after download.
 The compiled backend uses the SPM8 and atlas/template resources provisioned with
 the separate Launchpad deployment; `config.launchpad.batch_templates` supplies
 the remote `Batch_atlas` directory. These resources are not bundled in this
-repository or its release archives. Its pipeline stages are structurally
+repository or the intended v2.8.4 tag-based archive. Its pipeline stages are structurally
 identical to the local pipeline Stages 3–10. The key difference is that New
 Segment runs through the compiled MCR path (R2010b base) instead of the local
 MATLAB interpreter.
@@ -269,20 +278,24 @@ Siemens-style DICOM mu-map using the original UMAP geometry reference.
 ## Stage 8 — Promotion and Cleanup (local)
 
 ```
-  MR_PET/tmp/att_map.nii      →  MR_PET/att_map.nii
-  MR_PET/tmp/QC.tiff          →  MR_PET/Fusion_MR_Pseudo_CT_validation.tiff
-  MR_PET/tmp/version.txt      →  MR_PET/Pseudo_CT_AC_Version.txt
+  MR_PET/tmp/att_map.nii             →  MR_PET/att_map.nii
+  MR_PET/tmp/Fusion_MR_Pseudo_CT_validation.tiff
+                                      →  MR_PET/Fusion_MR_Pseudo_CT_validation.tiff
+  MR_PET/tmp/Pseudo_CT_AC_Version.txt
+                                      →  MR_PET/Pseudo_CT_AC_Version.txt
+  MR_PET/tmp/mprage.nii               →  MR_PET/MPRAGE_spm.nii (when available)
+  MR_PET/tmp/mprage_normalized.nii    →  MR_PET/MPRAGE_spm_normalized.nii (when available)
   │
   ┌─ if config.cleanup_on_success ─┐
   │  rmdir MR_PET/tmp/ (recursive) │
   └─────────────────────────────────┘
-  │
-  ~~~ pseudo_CT_cleanup_intermediates ~~~
-  └── Deletes *repos_params.mat
 ```
 
-Same promotion logic as the local pipeline. Intermediates in `MR_PET/tmp/` are
-preserved by default (configurable).
+Same promotion logic as the local pipeline. All shipped Launchpad profiles set
+`config.cleanup_on_success = true`, so the local `MR_PET/tmp/` directory is
+removed after successful promotion. If cleanup is disabled, or the run fails or
+is interrupted, the downloaded intermediates are retained; this is independent
+of the remote-scratch `keep_tmp` option described above.
 
 ---
 
@@ -296,8 +309,11 @@ preserved by default (configurable).
 │   ├── att_map.nii
 │   ├── Fusion_MR_Pseudo_CT_validation.tiff
 │   ├── Pseudo_CT_AC_Version.txt
-│   ├── pseudo_CT_launchpad_<runid>.log
-│   └── tmp/                    ← all files fetched from remote + local outputs
+│   ├── MPRAGE_spm.nii          ← promoted seed input, when available
+│   ├── MPRAGE_spm_normalized.nii ← promoted normalized input, when available
+│   ├── pseudo_CT_<profile>_<runid>.log
+│   ├── pseudo_CT_profile_summary.txt
+│   └── tmp/                    ← retained only when cleanup is disabled or the run fails
 │       ├── mprage.nii
 │       ├── mprage_normalized.nii
 │       ├── (all remote intermediate NIfTIs)

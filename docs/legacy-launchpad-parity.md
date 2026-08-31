@@ -15,13 +15,23 @@ below. The compiled Launchpad backend remains unchanged.
 
 Actual Launchpad orchestration runs `mri_normalize` before invoking the compiled
 pseudo-CT workflow and passes an `_normalized.nii` input. The processing code
-therefore bypasses its recenter branch. The parity-correct setting is:
+therefore bypasses its recenter branch. The historical parity-comparison setting
+is:
 
 ```matlab
 recenter_before_normalization = 'No';
 ```
 
-The earlier statement that `'Yes'` reproduced Launchpad behavior was incorrect.
+This `No` value describes the historical parity setup only. All shipped local
+profiles currently default to `recenter_before_normalization = 'Yes'`. Launchpad
+profiles retain the field for the shared profile contract, but Launchpad ignores
+the local recentering value: the remote Launchpad/compiled workflow owns
+normalization, with `mri_normalize` currently invoked before submission and the
+compiled backend receiving the normalized MPRAGE. Only the independent aliasing
+request is forwarded to Launchpad.
+The earlier statement that `'Yes'` reproduced Launchpad behavior was therefore
+incorrect as a historical comparison setting, not a statement about the current
+local profile default.
 
 ## Controlled Provenance
 
@@ -64,9 +74,9 @@ The final `att_map.nii` SHA-256 was:
 dc7f0e49016c6cf034b12df04eba78dd346b816f9976da63b8dfd792fdf255cb
 ```
 
-## Required Settings
+## Historical Parity Settings
 
-Use all of the following for the historical output policy:
+Use all of the following only when reproducing the historical parity setup:
 
 - `recenter_before_normalization = 'No'`.
 - Bone-segmentation reduction enabled (`cleanup = 1`).
@@ -90,9 +100,10 @@ does not establish CPU-versus-glibc causality, and does not replace a real
 end-to-end run. Operators must still inspect the generated QC TIFF and perform
 the normal manual output checks.
 
-## Future Architecture
+## Current Profile-Based Entry Point
 
-A unified `run_pseudo_CT.m` entry point with argument- and GUI-selectable
-execution and processing profiles is intentionally deferred. That work must
-start as a fresh full `sdd-new` and include the complete legacy Launchpad path;
-this cleanup does not introduce root configuration or profile APIs.
+The maintained package now ships a unified `run_pseudo_CT.m` entry point with
+argument- and GUI-selectable execution and processing profiles, including the
+legacy Launchpad path. This document records the historical parity boundary;
+current profile defaults and operational steps are documented in
+`pipeline-local.md` and `pipeline-launchpad.md`.
