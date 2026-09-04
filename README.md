@@ -8,10 +8,12 @@ The software supports:
 
 - MPRAGE input as DICOM, `.nii`, or `.nii.gz`
 - Local MATLAB processing
+- MLSC remote/cluster processing through Slurm
 - Single-subject and batch workflows
 - Automatic UMAP discovery for the standard PET/MR workflow
 - Optional MPRAGE aliasing correction and recentering
-- NIfTI and DICOM pseudoCT output
+- NIfTI and DICOM pseudoCT output for the standard workflow
+- Specialized MPRAGE-only, NIfTI-only processing
 - Automatic QC image generation
 - Per-subject processing logs and provenance information
 
@@ -92,17 +94,70 @@ Runs the full MPRAGE + UMAP workflow locally using the current Martinos MATLAB e
 
 Typical processing time on an average workstation is approximately 30 minutes per subject.
 
+### MLSC (Recommended Remote/Cluster Workflow)
+
+MLSC is the replacement remote/cluster workflow for Launchpad. The main `mlsc`
+profile is the standard MPRAGE + UMAP workflow, requires the UMAP reference, and
+produces both NIfTI and DICOM output. It is the recommended remote profile.
+
+The specialized `mlsc_mprage_only` profile accepts an MPRAGE without a reference
+UMAP and produces NIfTI output only. It is not recommended for routine use; select
+it only for a known specialized workflow.
+
+The MLSC path uses the existing username/password SSH workflow, analogous to
+the historical Launchpad login: the same `passwordEntryDialog`-style
+username/password prompt at runtime, followed by password authentication
+through the bundled Ganymed SSH2 transport. No separate host-key setup is
+required for normal use. Credentials are held transiently, are not persisted,
+and are never placed in a profile, command, script, log, or evidence. After
+authentication, available Slurm accounts are discovered at runtime: zero
+accounts fails before submission, one account is selected automatically,
+multiple accounts are presented for single selection, and cancelling that
+dialog submits no job.
+
+MLSC uses the shared filesystem as its control path, not SCP or network payload
+staging. Each subject input is copied with normal `cp` into node-local `$TMPDIR`;
+`mri_normalize` and the unchanged compiled runner execute there, and required and
+useful outputs are copied back with normal `cp` to the shared subject temporary
+directory. FreeSurfer is isolated with `env -u LD_LIBRARY_PATH`; OMP/MKL settings
+and the MCR cache are scoped to the node-local job. The current resource request is
+`basic`, 1 node, 1 task, 4 CPUs, 8G, and 2 hours. Expected runtime is approximately
+1 hour per subject, excluding queue wait.
+
+The lifecycle uses `sbatch --parsable`, then structured `squeue` and `sacct`
+queries. A non-empty shared `att_map.nii` is required before existing local
+finalization promotes outputs and, for the standard profile, writes the DICOM
+series. The Slurm job owns node-local `$TMPDIR` cleanup; normal pseudoCT temporary
+cleanup remains profile-controlled. MATLAB must remain open while MLSC jobs are
+being monitored and local finalization is performed.
+
+An optional strict pinned host-key verification mode exists for
+development/testing. It is a runtime opt-in only, is never required by normal
+operation, and fails closed when explicitly enabled and the supplied key
+material does not match.
+
+MLSC is not yet production-ready. Read the [MLSC/Slurm Pipeline](docs/pipeline-mlsc.md)
+for the operational model, failure handling, evidence, and the ordered live
+readiness checks: a remote `true` command returning exit status 0, `sshare`
+account discovery, a lightweight Slurm/`$TMPDIR` test, and a one-subject
+end-to-end run.
+
 ### Launchpad (Aether Legacy Workflow)
 
 The historical Launchpad workflow uses the legacy compiled pseudoCT backend.
 
 **Launchpad is currently unavailable.**
 
-It is being replaced by an MLSC-based workflow. Until that replacement is available, Martinos users should use the Local MATLAB profile for routine processing.
+It will soon be discontinued/decommissioned and is being replaced by MLSC. The
+Launchpad source and profile are retained only for transitional/reference purposes;
+they must not be treated as a recommended or usable remote workflow. Martinos users
+should use Local MATLAB for routine processing while the MLSC live readiness
+checks remain open.
 
 ### Specialized profiles
 
-Additional profiles are available for specific systems, compatibility testing, validation, and development workflows.
+Additional profiles, including the MLSC MPRAGE-only profile, are available for
+specific systems, compatibility testing, validation, and development workflows.
 
 They are not intended for routine use.
 
@@ -301,6 +356,10 @@ A dedicated MPRAGE background-cleanup tool is planned for release.
 
 MATLAB must remain running for the duration of processing.
 
+For MLSC, MATLAB must also remain open while the Slurm job is monitored and while
+the local finalization steps are performed. Closing MATLAB can leave remote work
+unfinalized even when the scheduler job has continued.
+
 It is safe to interrupt pseudoCT, but interruption stops the current run and leaves intermediate files generated up to that point.
 
 Starting pseudoCT again for the same subject restarts processing from the beginning and overwrites existing processing files as needed.
@@ -360,7 +419,8 @@ The repository contains additional technical and validation documentation under 
 Useful references include:
 
 - [Local Pipeline Stages](docs/pipeline-local.md)
-- [Launchpad Pipeline Stages](docs/pipeline-launchpad.md)
+- [Historical Launchpad Pipeline Stages](docs/pipeline-launchpad.md)
+- [MLSC/Slurm Pipeline Stages](docs/pipeline-mlsc.md)
 - [Numerical Parity Assessment](docs/parity-assessment.md)
 - [Legacy Launchpad Parity](docs/legacy-launchpad-parity.md)
 - [Release History](CHANGELOG.md)

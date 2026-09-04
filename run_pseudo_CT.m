@@ -54,6 +54,16 @@ run_start_time = datestr(now, 'yyyy-mm-dd HH:MM:SS');
 run_id = datestr(now, 'yyyymmdd_HHMMSS');
 interactive_gui = ~isdeployed && nargin == 0;
 
+% Optional runtime-only MLSC trusted host-key material/provider seam.  It is
+% never a profile field, never sourced from source control, and never logged;
+% it is supplied out-of-band at runtime and defaults to empty.  An empty
+% provider selects the normal Launchpad-style MLSC workflow: the existing
+% username/password dialog, Ganymed password authentication, account
+% discovery, and the Slurm lifecycle without any known_hosts/fingerprint
+% input or authentication block.  A supplied provider selects strict pinned
+% host-key verification, which fails closed on any doubt.
+mlsc_host_key_provider = [];
+
 %% === 1. Handle deployed mode (before any argument parsing) ===
 if isdeployed
     [profile_name, subjects_arg, aliasing_arg] = ...
@@ -75,11 +85,19 @@ else
     p.addParamValue('subjects', '', @(x) ischar(x) || iscell(x));
     p.addParamValue('correct_aliasing', [], ...
         @(x) isempty(x) || (isnumeric(x) && isscalar(x) && ismember(x, [0 1])));
+    % Optional, out-of-band MLSC trusted host-key material/provider.  Accepts a
+    % character known_hosts record or a zero-argument function handle returning
+    % one; it is never read from a profile and never logged.  Empty (default)
+    % selects the Launchpad-style password-authentication workflow; a supplied
+    % value selects strict pinned host-key verification.
+    p.addParamValue('mlsc_host_key_provider', [], ...
+        @(x) isempty(x) || ischar(x) || isa(x, 'function_handle'));
     p.parse(varargin{:});
     
     profile_name = p.Results.profile;
     subjects_arg = p.Results.subjects;
     aliasing_arg = p.Results.correct_aliasing;
+    mlsc_host_key_provider = p.Results.mlsc_host_key_provider;
 end
 
 %% === Validate profile name against available profile files ===
@@ -179,6 +197,7 @@ for ii = 1:length(collection_stats.skipped_subjects)
     pseudo_CT_output('INFO', context, '    %s', skipped_input);
 end
 run_context = struct('log_files', {all_log_files}, 'scope', 'run');
+mlsc_context = struct('log_files', {all_log_files}, 'scope', 'mlsc');
 pseudo_CT_output('INFO', run_context, 'Profile: %s; mode: %s; MATLAB: %s.', ...
     profile_name, config.mode, version);
 pseudo_CT_print_profile_summary(profile_name, config, processing_dirs, run_context);
@@ -249,95 +268,22 @@ switch config.mode
             end
             
             try
-                context = local_subject_context(jobs(jj), jj, length(jobs));
-                context = local_stage_context(context, 5);
-                stage_started = tic;
-                pseudo_CT_output('INFO', context, 'Applying local post-processing.');
-                if strcmp(config.zero_background, 'Yes')
-                    launchpad_apply_background_mask(jobs(jj).temp_dir, context);
-                end
-                pseudo_CT_output('SUCCESS', context, ...
-                    'Local post-processing completed (elapsed %s).', ...
-                    local_elapsed(toc(stage_started)));
-                if strcmp(config.io_policy.output, 'nifti-and-dicom')
-                    context = local_stage_context(context, 6);
-                    stage_started = tic;
-                    pseudo_CT_output('INFO', context, 'Writing DICOM output.');
-                    pseudo_CT_write_mu_map_dicom(fullfile(jobs(jj).temp_dir, 'att_map.nii'), ...
-                        jobs(jj).save_dir, jobs(jj).umap_fn, jobs(jj).temp_dir, ...
-                        config.fwhm);
-                    pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
-                        local_elapsed(toc(stage_started)));
+                % The shared finalizer preserves the historical order of
+                % launchpad_apply_background_mask(jobs(jj).temp_dir, context),
+                % pseudo_CT_write_mu_map_dicom, and
+                % pseudo_CT_promote_final_outputs.
+                if local_finalize_remote_subject(jobs(jj), deblank(P(jj, :)), ...
+                        config, jj, length(jobs))
+                    num_success = num_success + 1;
                 else
-                    pseudo_CT_output('INFO', context, 'Skipping DICOM output by profile policy.');
+                    num_failed = num_failed + 1;
                 end
             catch ME
-                % Legacy output: fprintf(1, '[launchpad-debug] Failed to write mu-map DICOM for subject:\n%s\n', jobs(jj).mprage_fn);
-                tmp_list = dir(jobs(jj).temp_dir);
-                if ~isempty(tmp_list)
-                    tmp_names = {tmp_list(~ismember({tmp_list.name}, {'.', '..'})).name};
-                    if ~isempty(tmp_names)
-                        tmp_str = '';
-                        for ti = 1:length(tmp_names)
-                            if ti > 1
-                                tmp_str = [tmp_str ', ']; %#ok<AGROW>
-                            end
-                            tmp_str = [tmp_str tmp_names{ti}]; %#ok<AGROW>
-                        end
-                        pseudo_CT_output('WARN', context, ...
-                            'Failure detail: temporary files: %s', tmp_str);
-                    end
-                end
-                % Legacy output: disp(ME.message);
-                pseudo_CT_output('WARN', context, 'Failure detail: %s', ME.message);
-                pseudo_CT_output('ERROR', local_subject_context(jobs(jj), jj, length(jobs)), ...
-                    'Subject failed (elapsed %s).', ...
-                    local_elapsed(toc(jobs(jj).subject_started)));
+                context = local_subject_context(jobs(jj), jj, length(jobs));
+                local_log_remote_failure(jobs(jj), context, ME.message);
                 num_failed = num_failed + 1;
                 continue;
             end
-            
-            context = local_stage_context(context, 7);
-            stage_started = tic;
-            pseudo_CT_output('INFO', context, 'Promoting final outputs.');
-            promotion_success = pseudo_CT_promote_final_outputs( ...
-                jobs(jj).temp_dir, jobs(jj).processing_dir, deblank(P(jj, :)), context);
-            if ~promotion_success
-                % Legacy output: disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', ...
-                %     jobs(jj).temp_dir));
-                pseudo_CT_output('ERROR', context, 'Output promotion failed; temporary files were preserved.');
-                pseudo_CT_output('INFO', context, '    %s', jobs(jj).temp_dir);
-                pseudo_CT_output('ERROR', local_subject_context(jobs(jj), jj, length(jobs)), ...
-                    'Subject failed (elapsed %s).', ...
-                    local_elapsed(toc(jobs(jj).subject_started)));
-                num_failed = num_failed + 1;
-                continue;
-            end
-            pseudo_CT_output('SUCCESS', context, 'Outputs promoted (elapsed %s).', ...
-                local_elapsed(toc(stage_started)));
-            context = local_stage_context(context, 8);
-            stage_started = tic;
-            pseudo_CT_output('INFO', context, 'Cleaning up temporary files.');
-            if config.cleanup_on_success
-                [remove_success, msg] = rmdir(jobs(jj).temp_dir, 's');
-                if ~remove_success
-                    % Legacy output: disp(sprintf('There was an error removing the temporary directory %s\n%s', ...
-                    %     jobs(jj).temp_dir, msg));
-                    pseudo_CT_output('WARN', context, 'Temporary cleanup failed: %s', msg);
-                end
-            end
-            pseudo_CT_output('SUCCESS', context, 'Cleanup completed (elapsed %s).', ...
-                local_elapsed(toc(stage_started)));
-            
-            % Legacy output: disp(sprintf('\n\nYour att-map Dicom images have been saved in:\n%s\n', jobs(jj).save_dir));
-            if promotion_success
-                % Legacy output: disp(sprintf('The final pseudo-CT NIfTI/QC files were saved in:\n%s\n', ...
-                %     jobs(jj).processing_dir));
-            end
-            num_success = num_success + 1;
-            pseudo_CT_output('SUCCESS', local_subject_context(jobs(jj), jj, length(jobs)), ...
-                'Subject completed (elapsed %s).', ...
-                local_elapsed(toc(jobs(jj).subject_started)));
         end
 
         if ~isdeployed && length(jobs) > 1
@@ -349,7 +295,179 @@ switch config.mode
             warndlg('Pseudo-CT processing completed.', 'Pseudo-CT completed');
         end
         
-    otherwise
+    case 'mlsc'
+        % ============================================================
+        % MLSC/SLURM EXECUTION PATH
+        % ============================================================
+        num_started = 0;
+        for ii = 1:length(jobs)
+            context = local_subject_context(jobs(ii), ii, length(jobs));
+            context = local_stage_context(context, 1);
+            stage_started = tic;
+            pseudo_CT_output('INFO', context, 'Preparing input MPRAGE.');
+            jobs(ii).seed_nii = dcm2nii(jobs(ii).mprage_fn, ...
+                fullfile(jobs(ii).temp_dir, 'mprage.nii'), 'Overwrite', true);
+            pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
+                local_elapsed(toc(stage_started)));
+        end
+
+        account = '';
+        mlsc_cancelled = false;
+        [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, ...
+            'ValidatePassword', true, 'PasswordLengthMax', 50, ...
+            'WindowName', sprintf('Login for: %s', config.mlsc.host));
+        if isequal(PASSWORD, -1) || isempty(USERNAME)
+            clear USERNAME PASSWORD
+            num_started = 0;
+            mlsc_cancelled = true;
+        else
+            % The provider is optional: an empty provider creates a
+            % provider-free transport that authenticates with the dialog
+            % credentials over the Ganymed password path and still reaches
+            % account discovery and the Slurm lifecycle below; a supplied
+            % provider selects strict pinned host-key verification first.
+            transport = local_create_mlsc_transport(config, USERNAME, ...
+                PASSWORD, mlsc_host_key_provider);
+            transport_cleanup = onCleanup(@() local_cleanup_mlsc_transport(transport));
+            clear USERNAME PASSWORD
+
+            transport_ready = false;
+            try
+                transport_ready = feval(transport.verify);
+            catch ME
+                pseudo_CT_output('ERROR', run_context, ...
+                    'MLSC secure transport verification failed; no account query or submission was attempted: %s', ...
+                    ME.message);
+            end
+            if ~transport_ready
+                num_started = 0;
+                num_failed = length(jobs);
+                account = '';
+            else
+                pseudo_CT_output('SUCCESS', mlsc_context, ...
+                    'MLSC connection and authentication succeeded.');
+                try
+                    accounts = mlsc_parse_slurm_accounts( ...
+                        feval(transport.query_accounts));
+                    pseudo_CT_output('INFO', mlsc_context, ...
+                        'Discovered %d Slurm account(s).', length(accounts));
+                    account = mlsc_select_account(accounts);
+                    if ~isempty(account)
+                        pseudo_CT_output('INFO', mlsc_context, ...
+                            'Selected MLSC account %s.', account);
+                    end
+                    mlsc_cancelled = isempty(account);
+                catch ME
+                    if strcmp(ME.identifier, 'pseudo_CT:MLSCNoAccounts')
+                        pseudo_CT_output('ERROR', run_context, ...
+                            'No Slurm account is available for the authenticated MLSC user; no job was submitted.');
+                        num_started = 0;
+                        num_failed = length(jobs);
+                        account = '';
+                    else
+                        rethrow(ME);
+                    end
+                end
+            end
+        end
+        if ~isempty(account)
+            if exist('transport', 'var') ~= 1
+                error('run_pseudo_CT:MLSCTransportRequired', ...
+                    'MLSC account selection requires an authenticated transport.');
+            end
+                for ii = 1:length(jobs)
+                    % T005 MLSC user-facing events (non-secret only): 4 input
+                    % was stage 1 above; 5 submit is stage 2 below; 6
+                    % accepted ID, 7 initial observed state, 8 transitions,
+                    % 9 heartbeat, 10 compute milestones, and 11 terminal
+                    % summary render inside mlsc_lifecycle via the
+                    % non-secret output_context (stage 3 Running for
+                    % stage-in/normalize/pseudoCT/running/heartbeat,
+                    % stage 4 Retrieving for verify/copy-back/verified
+                    % return); 12 return to finalization is below before
+                    % retained stages 5-8.
+                    context = local_subject_context(jobs(ii), ii, length(jobs));
+                    output_context = local_subject_context(jobs(ii), ii, length(jobs));
+                    runtime = struct('profile', profile_name, 'account', account, ...
+                        'script_path', fullfile(jobs(ii).temp_dir, ...
+                        sprintf('.pseudo_CT_mlsc_%s_%d.sh', run_id, ii)), ...
+                        'evidence_dir', jobs(ii).processing_dir, ...
+                        'log_archive_dir', jobs(ii).processing_dir, ...
+                        'cleanup_script', true, 'output_context', output_context);
+                    submit_context = local_stage_context(context, 2);
+                    pseudo_CT_output('INFO', submit_context, ...
+                        'Submitting MLSC job.');
+                    subject = struct('subject_id', jobs(ii).mprage_fn, ...
+                        'shared_input', jobs(ii).seed_nii, ...
+                        'shared_temp', jobs(ii).temp_dir);
+                    lifecycle = struct();
+                    try
+                        lifecycle = mlsc_lifecycle(subject, config, runtime, transport);
+                        if lifecycle.submitted
+                            num_started = num_started + 1;
+                        end
+                        mlsc_job_id = local_mlsc_job_id(lifecycle);
+                        if mlsc_job_id > 0
+                            context.job_number = mlsc_job_id;
+                        end
+                        if ~lifecycle.eligible_for_finalization || ...
+                                ~lifecycle.copy_back.verified
+                            failure_detail = lifecycle.failure_detail;
+                            if isempty(failure_detail)
+                                failure_detail = ...
+                                    'MLSC output was not verified in the shared subject temporary directory.';
+                            end
+                            lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
+                                false, false, failure_detail);
+                            pseudo_CT_output('ERROR', context, ...
+                                'Subject failed before local finalization: %s', failure_detail);
+                            num_failed = num_failed + 1;
+                            continue;
+                        end
+                        if mlsc_job_id > 0
+                            pseudo_CT_output('INFO', context, ...
+                                'MLSC verified return to shared temp for job %d; returning to local finalization.', ...
+                                mlsc_job_id);
+                        else
+                            pseudo_CT_output('INFO', context, ...
+                                'MLSC verified return to shared temp; returning to local finalization.');
+                        end
+                        finalization_success = local_finalize_remote_subject(jobs(ii), ...
+                                jobs(ii).seed_nii, config, ii, length(jobs), mlsc_job_id);
+                        lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
+                            true, logical(finalization_success), ...
+                            local_finalization_detail(finalization_success));
+                        if lifecycle.finalization_evidence_save_failed
+                            pseudo_CT_output('ERROR', context, ...
+                                'MLSC finalization evidence could not be saved.');
+                            num_failed = num_failed + 1;
+                        elseif finalization_success
+                            num_success = num_success + 1;
+                        else
+                            num_failed = num_failed + 1;
+                        end
+                    catch ME
+                        if exist('lifecycle', 'var') == 1 && ...
+                                isstruct(lifecycle) && isfield(lifecycle, 'terminal')
+                            lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
+                                true, false, ...
+                                'Local MLSC finalization raised an error.');
+                        end
+                        pseudo_CT_output('ERROR', context, ...
+                            'Subject failed: %s (elapsed %s).', ME.message, ...
+                            local_elapsed(toc(jobs(ii).subject_started)));
+                        num_failed = num_failed + 1;
+                    end
+                end
+        else
+            num_started = 0;
+            if mlsc_cancelled
+                pseudo_CT_output('INFO', run_context, ...
+                    'MLSC submission was cancelled; no Slurm job was submitted.');
+            end
+        end
+
+    case 'local'
         % ============================================================
         % LOCAL EXECUTION PATH
         % ============================================================
@@ -381,7 +499,23 @@ switch config.mode
             % Legacy output: disp(sprintf('\nLocal pseudo-CT batch finished.  Success: %d  Failed: %d\n', ...
             %     num_success, num_failed));
         end
+
+    otherwise
+        % ============================================================
+        % Unsupported execution mode
+        % ============================================================
+        error('run_pseudo_CT:UnsupportedMode', ...
+            'Unsupported execution mode: %s.', config.mode);
 end
+
+if exist('transport', 'var') == 1
+    local_cleanup_mlsc_transport(transport);
+    clear transport
+end
+if exist('transport_cleanup', 'var') == 1
+    clear transport_cleanup
+end
+clear account accounts runtime lifecycle subject
 
 summary_level = 'SUCCESS';
 if num_failed > 0
@@ -393,6 +527,14 @@ pseudo_CT_output(summary_level, run_context, ...
     num_success, num_failed, collection_stats.skipped, ...
     local_elapsed(toc(run_started)));
 
+end
+
+function detail = local_finalization_detail(success)
+if success
+    detail = 'Local MLSC finalization completed.';
+else
+    detail = 'Local MLSC finalization did not complete.';
+end
 end
 
 
@@ -528,54 +670,373 @@ pseudo_CT_output('SUCCESS', local_subject_context(job, subject_index, subject_co
 end
 
 
-%% ========================================================================
-%  LAUNCHPAD BACKGROUND MASK
-%  ========================================================================
-function launchpad_apply_background_mask(temp_dir, context)
+function success = local_finalize_remote_subject(job, seed_nii, config, ...
+        subject_index, subject_count, job_id)
+%LOCAL_FINALIZE_REMOTE_SUBJECT Apply the common post-remote finalization order.
+%   Optional JOB_ID propagates the accepted numeric MLSC job ID through the
+%   stage 5-8 tags.  Launchpad callers omit it and observe unchanged output.
 
-att_map_path = fullfile(temp_dir, 'att_map.nii');
-normalized_path = fullfile(temp_dir, 'mprage_normalized.nii');
-if exist(normalized_path, 'file') ~= 2
-    % Legacy output: fprintf(1, ['WARNING: zero_background was requested, but %s is missing.\n', ...
-    %             'The fetched Launchpad attenuation map will remain unmasked.\n'], normalized_path);
-    pseudo_CT_output('WARN', context, ...
-        'Background masking skipped because normalized MPRAGE is missing.');
-    return;
+success = 0;
+if nargin < 6
+    job_id = [];
 end
+context = local_subject_context(job, subject_index, subject_count);
+context = local_attach_mlsc_job(context, job_id);
+context = local_stage_context(context, 5);
+stage_started = tic;
+pseudo_CT_output('INFO', context, 'Applying local post-processing.');
+if strcmp(config.zero_background, 'Yes')
+    pseudo_CT_apply_background_mask(job.temp_dir, context);
+end
+pseudo_CT_output('SUCCESS', context, ...
+    'Local post-processing completed (elapsed %s).', ...
+    local_elapsed(toc(stage_started)));
 
-try
-    V_att_map = spm_vol(att_map_path);
-    att_map = spm_read_vols(V_att_map);
-    V_orig = spm_vol(normalized_path);
-    orig_mprage = spm_read_vols(V_orig);
-    if ~isequal(size(att_map), size(orig_mprage))
-        % Legacy output: fprintf(1, ['WARNING: zero_background could not be applied because att_map.nii ', ...
-        %             'and mprage_normalized.nii have different dimensions.\n', ...
-        %             'The fetched Launchpad attenuation map will remain unmasked.\n']);
-        pseudo_CT_output('WARN', context, ...
-            'Background masking skipped because NIfTI dimensions differ.');
+if strcmp(config.io_policy.output, 'nifti-and-dicom')
+    context = local_stage_context(context, 6);
+    stage_started = tic;
+    pseudo_CT_output('INFO', context, 'Writing DICOM output.');
+    try
+        pseudo_CT_write_mu_map_dicom(fullfile(job.temp_dir, 'att_map.nii'), ...
+            job.save_dir, job.umap_fn, job.temp_dir, config.fwhm);
+    catch ME
+        local_log_remote_failure(job, context, ME.message);
         return;
     end
-    
-    [~, subj_mask] = head_mask_mprage(orig_mprage, 20);
-    [L, num] = bwlabeln(subj_mask);
-    if num > 1
-        component_sizes = zeros(1, num);
-        for ii = 1:num
-            component_sizes(ii) = sum(L(:) == ii);
-        end
-        [~, pos_max] = max(component_sizes);
-        subj_mask = L == pos_max;
-    end
-    subj_mask_dil = imdilate(subj_mask, ones(7, 7, 7));
-    att_map = att_map .* ((subj_mask_dil + (orig_mprage > 20)) > 0);
-    spm_write_vol(V_att_map, att_map);
-catch ME_mask
-    % Legacy output: fprintf(1, ['WARNING: zero_background could not be applied: %s\n', ...
-    %             'The fetched Launchpad attenuation mask will remain unmasked.\n'], ME_mask.message);
-    pseudo_CT_output('WARN', context, 'Background masking skipped: %s', ME_mask.message);
+    pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
+        local_elapsed(toc(stage_started)));
+else
+    pseudo_CT_output('INFO', context, 'Skipping DICOM output by profile policy.');
 end
 
+context = local_stage_context(context, 7);
+stage_started = tic;
+pseudo_CT_output('INFO', context, 'Promoting final outputs.');
+promotion_success = pseudo_CT_promote_final_outputs( ...
+    job.temp_dir, job.processing_dir, seed_nii, context);
+if ~promotion_success
+    pseudo_CT_output('ERROR', context, ...
+        'Output promotion failed; temporary files were preserved.');
+    pseudo_CT_output('INFO', context, '    %s', job.temp_dir);
+    local_log_subject_failure(job, context);
+    return;
+end
+pseudo_CT_output('SUCCESS', context, 'Outputs promoted (elapsed %s).', ...
+    local_elapsed(toc(stage_started)));
+
+context = local_stage_context(context, 8);
+stage_started = tic;
+pseudo_CT_output('INFO', context, 'Cleaning up temporary files.');
+if config.cleanup_on_success
+    [remove_success, msg] = rmdir(job.temp_dir, 's');
+    if ~remove_success
+        pseudo_CT_output('WARN', context, 'Temporary cleanup failed: %s', msg);
+    end
+end
+pseudo_CT_output('SUCCESS', context, 'Cleanup completed (elapsed %s).', ...
+    local_elapsed(toc(stage_started)));
+
+success = 1;
+final_context = local_subject_context(job, subject_index, subject_count);
+final_context = local_attach_mlsc_job(final_context, job_id);
+pseudo_CT_output('SUCCESS', final_context, ...
+    'Subject completed (elapsed %s).', local_elapsed(toc(job.subject_started)));
+end
+
+
+function job_id = local_mlsc_job_id(lifecycle)
+%LOCAL_MLSC_JOB_ID Return the accepted numeric Slurm job ID or zero.
+job_id = 0;
+try
+    if isstruct(lifecycle) && isfield(lifecycle, 'job_id') && ...
+            isnumeric(lifecycle.job_id) && isscalar(lifecycle.job_id) && ...
+            isfinite(lifecycle.job_id) && ...
+            lifecycle.job_id == floor(lifecycle.job_id) && ...
+            lifecycle.job_id >= 1
+        job_id = lifecycle.job_id;
+    end
+catch %#ok<CTCH>
+    job_id = 0;
+end
+end
+
+
+function context = local_attach_mlsc_job(context, job_id)
+%LOCAL_ATTACH_MLSC_JOB Add the numeric job tag without other context changes.
+try
+    if isnumeric(job_id) && isscalar(job_id) && isfinite(job_id) && ...
+            job_id == floor(job_id) && job_id >= 1
+        context.job_number = job_id;
+    end
+catch %#ok<CTCH>
+end
+end
+
+
+function local_log_remote_failure(job, context, detail)
+tmp_list = dir(job.temp_dir);
+if ~isempty(tmp_list)
+    tmp_names = {tmp_list(~ismember({tmp_list.name}, {'.', '..'})).name};
+    if ~isempty(tmp_names)
+        tmp_str = '';
+        for ti = 1:length(tmp_names)
+            if ti > 1
+                tmp_str = [tmp_str ', ']; %#ok<AGROW>
+            end
+            tmp_str = [tmp_str tmp_names{ti}]; %#ok<AGROW>
+        end
+        pseudo_CT_output('WARN', context, ...
+            'Failure detail: temporary files: %s', tmp_str);
+    end
+end
+pseudo_CT_output('WARN', context, 'Failure detail: %s', detail);
+local_log_subject_failure(job, context);
+end
+
+
+function local_log_subject_failure(job, context)
+failure_context = local_subject_context(job, context.subject_index, ...
+    context.subject_count);
+try
+    if isfield(context, 'job_number')
+        failure_context = local_attach_mlsc_job(failure_context, context.job_number);
+    end
+catch %#ok<CTCH>
+end
+pseudo_CT_output('ERROR', failure_context, 'Subject failed (elapsed %s).', ...
+    local_elapsed(toc(job.subject_started)));
+end
+
+
+function transport = local_create_mlsc_transport(config, username, password, ...
+        host_key_provider)
+%LOCAL_CREATE_MLSC_TRANSPORT Build the credential-free callback surface.
+%   Credentials remain in this runtime closure only.  The optional
+%   HOST_KEY_PROVIDER selects the host-key trust model.  When it is empty
+%   (the normal MLSC workflow), VERIFY uses the bundled Ganymed password
+%   authentication path with an empty verifier, exactly like the Launchpad
+%   login model: no known_hosts/fingerprint input and no authentication
+%   block, after which account discovery and the Slurm lifecycle proceed
+%   normally.  When an explicitly supplied, independently trusted MLSC
+%   known_hosts record (character text or a zero-argument provider handle,
+%   never a profile field or logged value) is given, VERIFY resolves it
+%   into an in-memory Ganymed KnownHosts database and a strict
+%   ServerHostKeyVerifier, and Connection.connect(verifier) runs before
+%   authentication; missing, malformed, unsupported, new, changed, or
+%   mismatched host keys then fail closed before authentication, account
+%   discovery, or submission, and only a key reported as HOSTKEY_IS_OK is
+%   accepted.  No host-key material is ever persisted or logged.
+
+connection = [];
+host_key_verifier = [];
+verified = false;
+if nargin < 4
+    host_key_provider = [];
+end
+strict_host_key_trust = ~isempty(host_key_provider);
+transport = struct('verify', @local_verify, ...
+    'query_accounts', @local_query_accounts, ...
+    'submit_script', @local_submit_script, ...
+    'query_squeue', @local_query_squeue, ...
+    'query_sacct', @local_query_sacct, ...
+    'query_squeue_by_name', @local_query_squeue_by_name, ...
+    'query_sacct_by_name', @local_query_sacct_by_name, ...
+    'cancel_job', @local_cancel_job, ...
+    'cleanup', @local_cleanup);
+
+    function accepted = local_verify()
+        accepted = false; %#ok<NASGU>
+        % Idempotent: an authenticated connection from an earlier verify
+        % (run_pseudo_CT and mlsc_backend both call verify) is reused rather
+        % than re-opened, so no duplicate socket is ever created.
+        if verified && ~isempty(connection) && ...
+                isfield(connection, 'authenticated') && ...
+                connection.authenticated == 1
+            accepted = true;
+            return;
+        end
+        verified = false;
+        if strict_host_key_trust
+            % Resolve the trusted material and bind a strict verifier BEFORE
+            % any connection; a missing/malformed/unsupported source fails
+            % closed here.
+            verifier = [];
+            try
+                verifier = mlsc_host_key_trust( ...
+                    config.mlsc.host, 22, host_key_provider);
+            catch ME
+                error('pseudo_CT:MLSCTransportRejected', ...
+                    ['The supplied MLSC host-key provider could not ', ...
+                     'establish strict pinned host-key trust; no ', ...
+                     'connection, authentication, account query, or ', ...
+                     'submission was attempted. (%s)'], ME.message);
+            end
+            if isempty(verifier)
+                error('pseudo_CT:MLSCTransportRejected', ...
+                    ['The supplied MLSC host-key provider requires a ', ...
+                     'non-null strict host-key verifier; no connection or ', ...
+                     'submission was attempted.']);
+            end
+            host_key_verifier = verifier;
+        end
+        % Provider-free: host_key_verifier stays empty and ssh2_main uses its
+        % existing password-authentication connect branch, matching the
+        % Launchpad operational model without any host-key input.
+        % Open the connection: ssh2_main runs Connection.connect (strictly
+        % through the verifier when one was resolved) before
+        % authenticateWithPassword, so a rejected host key aborts the
+        % handshake before any credential use.
+        try
+            connection = local_open_verified_connection();
+        catch ME
+            connection = [];
+            host_key_verifier = [];
+            if strict_host_key_trust
+                error('pseudo_CT:MLSCTransportRejected', ...
+                    ['Strict MLSC host-key verification or password ', ...
+                     'authentication failed before account discovery; no ', ...
+                     'account query or submission was attempted. (%s)'], ...
+                    ME.message);
+            end
+            error('pseudo_CT:MLSCTransportRejected', ...
+                ['MLSC password authentication failed; no account query or ', ...
+                 'submission was attempted. (%s)'], ME.message);
+        end
+        verified = true;
+        accepted = true;
+    end
+
+    function response = local_query_accounts()
+        local_require_verified();
+        response = local_remote_command('sshare -U -u $USER');
+    end
+
+    function response = local_submit_script(command)
+        local_require_verified();
+        response = local_remote_command(command);
+    end
+
+    function response = local_query_squeue(job_id)
+        local_require_verified();
+        response = local_remote_command(['squeue --noheader --jobs=' ...
+            local_job_id_text(job_id) ' --format=%T']);
+    end
+
+    function response = local_query_sacct(job_id)
+        local_require_verified();
+        response = local_remote_command(['sacct --allocations --noheader ', ...
+            '--parsable2 --jobs=' local_job_id_text(job_id) ...
+            ' --format=JobIDRaw,State,ExitCode,Start,End,Elapsed']);
+    end
+
+    function response = local_query_squeue_by_name(job_name)
+        local_require_verified();
+        response = local_remote_command(['squeue --noheader --user="$USER" ', ...
+            '--name=' local_job_name_text(job_name) ' --format=%A']);
+    end
+
+    function response = local_query_sacct_by_name(job_name)
+        local_require_verified();
+        response = local_remote_command(['sacct --allocations --noheader ', ...
+            '--parsable2 --user="$USER" --name=' local_job_name_text(job_name) ...
+            ' --format=JobIDRaw,State,ExitCode,Start,End,Elapsed']);
+    end
+
+    function response = local_cancel_job(job_id)
+        local_require_verified();
+        response = local_remote_command(['scancel -- ' local_job_id_text(job_id)]);
+    end
+
+    function response = local_remote_command(command)
+        if isempty(connection)
+            connection = local_open_verified_connection();
+        end
+        [connection, response] = ssh2_command(connection, command, 0);
+    end
+
+    function verified_connection = local_open_verified_connection()
+        % Build a connection struct that carries the verifier selected for
+        % this runtime: the non-null strict verifier when a host-key provider
+        % was supplied, or empty for the provider-free Launchpad-style
+        % password-authentication workflow, whose empty verifier routes
+        % ssh2_main to its existing connect()/authenticateWithPassword
+        % branch.  A supplied provider must never reach the empty-verifier
+        % branch: the null verifier is rejected here.
+        if strict_host_key_trust && isempty(host_key_verifier)
+            error('pseudo_CT:MLSCTransportRejected', ...
+                ['MLSC requires a non-null strict host-key verifier before any ', ...
+                 'secure connection; no connection or submission was attempted.']);
+        end
+        verified_connection = ssh2_config(config.mlsc.host, username, password, 22);
+        verified_connection.server_host_key_verifier = host_key_verifier;
+        % Connect + authenticate now (empty command), then reuse the
+        % authenticated connection for subsequent commands.
+        verified_connection = ssh2(verified_connection);
+        if ~(isfield(verified_connection, 'authenticated') && ...
+                verified_connection.authenticated == 1)
+            error('pseudo_CT:MLSCTransportRejected', ...
+                ['MLSC authentication did not complete on the secure ', ...
+                 'connection; no account query or submission was attempted.']);
+        end
+    end
+
+    function local_require_verified()
+        if ~verified
+            error('pseudo_CT:MLSCTransportRejected', ...
+                'MLSC transport was not verified.');
+        end
+    end
+
+    function text = local_job_id_text(job_id)
+        if ~isnumeric(job_id) || ~isscalar(job_id) || ~isfinite(job_id) || ...
+                job_id ~= floor(job_id) || job_id < 1
+            error('pseudo_CT:MLSCJobId', ...
+                'A positive numeric Slurm job ID is required.');
+        end
+        text = num2str(job_id, '%.0f');
+    end
+
+    function text = local_job_name_text(job_name)
+        if ~ischar(job_name) || isempty(job_name) || length(job_name) > 128 || ...
+                isempty(regexp(job_name, '^[A-Za-z0-9_.-]+$', 'once'))
+            error('pseudo_CT:MLSCJobName', ...
+                'A safe MLSC correlation job name is required.');
+        end
+        text = job_name;
+    end
+
+    function local_cleanup()
+        if ~isempty(connection)
+            try
+                ssh2_close(connection);
+            catch
+            end
+        end
+        connection = [];
+        username = '';
+        password = '';
+        host_key_verifier = [];
+        verified = false;
+    end
+end
+
+
+function local_cleanup_mlsc_transport(transport)
+if isstruct(transport) && isfield(transport, 'cleanup') && ...
+        isa(transport.cleanup, 'function_handle')
+    feval(transport.cleanup);
+end
+end
+
+
+%% ========================================================================
+%  LEGACY LAUNCHPAD BACKGROUND MASK WRAPPER
+%  ========================================================================
+function launchpad_apply_background_mask(temp_dir, context)
+% The mode-neutral helper retains the legacy fallback that the fetched
+% Launchpad attenuation map will remain unmasked when mprage_normalized.nii
+% or the optional masking operation is unavailable.
+pseudo_CT_apply_background_mask(temp_dir, context);
 end
 
 

@@ -40,7 +40,7 @@ config.io_policy.gui = 'mMR';
 % a profile name requires all non-policy settings to match that baseline.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'Local MATLAB (Current)';
+config.presentation.display_name = 'LOCAL (Current)';
 config.presentation.description = ...
     'Run the full MPRAGE + UMAP workflow locally on your workstation.';
 config.presentation.group = 'recommended';

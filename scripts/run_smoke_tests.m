@@ -81,6 +81,41 @@ catch ME
     check('compressed NIfTI input staging', false, ME.message);
 end
 
+try
+    test_mlsc_backend();
+    check('MLSC account, preflight, script, and transport seams', true, '');
+catch ME
+    check('MLSC account, preflight, script, and transport seams', false, ME.message);
+end
+
+try
+    test_mlsc_slurm_lifecycle();
+    check('MLSC Slurm lifecycle, accounting, evidence, and cleanup seams', true, '');
+catch ME
+    check('MLSC Slurm lifecycle, accounting, evidence, and cleanup seams', false, ME.message);
+end
+
+try
+    test_mlsc_dispatch_integration();
+    check('MLSC dispatch durable evidence/log integration', true, '');
+catch ME
+    check('MLSC dispatch durable evidence/log integration', false, ME.message);
+end
+
+try
+    test_mlsc_ssh2_compatibility();
+    check('MLSC provider-free normal path, optional strict gate, credential-free behavior', true, '');
+catch ME
+    check('MLSC provider-free normal path, optional strict gate, credential-free behavior', false, ME.message);
+end
+
+try
+    test_launchpad_evidence();
+    check('Launchpad evidence and missing-output regression', true, '');
+catch ME
+    check('Launchpad evidence and missing-output regression', false, ME.message);
+end
+
 profile_source = read_text(fullfile(root_dir, 'src', 'config', ...
     'profiles', 'local_mprage_only.m'));
 check('MPRAGE-only profile declares explicit policy', ...

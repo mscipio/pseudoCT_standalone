@@ -12,4 +12,5 @@ dist/
 opencode-quota/
 openspec/
 .aria/
-aria.json
+*aria.json
+/deprecated/

@@ -13,61 +13,63 @@ profile_dir = fullfile(config_root, 'profiles');
 files = dir(fullfile(profile_dir, '*.m'));
 profiles = pseudo_CT_list_profiles(config_root);
 assert(length(profiles) == length(files));
+names = {profiles.name};
+assert(length(unique(names)) == length(names));
+
+% Active discovery is top-level only: profiles/deprecated/ is excluded.
+deprecated_dir = fullfile(profile_dir, 'deprecated');
+deprecated_files = dir(fullfile(deprecated_dir, '*.m'));
+assert(length(deprecated_files) == 3);
+deprecated_names = {'launchpad'; 'launchpad-mprage-only'; ...
+    'local-near-parity-r2010b'};
+for ii = 1:length(deprecated_names)
+    assert(~ismember(deprecated_names{ii}, names));
+end
+for ii = 1:length(profiles)
+    assert(isempty(strfind(profiles(ii).file_path, 'deprecated')));
+    assert(strcmp(fileparts(profiles(ii).file_path), profile_dir));
+end
+expected_active = {'devel'; 'local-current'; 'local-mprage-only'; ...
+    'mlsc'; 'mlsc-mprage-only'};
+assert(length(profiles) == length(expected_active));
+assert(isequal(sort(names(:)), sort(expected_active)));
 
 configs = cell(length(profiles), 1);
 for ii = 1:length(profiles)
     configs{ii} = pseudo_CT_load_profile(profiles(ii).name, config_root);
     assert(configs{ii}.aliasing_default == 1);
     assert(strcmp(configs{ii}.recenter_before_normalization, 'Yes'));
-end
-
-top_fields = fieldnames(configs{1});
-normalization_fields = fieldnames(configs{1}.normalization);
-launchpad_fields = fieldnames(configs{1}.launchpad);
-for ii = 2:length(configs)
-    assert(isequal(top_fields, fieldnames(configs{ii})));
-    assert(isequal(normalization_fields, ...
-        fieldnames(configs{ii}.normalization)));
-    assert(isequal(launchpad_fields, fieldnames(configs{ii}.launchpad)));
-end
-
-names = {profiles.name};
-[ordered_profiles, default_index] = pseudo_CT_prepare_profile_choices(profiles);
-assert(isequal({ordered_profiles.name}, ...
-    {'local-current', 'launchpad', 'local-mprage-only', ...
-     'launchpad-mprage-only', 'local-near-parity-r2010b', 'devel'}));
-assert(strcmp(ordered_profiles(default_index).name, 'local-current'));
-without_local = profiles(~strcmp({profiles.name}, 'local-current'));
-[without_local, fallback_index] = pseudo_CT_prepare_profile_choices(without_local);
-assert(strcmp(without_local(fallback_index).name, 'launchpad'));
-assert(isequal({ordered_profiles(1:2).group}, ...
-    {'recommended', 'recommended'}));
-assert(all([ordered_profiles(1:2).recommended]));
-assert(all(strcmp({ordered_profiles(3:end).group}, 'specialized')));
-assert(~any([ordered_profiles(3:end).recommended]));
-for ii = 1:length(profiles)
+    assert(strcmp(profiles(ii).name, ...
+        strrep(profiles(ii).function_name, '_', '-')));
+    assert(strcmp(profiles(ii).display_name, ...
+        configs{ii}.presentation.display_name));
     assert(~isempty(strtrim(profiles(ii).display_name)));
     assert(~isempty(strtrim(profiles(ii).description)));
-    assert(strcmp(profiles(ii).name, strrep(profiles(ii).function_name, '_', '-')));
-    assert(strcmp(profiles(ii).display_name, configs{ii}.presentation.display_name));
+    assert(ismember(profiles(ii).group, {'recommended'; 'specialized'}));
 end
+
+[ordered_profiles, default_index] = pseudo_CT_prepare_profile_choices(profiles);
+assert(length(ordered_profiles) == length(profiles));
+assert(strcmp(ordered_profiles(default_index).name, 'local-current'));
+ordered_group_rank = 1 + strcmp({ordered_profiles.group}, 'specialized');
+for ii = 2:length(ordered_profiles)
+    assert(ordered_group_rank(ii) >= ordered_group_rank(ii - 1));
+    if ordered_group_rank(ii) == ordered_group_rank(ii - 1)
+        assert(ordered_profiles(ii).order >= ordered_profiles(ii - 1).order);
+    end
+end
+without_local = profiles(~strcmp({profiles.name}, 'local-current'));
+[without_local, fallback_index] = pseudo_CT_prepare_profile_choices(without_local);
+assert(without_local(fallback_index).recommended);
+assert(strcmp(without_local(fallback_index).group, 'recommended'));
 assert(~strcmp(ordered_profiles(1).display_name, ordered_profiles(1).name));
-local = configs{find(strcmp(names, 'local-current'), 1)};
-near_parity = configs{find(strcmp(names, ...
-    'local-near-parity-r2010b'), 1)};
-launchpad = configs{find(strcmp(names, 'launchpad'), 1)};
-local_mprage = configs{find(strcmp(names, 'local-mprage-only'), 1)};
-launchpad_mprage = configs{find(strcmp(names, 'launchpad-mprage-only'), 1)};
+local = configs{local_config_index(names, 'local-current')};
+local_mprage = configs{local_config_index(names, 'local-mprage-only')};
+mlsc = configs{local_config_index(names, 'mlsc')};
+mlsc_mprage = configs{local_config_index(names, 'mlsc-mprage-only')};
 assert(strcmp(local.mode, 'local'));
-assert(strcmp(near_parity.mode, 'local'));
-assert(strcmp(launchpad.mode, 'launchpad'));
+assert(strcmp(mlsc.mode, 'mlsc'));
 assert(strcmp(local.normalization.host, '127.0.0.1'));
-assert(strcmp(near_parity.required_matlab_release, '2010b'));
-assert(strcmp(launchpad.normalization.host, launchpad.launchpad.host));
-assert(~isempty(launchpad.launchpad.runner));
-assert(~isempty(launchpad.launchpad.defaults_mat));
-assert(~isempty(launchpad.launchpad.batch_templates));
-assert(~isempty(launchpad.launchpad.mcr_root));
 assert(strcmp(local.io_policy.reference, 'umap-required'));
 assert(strcmp(local.io_policy.output, 'nifti-and-dicom'));
 assert(strcmp(local.io_policy.gui, 'mMR'));
@@ -75,11 +77,85 @@ assert(strcmp(local_mprage.io_policy.reference, 'none'));
 assert(strcmp(local_mprage.io_policy.output, 'nifti-only'));
 assert(strcmp(local_mprage.io_policy.gui, 'mprage-only'));
 assert(strcmp(local_mprage.compatibility_profile, 'local-current'));
-assert(strcmp(launchpad_mprage.compatibility_profile, 'launchpad'));
+assert(strcmp(mlsc.io_policy.reference, 'umap-required'));
+assert(strcmp(mlsc.io_policy.output, 'nifti-and-dicom'));
+assert(strcmp(mlsc.io_policy.gui, 'mMR'));
+assert(strcmp(mlsc.compatibility_profile, ''));
+assert(strcmp(mlsc.presentation.group, 'recommended'));
+assert(mlsc.presentation.recommended);
+assert(~isempty(strfind(lower(mlsc.presentation.display_name), 'mlsc')));
+% T013 narrow correction: active MLSC wording uses legacy-compiled-backend
+% and cluster phrasing (no runtime change).
+assert(~isempty(strfind(lower(mlsc.presentation.display_name), 'legacy')));
+assert(~isempty(strfind(lower(mlsc.presentation.description), 'cluster')));
+assert(strcmp(mlsc_mprage.io_policy.reference, 'none'));
+assert(strcmp(mlsc_mprage.io_policy.output, 'nifti-only'));
+assert(strcmp(mlsc_mprage.io_policy.gui, 'mprage-only'));
+assert(strcmp(mlsc_mprage.compatibility_profile, 'mlsc'));
+assert(strcmp(mlsc_mprage.presentation.group, 'specialized'));
+assert(~mlsc_mprage.presentation.recommended);
+% T013 narrow correction: active MPRAGE-only wording names the modality
+% (specialized/not-recommended is already covered by group/recommended).
+assert(~isempty(strfind(lower(mlsc_mprage.presentation.description), ...
+    'mprage')));
+assert(~isfield(mlsc, 'launchpad'));
+assert(~isfield(mlsc_mprage, 'launchpad'));
+assert(isfield(mlsc, 'mlsc') && isfield(mlsc_mprage, 'mlsc'));
+assert(strcmp(mlsc.mlsc.host, 'mlsc.nmr.mgh.harvard.edu'));
+assert(strcmp(mlsc.mlsc.shell, '/bin/bash'));
+assert(strcmp(mlsc.mlsc.runner, mlsc_mprage.mlsc.runner));
+assert(strcmp(mlsc.mlsc.defaults_mat, mlsc_mprage.mlsc.defaults_mat));
+assert(strcmp(mlsc.mlsc.batch_templates, mlsc_mprage.mlsc.batch_templates));
+assert(strcmp(mlsc.mlsc.freesurfer_env, mlsc_mprage.mlsc.freesurfer_env));
+assert(strcmp(mlsc.normalization.host, mlsc.mlsc.host));
+assert(strcmp(mlsc.normalization.cluster, 'Yes'));
+assert(isequal(mlsc.pca_order, {'remote'}));
+assert(strcmp(mlsc_mprage.normalization.host, mlsc_mprage.mlsc.host));
+assert(strcmp(mlsc_mprage.normalization.cluster, 'Yes'));
+assert(isequal(mlsc_mprage.pca_order, {'remote'}));
+
+% Resource setup follows the selected mode only. The fixture intentionally
+% leaves unrelated mode resources absent, so validating every backend would
+% fail this check.
+resource_root = tempname;
+mkdir(resource_root);
+resource_cleanup = onCleanup(@() local_cleanup(resource_root)); %#ok<NASGU>
+local_fixture = local_resource_fixture(local, resource_root, 'local');
+setup_pseudo_CT_paths(root_dir, local_fixture);
+mlsc_fixture = local_resource_fixture(mlsc, resource_root, 'mlsc');
+mlsc_fixture.launchpad = struct('runner', fullfile(resource_root, ...
+    'missing-launchpad-runner'));
+setup_pseudo_CT_paths(root_dir, mlsc_fixture);
+
+% A newly added profile is discovered and ordered by its own metadata.
+added_root = tempname;
+mkdir(added_root);
+mkdir(fullfile(added_root, 'profiles'));
+added_cleanup = onCleanup(@() local_cleanup(added_root)); %#ok<NASGU>
+copyfile(fullfile(profile_dir, 'local_current.m'), ...
+    fullfile(added_root, 'profiles', 'local_current.m'));
+local_write(fullfile(added_root, 'profiles', 'added_profile.m'), ...
+    ['function config = added_profile()' char(10) ...
+     'config.presentation.display_name = ''Added test profile'';' char(10) ...
+     'config.presentation.description = ''Temporary test profile'';' char(10) ...
+     'config.presentation.group = ''recommended'';' char(10) ...
+     'config.presentation.recommended = true;' char(10) ...
+     'config.presentation.order = 1;' char(10) 'end' char(10)]);
+temporary_profiles = pseudo_CT_list_profiles(added_root);
+temporary_names = {temporary_profiles.name};
+added_index = find(strcmp(temporary_names, 'added-profile'), 1);
+assert(~isempty(added_index));
+assert(strcmp(temporary_profiles(added_index).display_name, ...
+    'Added test profile'));
+[temporary_ordered, temporary_default] = ...
+    pseudo_CT_prepare_profile_choices(temporary_profiles);
+assert(strcmp(temporary_ordered(1).name, 'added-profile'));
+assert(strcmp(temporary_ordered(temporary_default).name, 'local-current'));
+
 assert(isequal(local_without_policy(local_mprage), ...
     local_without_policy(local)));
-assert(isequal(local_without_policy(launchpad_mprage), ...
-    local_without_policy(launchpad)));
+assert(isequal(local_without_policy(mlsc_mprage), ...
+    local_without_policy(mlsc)));
 
 unknown_failed = false;
 try
@@ -189,8 +265,8 @@ end
 % Production/release profiles must use the canonical shared-filesystem path.
 canonical_aliasing_root = ['/usr/pubsw/packages/mrpet/standalone_apps/' ...
     'correct_aliasing/correct_aliasing_standalone-latest'];
-production_names = {'local-current', 'launchpad', 'local-mprage-only', ...
-    'launchpad-mprage-only', 'local-near-parity-r2010b'};
+production_names = {'local-current', 'local-mprage-only', 'mlsc', ...
+    'mlsc-mprage-only'};
 for ii = 1:length(production_names)
     idx = find(strcmp(names, production_names{ii}), 1);
     assert(~isempty(idx));
@@ -250,10 +326,11 @@ assert(~isempty(strfind(entry_source, '''check_aliasing''')));
 assert(~isempty(strfind(launchpad_source, 'check_aliasing')));
 
 fprintf(['Profile authority tests passed: %d dynamically discovered profiles, ', ...
-    'identical schemas, explicit local/Launchpad config flow, bone and FWHM consumption, ', ...
-    'enabled operation defaults, derived compatibility, aliasing root uniform, ', ...
-    'deprecated helpers retained, obsolete entrypoints absent, ', ...
-    'runtime path boundary and Launchpad delegation intact.\n'], ...
+    'mode-conditional schemas/resources, exact MLSC policies and metadata, ', ...
+    'metadata-driven ordering, local/MLSC compatibility, bone and FWHM ', ...
+    'consumption, enabled operation defaults, aliasing root uniform, ', ...
+    'deprecated helpers retained, obsolete entrypoints absent, runtime path ', ...
+    'boundary and Launchpad delegation intact.\n'], ...
     length(profiles));
 end
 
@@ -287,6 +364,72 @@ end
 
 function value = local_without_policy(config)
 value = rmfield(config, {'io_policy'; 'compatibility_profile'; 'presentation'});
+end
+
+function index = local_config_index(names, requested)
+index = find(strcmp(names, requested), 1);
+assert(~isempty(index), 'Expected profile was not discovered: %s', requested);
+end
+
+function config = local_resource_fixture(config, root_dir, mode_name)
+config.spm_root = fullfile(root_dir, 'spm');
+config.atlas_root = fullfile(root_dir, 'atlas');
+config.d2n_root = fullfile(root_dir, 'd2n');
+config.aliasing_root = fullfile(root_dir, 'aliasing');
+local_mkdir(config.spm_root);
+local_mkdir(fullfile(config.spm_root, 'matlabbatch'));
+local_mkdir(config.atlas_root);
+local_mkdir(config.d2n_root);
+local_mkdir(config.aliasing_root);
+
+if strcmp(mode_name, 'mlsc')
+    if isfield(config, 'launchpad')
+        config = rmfield(config, 'launchpad');
+    end
+    config.mlsc.runner = fullfile(root_dir, 'mlsc_runner.sh');
+    config.mlsc.mcr_root = fullfile(root_dir, 'mlsc_mcr');
+    config.mlsc.defaults_mat = fullfile(root_dir, 'mlsc_defaults.mat');
+    config.mlsc.batch_templates = fullfile(root_dir, 'mlsc_batch');
+    config.mlsc.shell = '/bin/bash';
+    config.mlsc.freesurfer_env = fullfile(root_dir, 'mlsc_freesurfer_env');
+    config.mlsc.host = 'mlsc.nmr.mgh.harvard.edu';
+    config.mlsc.partition = 'basic';
+    config.mlsc.nodes = 1;
+    config.mlsc.ntasks = 1;
+    config.mlsc.cpus_per_task = 1;
+    config.mlsc.memory = '1G';
+    config.mlsc.time = '00:01:00';
+    local_mkdir(config.mlsc.mcr_root);
+    local_mkdir(config.mlsc.batch_templates);
+    local_write(config.mlsc.runner, '#!/bin/bash\n');
+    local_write(config.mlsc.defaults_mat, 'fixture');
+    local_write(config.mlsc.freesurfer_env, '#!/bin/bash\n');
+elseif strcmp(mode_name, 'launchpad')
+    if isfield(config, 'mlsc')
+        config = rmfield(config, 'mlsc');
+    end
+    config.launchpad.runner = fullfile(root_dir, 'launchpad_runner.sh');
+    config.launchpad.mcr_root = fullfile(root_dir, 'launchpad_mcr');
+    config.launchpad.defaults_mat = fullfile(root_dir, 'launchpad_defaults.mat');
+    config.launchpad.batch_templates = fullfile(root_dir, 'launchpad_batch');
+    config.launchpad.host = 'fixture-launchpad';
+    config.launchpad.scratch = fullfile(root_dir, 'launchpad_scratch');
+    local_mkdir(config.launchpad.mcr_root);
+    local_mkdir(config.launchpad.batch_templates);
+    local_mkdir(config.launchpad.scratch);
+    local_write(config.launchpad.runner, '#!/bin/bash\n');
+    local_write(config.launchpad.defaults_mat, 'fixture');
+else
+    if isfield(config, 'launchpad')
+        config = rmfield(config, 'launchpad');
+    end
+end
+end
+
+function local_mkdir(directory)
+if exist(directory, 'dir') ~= 7
+    mkdir(directory);
+end
 end
 
 function text = local_read(file_path)

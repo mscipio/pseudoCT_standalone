@@ -1,5 +1,5 @@
-function config = launchpad_mprage_only()
-%LAUNCHPAD_MPRAGE_ONLY Launchpad MPRAGE-only profile matching LAUNCHPAD.
+function config = launchpad()
+%LAUNCHPAD Retained source/profile for the unavailable legacy backend.
 
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'launchpad';
@@ -29,23 +29,23 @@ config.fwhm = 0;
 config.aliasing_default = 1;
 % Reference policy: 'umap-required' discovers and validates a UMAP reference;
 % 'none' uses MPRAGE-only collection.
-config.io_policy.reference = 'none';
+config.io_policy.reference = 'umap-required';
 % Output policy: 'nifti-and-dicom' promotes NIfTI and writes DICOM;
 % 'nifti-only' skips DICOM output.
-config.io_policy.output = 'nifti-only';
+config.io_policy.output = 'nifti-and-dicom';
 % GUI policy: 'mMR' uses the MPRAGE+UTE/UMAP UI;
 % 'mprage-only' keeps MPRAGE/aliasing controls but bypasses UTE/UMAP controls.
-config.io_policy.gui = 'mprage-only';
+config.io_policy.gui = 'mMR';
 % Compatibility baseline: empty disables baseline drift comparison;
 % a profile name requires all non-policy settings to match that baseline.
-config.compatibility_profile = 'launchpad';
+config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = '[Bay8] Launchpad - MPRAGE Only';
+config.presentation.display_name = '[DEPRECATED]Launchpad';
 config.presentation.description = ...
-    'Generate NIfTI-only pseudoCT through Launchpad from MPRAGE without requiring a UMAP reference.';
+    'Use MLSC as the replacement remote/cluster workflow';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
-config.presentation.order = 20;
+config.presentation.order = 80;
 
 % FreeSurfer environment command.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';

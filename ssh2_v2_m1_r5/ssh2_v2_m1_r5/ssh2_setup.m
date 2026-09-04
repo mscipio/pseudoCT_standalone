@@ -57,10 +57,22 @@ function ssh2_struct = ssh2_setup(ssh2_struct)
 %   .command_session  - session object for the ssh2 command line 
 %   .command_ignore_response  - set to 1 to ignore response from host
 %   .command_result  - cell array containing the response from the host
+%   .command_exit_status  - numeric exit status of the last command set by
+%              ssh2_main after a bounded ChannelCondition.EXIT_STATUS/CLOSED
+%              wait; 0 = success, non-zero = failure, [] = unavailable
+%              (explicit failure).  Never inferred from command output.
+%   .command_success  - logical true only when .command_exit_status is
+%              numeric 0; false for non-zero or unavailable status
+%   .command_exit_status_timeout  - OPTIONAL bounded wait in milliseconds
+%              for the exit status before Session.close(); default is 5000
 %
 %   GANYMED JAVA OBJECT
 %   .connection  - java connection object
 %   .ssh2_java_library_loaded  - flag to determine whether ganymed lib is loaded
+%   .server_host_key_verifier  - optional ch.ethz.ssh2.ServerHostKeyVerifier object.
+%              When non-empty, ssh2_main calls Connection.connect(verifier) BEFORE
+%              authentication to enforce strict pinned host-key trust.  When empty,
+%              the legacy unverified connect path is preserved.
 %
 %   CONNECTION FLAGS AND OPTIONS
 %   .authenticated  - flag to determine whether we've authenticated

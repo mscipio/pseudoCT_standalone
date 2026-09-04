@@ -33,6 +33,22 @@ if strcmp(config.mode, 'launchpad')
                 launchpad_dirs{ii});
         end
     end
+elseif strcmp(config.mode, 'mlsc')
+    mlsc_files = {config.mlsc.runner; config.mlsc.defaults_mat; ...
+        config.mlsc.shell; config.mlsc.freesurfer_env};
+    for ii = 1:length(mlsc_files)
+        if exist(mlsc_files{ii}, 'file') ~= 2
+            error('pseudo_CT:MissingResource', ...
+                'Configured MLSC file not found: %s', mlsc_files{ii});
+        end
+    end
+    mlsc_dirs = {config.mlsc.mcr_root; config.mlsc.batch_templates};
+    for ii = 1:length(mlsc_dirs)
+        if exist(mlsc_dirs{ii}, 'dir') ~= 7
+            error('pseudo_CT:MissingResource', ...
+                'Configured MLSC directory not found: %s', mlsc_dirs{ii});
+        end
+    end
 else
     % Local mode: validate the external aliasing-correction standalone.
     if exist(config.aliasing_root, 'dir') ~= 7
@@ -74,7 +90,7 @@ if exist(config.d2n_root, 'dir') == 7
     addpath(config.d2n_root, '-begin');
 end
 % Standalone aliasing correction (local mode only).
-if ~strcmp(config.mode, 'launchpad')
+if strcmp(config.mode, 'local')
     addpath(config.aliasing_root, '-begin');
     clear correct_aliasing;
 end

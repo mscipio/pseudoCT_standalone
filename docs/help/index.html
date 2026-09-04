@@ -21,6 +21,7 @@
         <nav class="top-nav" aria-label="Primary navigation">
           <a href="#quick-start">Quick start</a>
           <a href="#inputs">Inputs</a>
+          <a href="#mlsc">MLSC / Slurm</a>
           <a href="#processing">Processing</a>
           <a href="#outputs">Outputs</a>
           <a href="#qc">QC</a>
@@ -36,6 +37,7 @@
           <a href="#software">Software &amp; versions</a>
           <a href="#quick-start">Quick start</a>
           <a href="#profiles">Execution profiles</a>
+          <a href="#mlsc">MLSC / Slurm workflow</a>
           <a href="#inputs">Preparing input data</a>
           <a href="#single-subject">Single-subject workflow</a>
           <a href="#batch">Batch processing</a>
@@ -219,6 +221,36 @@
             </p>
           </div>
 
+          <div class="profile-card">
+            <div class="profile-title">
+              <h3><code>mlsc</code> (Recommended Remote/Cluster Workflow)</h3>
+              <span class="badge good">Recommended remote</span>
+            </div>
+            <p>
+              MLSC is the replacement remote/cluster workflow for Launchpad. The
+              standard MLSC profile runs the MPRAGE + UMAP workflow and requires
+              the UMAP reference. It produces both NIfTI and DICOM output.
+            </p>
+            <p>
+              Expected processing time is approximately
+              <strong>1 hour per subject</strong>, excluding queue wait. MLSC is
+              not production-ready until the live readiness checks described below
+              have passed.
+            </p>
+          </div>
+
+          <div class="profile-card muted">
+            <div class="profile-title">
+              <h3>[Specialized] <code>mlsc_mprage_only</code> - MPRAGE Only</h3>
+              <span class="badge warning-badge">Not for routine use</span>
+            </div>
+            <p>
+              This specialized MLSC profile processes an MPRAGE without requiring
+              a UMAP reference and produces NIfTI output only. It is intended for
+              known specialized workflows, not routine processing.
+            </p>
+          </div>
+
           <div class="profile-card muted">
             <div class="profile-title">
               <h3>Launchpad (Aether Legacy Workflow)</h3>
@@ -226,11 +258,13 @@
             </div>
             <p>
               This is the historical compiled backend. Launchpad is currently
-              unavailable and will be replaced by an MLSC-based workflow.
+              unavailable and will soon be discontinued/decommissioned. MLSC is
+              its replacement remote/cluster workflow.
             </p>
             <p>
-              For remote Launchpad/MLSC execution, total turnaround also depends
-              on queue wait time.
+              The Launchpad source and profile are retained only for
+              transitional/reference purposes. Do not treat Launchpad as a
+              recommended or usable remote workflow.
             </p>
           </div>
 
@@ -238,8 +272,10 @@
             <strong>Specialized / Development profiles</strong>
             <p>
               Additional profiles exist for specific systems, validation work,
-              compatibility testing, and development. They are intentionally not
-              documented on this operator page.
+              compatibility testing, and development. The MLSC MPRAGE-only
+              profile is documented here because its no-reference/NIfTI-only
+              behavior is explicit; other specialized profiles are not intended
+              for routine use.
             </p>
             <p>
               <strong
@@ -248,6 +284,195 @@
               >
             </p>
           </div>
+        </section>
+
+        <section id="mlsc">
+          <h2>MLSC / Slurm remote workflow</h2>
+          <p>
+            MLSC is the replacement remote/cluster workflow for Launchpad. It
+            uses the existing compiled pseudoCT runner, Slurm, and the shared
+            filesystem. The SSH connection is a control path only: MPRAGE files,
+            scripts, and outputs are not staged over SCP or another network
+            payload channel.
+          </p>
+
+          <div class="callout warning">
+            <strong>Production readiness is not claimed</strong>
+            <p>
+              MLSC remains not production-ready until the four live readiness
+              checks below all pass: remote <code>true</code> returning exit
+              status <code>0</code>, <code>sshare</code> account discovery, a
+              lightweight Slurm/<code>$TMPDIR</code> test, and a one-subject
+              end-to-end run. Crypto/transport compatibility is already proven
+              by a manual diagnostic that authenticated to MLSC through the
+              bundled Ganymed library and returned the login hostname
+              <code>mlsc-login.nmr.mgh.harvard.edu</code>.
+            </p>
+          </div>
+
+          <h3>Runtime login and Slurm account</h3>
+          <p>
+            MLSC uses the existing username/password SSH workflow, analogous to
+            the historical Launchpad login: the same modal
+            <code>passwordEntryDialog</code>-style username/password prompt at
+            runtime, followed by password authentication through the bundled
+            Ganymed SSH2 transport. No host-key setup is required for normal
+            use. Credentials are entered at runtime, held transiently, cleared
+            after use, and never persisted in profiles, commands, environment
+            variables, scripts, logs, or evidence. Cancelling the login dialog
+            submits no job, and a rejected password fails the connection
+            without any account query or submission attempt.
+          </p>
+          <p>
+            After authentication, the authenticated user’s available accounts
+            are discovered at runtime with
+            <code>sshare -U -u $USER</code>. Zero accounts fails before
+            submission. One account is selected automatically. Multiple accounts
+            are shown in a single-selection dialog. Cancelling the dialog submits
+            no job. The selected account is not saved as profile configuration or
+            reused by a later run.
+          </p>
+          <p>
+            A strict pinned host-key verification mode exists only as an
+            optional development/testing opt-in for maintainers. It is never
+            required for normal processing and does not change the workflow
+            described above.
+          </p>
+
+          <h3>Shared filesystem and node-local staging</h3>
+          <p>
+            MATLAB first writes each subject’s input to the shared subject
+            temporary directory, normally
+            <code>&lt;subject&gt;/MR_PET/tmp/mprage.nii</code>. A generated
+            per-subject script then uses normal filesystem <code>cp</code> to
+            copy the input into a writable, node-local <code>$TMPDIR</code>.
+            The script rejects an empty, unavailable, unwritable, or shared
+            <code>$TMPDIR</code>.
+          </p>
+          <p>
+            FreeSurfer <code>mri_normalize</code> and the unchanged compiled
+            runner execute after changing directory to node-local
+            <code>$TMPDIR</code>. FreeSurfer is sourced only inside the batch
+            shell, and is invoked with
+            <code>env -u LD_LIBRARY_PATH</code> so MATLAB/local runtime library
+            paths do not leak into the FreeSurfer child process. The job sets
+            <code>OMP_NUM_THREADS</code> and <code>MKL_NUM_THREADS</code> from
+            <code>$SLURM_CPUS_PER_TASK</code> and uses the node-local
+            <code>$TMPDIR/mcr_cache</code> for the MCR cache.
+          </p>
+          <p>
+            The current request is exactly:
+            <strong>partition basic, 1 node, 1 task, 4 CPUs per task, 8G, and
+            2 hours</strong>. The expected runtime is approximately
+            <strong>1 hour per subject</strong>, excluding queue wait.
+          </p>
+
+          <h3>Submission, monitoring, and failure handling</h3>
+          <p>
+            The runtime account is passed only to a parsable submission such as:
+          </p>
+          <pre><code>sbatch --parsable --account &lt;runtime-account&gt; -- &lt;shared-script-path&gt;</code></pre>
+          <p>
+            The lifecycle reads stable scheduler output with:
+          </p>
+          <pre><code>squeue --noheader --jobs=JOBID --format=%T
+sacct --allocations --noheader --parsable2 --jobs=JOBID \
+  --format=JobIDRaw,State,ExitCode,Start,End,Elapsed</code></pre>
+          <p>
+            <code>sacct</code> primary-allocation state and exit code are
+            authoritative for terminal results, including delayed accounting.
+            Pending, running, completed, failed, cancelled, timeout,
+            out-of-memory, node-failure, and unknown results are normalized. A
+            bounded timeout requests cancellation and records an unresolved
+            result as timeout or unknown rather than claiming success.
+          </p>
+          <p>
+            A non-empty node-local <code>att_map.nii</code> is required. It is
+            copied with normal <code>cp</code> back to the shared subject
+            temporary directory and verified non-empty there. Missing or empty
+            output, non-zero exit status, failed copy-back, failed accounting,
+            or any non-success scheduler result prevents local finalization.
+          </p>
+
+          <h3>Local finalization and cleanup</h3>
+          <p>
+            Only after verified copy-back does MLSC reuse the existing local
+            post-remote finalization path. The standard profile optionally
+            applies the local background mask, converts the NIfTI attenuation map
+            to DICOM using the UMAP geometry, and promotes outputs with the same
+            finalizer used by the Launchpad path. The MPRAGE-only profile skips
+            DICOM by policy and promotes NIfTI output only.
+          </p>
+          <p>
+            <code>att_map.nii</code> is required. The QC fusion TIFF, version
+            record, and normalized MPRAGE are optional outputs when produced;
+            available files are copied back and promoted. Slurm removes
+            node-local <code>$TMPDIR</code> when the job exits. Normal
+            pseudoCT cleanup removes the shared <code>MR_PET/tmp/</code> after
+            successful promotion when enabled; failed or interrupted runs retain
+            temporary files for inspection.
+          </p>
+
+          <h3>Logs and evidence</h3>
+          <p>
+            Each subject receives a local log under <code>MR_PET</code> named
+            <code>pseudo_CT_mlsc_&lt;runid&gt;.log</code>, plus the usual
+            <code>pseudo_CT_profile_summary.txt</code>. These record the selected
+            profile, paths, stages, scheduler/failure details, and final status.
+            The credential-free lifecycle evidence schema is
+            <code>pseudo-CT.mlsc-evidence/v1</code>; when an evidence directory
+            is configured it is written as <code>mlsc_evidence.mat</code> and
+            records the account, job ID, timestamps, state/exit data, staging
+            contract, copy-back, cleanup, and failure detail. Username,
+            password, and SSH internals are rejected from evidence.
+          </p>
+
+          <h3>Ordered live readiness checks</h3>
+          <ol>
+            <li>
+              <strong>A) Remote <code>true</code> exit status.</strong> Using
+              the normal login workflow above, run exactly <code>true</code>
+              on MLSC and require a numeric SSH exit status of
+              <code>0</code>. A TCP connection, authentication success, or
+              empty output alone is not sufficient.
+            </li>
+            <li>
+              <strong>B) <code>sshare</code> account discovery.</strong>
+              Confirm that <code>sshare -U -u $USER</code> returns the
+              authenticated user's Slurm accounts and that the
+              zero/one/multiple/cancel selection behavior works.
+            </li>
+            <li>
+              <strong>C) Lightweight Slurm/<code>$TMPDIR</code> test.</strong>
+              Submit a minimal job with the standard resource request and
+              confirm that the batch shell receives a writable, node-local
+              <code>$TMPDIR</code>, that <code>sbatch --parsable</code>
+              returns one numeric job ID, and that the machine-readable
+              <code>squeue</code> and <code>sacct</code> queries work.
+            </li>
+            <li>
+              <strong>D) One-subject E2E.</strong> Verify node-local normalization
+              and compiled-runner execution, required and optional outputs,
+              non-empty shared copy-back, lifecycle logs/evidence, existing local
+              finalization, DICOM output for standard <code>mlsc</code>, and
+              cleanup of node-local <code>$TMPDIR</code> and normal shared
+              temporary data.
+            </li>
+          </ol>
+          <p>
+            MATLAB must remain open while the Slurm job is monitored and while
+            local finalization is performed. Credential-free tests do not replace
+            these live checks; production readiness is not claimed until checks
+            A–D all pass.
+          </p>
+
+          <p>
+            See the
+            <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/pipeline-mlsc.md"
+              >detailed MLSC/Slurm pipeline documentation</a
+            > for the full staging contract, connection model, and output
+            handling.
+          </p>
         </section>
 
         <section id="inputs">
@@ -440,8 +665,9 @@
           <p>
             Local execution takes approximately
             <strong>30 minutes per subject</strong> on an average workstation.
-            The exact time depends on the workstation and input data. Remote
-            execution additionally depends on queue wait time.
+            MLSC execution is expected to take approximately
+            <strong>1 hour per subject</strong>, excluding queue wait. The exact
+            time depends on the workstation, cluster, and input data.
           </p>
           <p>
             MATLAB prints stage-by-stage status messages and writes a detailed
@@ -476,7 +702,9 @@
           <div class="callout warning">
             <strong>Keep MATLAB running</strong>
             <p>
-              Closing MATLAB or interrupting execution stops the pseudoCT run.
+              Closing MATLAB or interrupting execution stops the local run. For
+              MLSC, MATLAB must remain open while the Slurm job is monitored and
+              while local finalization is performed.
             </p>
           </div>
         </section>
@@ -502,6 +730,16 @@
     ├── Pseudo_CT_AC_Version.txt
     ├── pseudo_CT_local-current_*.log
     └── pseudo_CT_profile_summary.txt</code></pre>
+
+          <p>
+            The standard <code>mlsc</code> profile uses the same final output
+            layout after verified copy-back and local finalization. Its required
+            output is <code>MR_PET/att_map.nii</code>; the QC fusion TIFF, version
+            record, and normalized MPRAGE are optional when produced. The
+            specialized <code>mlsc_mprage_only</code> profile does not require a
+            UMAP and produces NIfTI output only, so it does not create the final
+            DICOM series under <code>MR/pseudo_muMAP/</code>.
+          </p>
 
           <figure>
             <img
@@ -709,9 +947,40 @@
               <tr>
                 <td>Launchpad does not run</td>
                 <td>
-                  The legacy Launchpad workflow is currently unavailable. Use
-                  Local MATLAB for routine processing until the MLSC replacement
-                  is deployed.
+                  The legacy Launchpad workflow is currently unavailable and will
+                  soon be discontinued/decommissioned. Its source and profile
+                  are retained only for transitional/reference purposes. Use
+                  Local MATLAB for routine processing; do not treat Launchpad as
+                  a recommended usable remote.
+                </td>
+              </tr>
+              <tr>
+                <td>MLSC does not submit</td>
+                <td>
+                  MLSC uses the same username/password SSH login as the
+                  historical Launchpad workflow. Confirm the login was accepted
+                  (<code>mlsc.nmr.mgh.harvard.edu</code> reachable on port 22,
+                  correct Martinos credentials). Cancelling the login dialog or
+                  the account-selection dialog stops before submission, and a
+                  user with zero available Slurm accounts cannot submit. Check
+                  the run log for the exact stage message. Crypto/transport
+                  compatibility is proven by the manual login-host diagnostic;
+                  the live readiness checks A–D above are what remain open.
+                  Until MLSC passes those checks, use Local MATLAB for routine
+                  processing. Do not weaken authentication handling or switch
+                  SSH transports silently; retain the failure detail for
+                  support.
+                </td>
+              </tr>
+              <tr>
+                <td>MLSC finishes without an attenuation map</td>
+                <td>
+                  A scheduler <code>COMPLETED</code> state is not sufficient.
+                  Confirm that node-local <code>att_map.nii</code> was non-empty
+                  and that the shared <code>MR_PET/tmp/att_map.nii</code> copy-back
+                  is present and non-empty. Local finalization is not started
+                  when this verification fails; retain the log and temporary
+                  files for diagnosis.
                 </td>
               </tr>
             </tbody>
@@ -733,8 +1002,11 @@
           <p>
             This page is intentionally an operator guide. Detailed
             implementation, validation, numerical-parity, release-history, and
-            developer documentation are maintained with the source repository,
-            and can be made available upon request.
+            developer documentation are maintained with the source repository.
+            See the
+            <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/pipeline-mlsc.md"
+              >MLSC/Slurm pipeline documentation</a
+            > for the detailed remote execution contract and readiness checks.
           </p>
 
           <p>
@@ -747,7 +1019,7 @@
 
         <footer class="page-footer">
           <p>
-            Martinos PET/MR pseudoCT operator guide · Last updated August 28,
+            Martinos PET/MR pseudoCT operator guide · Last updated September 3,
             2026
           </p>
           <p class="privacy-note">

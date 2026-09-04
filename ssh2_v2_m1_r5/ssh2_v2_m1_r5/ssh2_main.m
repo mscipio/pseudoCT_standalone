@@ -58,7 +58,18 @@ else
     try %% MAKE A CONNECTION HERE
         ssh2_struct.connection = Connection(ssh2_struct.hostname,...
                                             ssh2_struct.port);
-        ssh2_struct.connection.connect();
+        if (isfield(ssh2_struct,'server_host_key_verifier') && ...
+                ~isempty(ssh2_struct.server_host_key_verifier))
+            %% STRICT HOST-KEY TRUST: the caller supplied a trusted
+            %% ch.ethz.ssh2.ServerHostKeyVerifier. Connect through it so the
+            %% pinned server host key is verified BEFORE authentication. A
+            %% missing/mismatched/unsupported/new/changed key makes Ganymed
+            %% abort the handshake here, before any auth/account/submission.
+            ssh2_struct.connection.connect(...
+                ssh2_struct.server_host_key_verifier);
+        else
+            ssh2_struct.connection.connect();
+        end
 
         if (~isempty(ssh2_struct.pem_private_key))
                            ssh2_struct.authenticated = ssh2_struct.connection.authenticateWithPublicKey(...
@@ -314,6 +325,8 @@ end
 
 %% ISSUE COMMANDS
 ssh2_struct.command_result = {''}; % clear this out
+ssh2_struct.command_exit_status = []; % numeric exit status ([] = unavailable)
+ssh2_struct.command_success = 0; % true only when the numeric exit status was 0
 if (ischar(ssh2_struct.command)) % we should send a command then.
     % open session and send commands
     ssh2_struct.command_session  =  ssh2_struct.connection.openSession();
@@ -339,6 +352,26 @@ if (ischar(ssh2_struct.command)) % we should send a command then.
     else
 
     end
+    %% COLLECT THE NUMERIC EXIT STATUS RACE-SAFELY, THEN CLOSE
+    % stdout EOF and the channel close do NOT guarantee that the SSH
+    % exit-status request has arrived (or was ever sent by the server), so
+    % wait a bounded time for ChannelCondition.EXIT_STATUS / CLOSED on the
+    % Ganymed session and only then read Session.getExitStatus().  The
+    % outcome is strictly numeric: 0 maps to success, non-zero to failure,
+    % and a null status (unavailable after the bounded wait) is an explicit
+    % failure with status unavailable.  Status is never inferred from
+    % stdout content, stdout EOF, or the channel close alone, and a
+    % non-zero status is never overridden by empty or success-looking
+    % output.
+    if (isfield(ssh2_struct,'command_exit_status_timeout') && ...
+            ~isempty(ssh2_struct.command_exit_status_timeout))
+        exit_status_timeout = ssh2_struct.command_exit_status_timeout;
+    else
+        exit_status_timeout = 5000; % bounded default wait, milliseconds
+    end
+    [ssh2_struct.command_exit_status, ssh2_struct.command_success] = ...
+        ssh2_collect_exit_status(ssh2_struct.command_session,...
+            exit_status_timeout);
     ssh2_struct.command_session.close();
     ssh2_struct.command = []; % clear out the previous command
 end
@@ -349,6 +382,51 @@ if(ssh2_struct.close_connection > 0)
     ssh2_struct.authenticated = 0;
 end
     
+
+%% HELPER FUNCTION FOR RACE-SAFE EXIT STATUS COLLECTION
+function [exit_status, command_success] = ssh2_collect_exit_status(command_session, timeout_ms)
+% SSH2_COLLECT_EXIT_STATUS   Read the numeric exit status of the last
+%   executed command without racing the SSH exit-status packet.
+%
+%   Waits a bounded timeout_ms for ChannelCondition.EXIT_STATUS or CLOSED
+%   on the still-open Ganymed session, then queries Session.getExitStatus().
+%   A non-null numeric status maps 0 to success and non-zero to failure; a
+%   null status (server closed without sending exit-status, or the wait
+%   timed out) leaves EXIT unavailable: exit_status = [] and
+%   command_success = 0.  No outcome is inferred from stdout, stdout EOF,
+%   or the close alone, and command_success is true only for numeric 0.
+%
+%   [EXIT_STATUS, COMMAND_SUCCESS] = ...
+%   ssh2_collect_exit_status(COMMAND_SESSION, TIMEOUT_MS)
+
+exit_status = [];
+command_success = 0;
+
+% Ganymed condition masks must be combined with bit-or and tested as bits;
+% a closed channel returns immediately (CLOSED implies EOF), arrival of the
+% exit-status request sets EXIT_STATUS, and a full wait returns TIMEOUT
+% without inventing a status.
+try
+    wait_mask = bitor(ch.ethz.ssh2.ChannelCondition.EXIT_STATUS, ...
+        ch.ethz.ssh2.ChannelCondition.CLOSED);
+    command_session.waitForCondition(wait_mask, timeout_ms);
+catch
+    % A transport error must not fake a status; fall through to the
+    % "unavailable" handling below.
+end
+
+try
+    exit_status_value = command_session.getExitStatus();
+catch
+    exit_status_value = [];
+end
+
+if (~isempty(exit_status_value))
+    % Ganymed returns a java.lang.Integer here (null maps to [] above).
+    exit_status = double(exit_status_value);
+    command_success = (exit_status == 0); % true requires exactly 0
+end
+
 
 %% HELPER FUNCTIONS FOR REMOTE DIRECTORY PARSING
 function [str] = ssh2_remotePathFilenameString(fileStr)

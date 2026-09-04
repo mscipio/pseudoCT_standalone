@@ -1,11 +1,11 @@
-function config = local_near_parity_r2010b()
-%LOCAL_NEAR_PARITY_R2010B Local profile for MATLAB R2010b parity work.
+function config = launchpad_mprage_only()
+%LAUNCHPAD_MPRAGE_ONLY Retained unavailable Launchpad MPRAGE-only profile.
 
 % Select the local processing path or the remote Launchpad path.
-config.mode = 'local';
-% SPM installation used by this profile.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-dan';
-% Atlas images and SPM batch templates used by the pipeline.
+config.mode = 'launchpad';
+% SPM installation used by the local input/output support code.
+config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
+% Atlas images and SPM batch templates used by local support code.
 config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
 % Standalone DICOM-to-NIfTI converter (sibling repository).
 config.d2n_root = '/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest';
@@ -17,11 +17,11 @@ config.recenter_before_normalization = 'Yes';
 config.zero_background = 'No';
 % Remove temporary files after successful output promotion.
 config.cleanup_on_success = true;
-% PCA implementations to try in order.
-config.pca_order = {'repo_legacy'; 'callable_pca'};
-% Required MATLAB release without the leading R; empty accepts any release.
-config.required_matlab_release = '2010b';
-% Apply the bone-segmentation cleanup step.
+% PCA implementations to try in order; remote means the backend owns PCA.
+config.pca_order = {'remote'};
+% Required local MATLAB release; empty accepts any release.
+config.required_matlab_release = '';
+% Apply bone cleanup when processing locally; remote processing owns its copy.
 config.bone_enabled = true;
 % Final attenuation-map Gaussian smoothing width in millimetres.
 config.fwhm = 0;
@@ -29,47 +29,47 @@ config.fwhm = 0;
 config.aliasing_default = 1;
 % Reference policy: 'umap-required' discovers and validates a UMAP reference;
 % 'none' uses MPRAGE-only collection.
-config.io_policy.reference = 'umap-required';
+config.io_policy.reference = 'none';
 % Output policy: 'nifti-and-dicom' promotes NIfTI and writes DICOM;
 % 'nifti-only' skips DICOM output.
-config.io_policy.output = 'nifti-and-dicom';
+config.io_policy.output = 'nifti-only';
 % GUI policy: 'mMR' uses the MPRAGE+UTE/UMAP UI;
 % 'mprage-only' keeps MPRAGE/aliasing controls but bypasses UTE/UMAP controls.
-config.io_policy.gui = 'mMR';
+config.io_policy.gui = 'mprage-only';
 % Compatibility baseline: empty disables baseline drift comparison;
 % a profile name requires all non-policy settings to match that baseline.
-config.compatibility_profile = '';
+config.compatibility_profile = 'launchpad';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'Local MATLAB (Near-Parity to Launchpad)';
+config.presentation.display_name = '[DEPRECATED] Launchpad - MPRAGE Only';
 config.presentation.description = ...
-    '[Matlab 7.11 R2010b REQUIRED] customized configuration aimed at best approximating Launchpad results.';
+    'Use MLSC as the replacement remote/cluster workflow.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
-config.presentation.order = 90;
+config.presentation.order = 81;
 
 % FreeSurfer environment command.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';
 % Runtime library directory prepended for the FreeSurfer child process.
 config.normalization.child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
 % Host that runs FreeSurfer normalization.
-config.normalization.host = '127.0.0.1';
+config.normalization.host = '172.27.25.134';
 % Use cluster submission for normalization: 'Yes' or 'No'.
-config.normalization.cluster = 'No';
-% Remote normalization scratch root; empty for localhost.
-config.normalization.host_folder = '';
+config.normalization.cluster = 'Yes';
+% Remote normalization scratch root.
+config.normalization.host_folder = '/cluster/scratch/monday/';
 
-% Launchpad SSH host; empty for local use.
-config.launchpad.host = '';
-% Compiled Launchpad runner; empty for local use.
-config.launchpad.runner = '';
-% MATLAB Compiler Runtime root; empty for local use.
-config.launchpad.mcr_root = '';
-% Compiled backend defaults MAT file; empty for local use.
-config.launchpad.defaults_mat = '';
-% Remote batch-template directory; empty for local use.
-config.launchpad.batch_templates = '';
-% PBS queue override; empty for local use.
+% Launchpad SSH host.
+config.launchpad.host = '172.27.25.134';
+% Compiled Launchpad runner script.
+config.launchpad.runner = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/run_Pseudo_CT_launchpad.sh';
+% MATLAB Compiler Runtime root used by the compiled backend.
+config.launchpad.mcr_root = '/usr/pubsw/common/matlab/7.11/';
+% Defaults MAT file passed to the compiled backend.
+config.launchpad.defaults_mat = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/default_pseudo_CT_package_deployed.mat';
+% Atlas and SPM batch templates passed to the compiled backend.
+config.launchpad.batch_templates = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/Batch_atlas';
+% PBS queue override; empty uses the subject-count heuristic.
 config.launchpad.queue = '';
-% Remote scratch root; empty for local use.
-config.launchpad.scratch = '';
+% Remote scratch root for staged subjects.
+config.launchpad.scratch = '/cluster/scratch/monday/';
 end
