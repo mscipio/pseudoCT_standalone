@@ -1,5 +1,10 @@
 # Legacy Launchpad Parity
 
+> Historical reference only. The Launchpad path is deprecated and not
+> supported for processing; current profiles are `local-current`,
+> `local-legacy`, and `mlsc-legacy`. This document records the historical
+> parity boundary.
+
 ## Decision
 
 Historical compatibility is defined by the observed production boundary, not by

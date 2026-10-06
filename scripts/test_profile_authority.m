@@ -29,8 +29,8 @@ for ii = 1:length(profiles)
     assert(isempty(strfind(profiles(ii).file_path, 'deprecated')));
     assert(strcmp(fileparts(profiles(ii).file_path), profile_dir));
 end
-expected_active = {'devel'; 'local-current'; 'local-mprage-only'; ...
-    'mlsc'; 'mlsc-mprage-only'};
+expected_active = {'devel'; 'local-current'; 'local-legacy'; ...
+    'local-mprage-only'; 'mlsc-legacy'; 'mlsc-mprage-only'};
 assert(length(profiles) == length(expected_active));
 assert(isequal(sort(names(:)), sort(expected_active)));
 
@@ -65,7 +65,7 @@ assert(strcmp(without_local(fallback_index).group, 'recommended'));
 assert(~strcmp(ordered_profiles(1).display_name, ordered_profiles(1).name));
 local = configs{local_config_index(names, 'local-current')};
 local_mprage = configs{local_config_index(names, 'local-mprage-only')};
-mlsc = configs{local_config_index(names, 'mlsc')};
+mlsc = configs{local_config_index(names, 'mlsc-legacy')};
 mlsc_mprage = configs{local_config_index(names, 'mlsc-mprage-only')};
 assert(strcmp(local.mode, 'local'));
 assert(strcmp(mlsc.mode, 'mlsc'));
@@ -265,8 +265,8 @@ end
 % Production/release profiles must use the canonical shared-filesystem path.
 canonical_aliasing_root = ['/usr/pubsw/packages/mrpet/standalone_apps/' ...
     'correct_aliasing/correct_aliasing_standalone-latest'];
-production_names = {'local-current', 'local-mprage-only', 'mlsc', ...
-    'mlsc-mprage-only'};
+production_names = {'local-current', 'local-legacy', 'local-mprage-only', ...
+    'mlsc-legacy', 'mlsc-mprage-only'};
 for ii = 1:length(production_names)
     idx = find(strcmp(names, production_names{ii}), 1);
     assert(~isempty(idx));
@@ -324,6 +324,224 @@ assert(~isempty(strfind(atlas_source, 'correct_aliasing(')));
 assert(isempty(strfind(entry_source, 'correct_aliasing(')));
 assert(~isempty(strfind(entry_source, '''check_aliasing''')));
 assert(~isempty(strfind(launchpad_source, 'check_aliasing')));
+
+% --- T009 focused 2x2 architecture/parity/isolation checks (no live backend) ---
+list_source = read_text(fullfile(root_dir, 'src', 'config', ...
+    'pseudo_CT_list_profiles.m'));
+assert(~isempty(strfind(list_source, 'dir(fullfile(profile_dir, ''*.m''))')));
+assert(length(files) == 6);
+assert(exist(fullfile(profile_dir, 'mlsc.m'), 'file') ~= 2);
+assert(~ismember('mlsc', names));
+
+canonical_names = {'local-current'; 'local-legacy'; 'mlsc-legacy'; ...
+    'local-mprage-only'; 'mlsc-mprage-only'; 'devel'};
+for ii = 1:length(canonical_names)
+    resolved = pseudo_CT_load_profile(canonical_names{ii}, config_root);
+    assert(isstruct(resolved) && numel(resolved) == 1);
+end
+aliased = pseudo_CT_load_profile('mlsc', config_root);
+assert(isequal(aliased, configs{local_config_index(names, 'mlsc-legacy')}));
+
+loader_source = read_text(fullfile(root_dir, 'src', 'config', ...
+    'pseudo_CT_load_profile.m'));
+assert(~isempty(strfind(loader_source, 'strcmp(trimmed, ''mlsc'')')));
+assert(~isempty(strfind(loader_source, 'trimmed = ''mlsc-legacy''')));
+assert(~isempty(strfind(entry_source, 'strcmp(requested, ''mlsc'')')));
+assert(~isempty(strfind(entry_source, 'requested = ''mlsc-legacy''')));
+
+rejected_fixed = {'mlsc-current'; 'launchpad'; 'launchpad-mprage-only'; ...
+    'local-near-parity-r2010b'};
+for ii = 1:length(rejected_fixed)
+    rejected_ok = false;
+    try
+        pseudo_CT_load_profile(rejected_fixed{ii}, config_root);
+    catch ME
+        rejected_ok = strcmp(ME.identifier, 'pseudo_CT:InvalidProfile');
+    end
+    assert(rejected_ok);
+end
+for ii = 1:length(canonical_names)
+    underscored = strrep(canonical_names{ii}, '-', '_');
+    if strcmp(underscored, canonical_names{ii})
+        continue;
+    end
+    underscored_ok = false;
+    try
+        pseudo_CT_load_profile(underscored, config_root);
+    catch ME
+        underscored_ok = strcmp(ME.identifier, 'pseudo_CT:InvalidProfile');
+    end
+    assert(underscored_ok);
+end
+for ii = 1:length(configs)
+    label_ok = false;
+    try
+        pseudo_CT_load_profile(configs{ii}.presentation.display_name, ...
+            config_root);
+    catch ME
+        label_ok = strcmp(ME.identifier, 'pseudo_CT:InvalidProfile');
+    end
+    assert(label_ok);
+end
+root_on_path = ~isempty(strfind([path pathsep], [root_dir pathsep]));
+if ~root_on_path
+    addpath(root_dir, '-begin');
+end
+entrypoint_rejected = {'mlsc-current'; 'launchpad'; ...
+    'local-near-parity-r2010b'; 'local_current'; ...
+    configs{local_config_index(names, 'local-current')}.presentation.display_name};
+for ii = 1:length(entrypoint_rejected)
+    entry_ok = false;
+    try
+        run_pseudo_CT('profile', entrypoint_rejected{ii});
+    catch ME
+        entry_ok = strcmp(ME.identifier, 'run_pseudo_CT:InvalidProfile');
+    end
+    assert(entry_ok);
+end
+if ~root_on_path
+    rmpath(root_dir);
+end
+
+for ii = 1:length(configs)
+    assert(isfield(configs{ii}, 'mode'));
+    assert(isfield(configs{ii}, 'implementation'));
+    assert(ismember(configs{ii}.mode, {'local'; 'mlsc'}));
+    assert(ismember(configs{ii}.implementation, {'current'; 'legacy-v2'}));
+    assert(~strcmp(configs{ii}.mode, 'legacy'));
+    assert(~strcmp(configs{ii}.implementation, 'mlsc'));
+    assert(~(strcmp(configs{ii}.implementation, 'current') && ...
+        strcmp(configs{ii}.mode, 'mlsc')));
+end
+local_current_cfg = configs{local_config_index(names, 'local-current')};
+local_legacy_cfg = configs{local_config_index(names, 'local-legacy')};
+mlsc_legacy_cfg = configs{local_config_index(names, 'mlsc-legacy')};
+assert(strcmp(local_current_cfg.mode, 'local'));
+assert(strcmp(local_current_cfg.implementation, 'current'));
+assert(strcmp(local_legacy_cfg.mode, 'local'));
+assert(strcmp(local_legacy_cfg.implementation, 'legacy-v2'));
+assert(strcmp(mlsc_legacy_cfg.mode, 'mlsc'));
+assert(strcmp(mlsc_legacy_cfg.implementation, 'legacy-v2'));
+
+assert(isfield(local_legacy_cfg, 'legacy'));
+assert(isfield(mlsc_legacy_cfg, 'legacy'));
+assert(isfield(mlsc_legacy_cfg, 'mlsc'));
+assert(~isfield(local_legacy_cfg, 'mlsc'));
+assert(strcmp(local_legacy_cfg.legacy.runner, mlsc_legacy_cfg.legacy.runner));
+assert(strcmp(local_legacy_cfg.legacy.mcr_root, mlsc_legacy_cfg.legacy.mcr_root));
+assert(strcmp(local_legacy_cfg.legacy.defaults_mat, ...
+    mlsc_legacy_cfg.legacy.defaults_mat));
+assert(strcmp(local_legacy_cfg.legacy.batch_templates, ...
+    mlsc_legacy_cfg.legacy.batch_templates));
+assert(strcmp(local_legacy_cfg.legacy.att_map, ...
+    mlsc_legacy_cfg.legacy.att_map));
+assert(strcmp(local_legacy_cfg.legacy.att_map, 'att_map.nii'));
+assert(strcmp(mlsc_legacy_cfg.legacy.runner, mlsc_legacy_cfg.mlsc.runner));
+assert(strcmp(mlsc_legacy_cfg.legacy.mcr_root, mlsc_legacy_cfg.mlsc.mcr_root));
+assert(strcmp(mlsc_legacy_cfg.legacy.defaults_mat, ...
+    mlsc_legacy_cfg.mlsc.defaults_mat));
+assert(strcmp(mlsc_legacy_cfg.legacy.batch_templates, ...
+    mlsc_legacy_cfg.mlsc.batch_templates));
+assert(strcmp(mlsc_legacy_cfg.mlsc.host, 'mlsc.nmr.mgh.harvard.edu'));
+assert(strcmp(mlsc_legacy_cfg.mlsc.shell, '/bin/bash'));
+assert(strcmp(mlsc_legacy_cfg.mlsc.partition, 'basic'));
+assert(strcmp(local_legacy_cfg.aliasing_root, mlsc_legacy_cfg.aliasing_root));
+assert(strcmp(local_legacy_cfg.atlas_root, mlsc_legacy_cfg.atlas_root));
+assert(isequal(local_legacy_cfg.pca_order, mlsc_legacy_cfg.pca_order));
+assert(strcmp(local_legacy_cfg.normalization.source_command, ...
+    mlsc_legacy_cfg.normalization.source_command));
+helper_source = read_text(fullfile(root_dir, 'src', 'core', ...
+    'pseudo_CT_run_local_legacy_subject.m'));
+assert(~isempty(strfind(helper_source, 'env -u LD_LIBRARY_PATH')));
+assert(~isempty(strfind(helper_source, 'tcsh -f -c')));
+assert(~isempty(strfind(helper_source, 'mri_normalize')));
+assert(~isempty(strfind(helper_source, 'local_shell_quote')));
+assert(~isempty(strfind(helper_source, 'legacy_att')));
+assert(~isempty(strfind(helper_source, ''' 0 ''')));
+assert(~isempty(strfind(helper_source, 'num2str(check_aliasing)')));
+assert(~isempty(strfind(helper_source, 'config.legacy.runner')));
+assert(~isempty(strfind(helper_source, 'config.legacy.att_map')));
+assert(isempty(strfind(helper_source, 'config.mlsc')));
+local_legacy_source = read_text(fullfile(root_dir, 'src', 'config', ...
+    'profiles', 'local_legacy.m'));
+assert(isempty(strfind(local_legacy_source, 'config.mlsc')));
+assert(~isempty(strfind(local_legacy_source, 'config.legacy.runner')));
+assert(~isempty(strfind(local_legacy_source, 'config.legacy.att_map')));
+assert(~isempty(strfind(local_legacy_source, 'att_map.nii')));
+generate_source = read_text(fullfile(root_dir, 'src', 'mlsc', ...
+    'mlsc_generate_slurm_script.m'));
+assert(~isempty(strfind(generate_source, ''' 0 ''')));
+assert(~isempty(strfind(generate_source, 'num2str(check_aliasing)')));
+assert(~isempty(strfind(generate_source, 'att_map.nii')));
+assert(~isempty(strfind(generate_source, 'config.mlsc')));
+assert(~isempty(strfind(generate_source, 'mlsc.freesurfer_env')));
+
+assert(isempty(strfind(helper_source, 'glnxa64')));
+assert(isempty(strfind(helper_source, 'setenv')));
+assert(isempty(strfind(helper_source, 'export')));
+assert(isempty(strfind(helper_source, 'LD_LIBRARY_PATH=')));
+lower_helper = lower(helper_source);
+isolation_forbidden = {'passwordentrydialog'; 'ganymed'; 'ssh'; 'scp'; ...
+    'sbatch'; 'squeue'; 'sacct'; 'mlsc_backend'; 'mlsc_lifecycle'; ...
+    'mlsc_progress'; 'mlsc_evidence'; 'preflight'; 'generate_slurm'; ...
+    '.mlsc_progress'};
+for ii = 1:length(isolation_forbidden)
+    assert(isempty(strfind(lower_helper, isolation_forbidden{ii})));
+end
+mlsc_dir_files = dir(fullfile(root_dir, 'src', 'mlsc', '*.m'));
+assert(~isempty(mlsc_dir_files));
+for ii = 1:length(mlsc_dir_files)
+    assert(isempty(strfind(lower(mlsc_dir_files(ii).name), 'local')));
+end
+assert(exist(fullfile(root_dir, 'src', 'core', ...
+    'pseudo_CT_run_local_legacy_subject.m'), 'file') == 2);
+% Intentional divergence (not a failure): the historical local-current path
+% keeps its setenv-prepend model in run_normalization_cmd, while the new
+% local-legacy helper uses isolated env -u. Both are pinned against drift.
+remote_source = read_text(fullfile(root_dir, 'src', 'remote', ...
+    'run_normalization_cmd.m'));
+assert(~isempty(strfind(remote_source, 'setenv LD_LIBRARY_PATH')));
+assert(~isempty(strfind(remote_source, 'tcsh -f -c')));
+
+assert(~isempty(strfind(generate_source, 'env -u LD_LIBRARY_PATH')));
+assert(~isempty(strfind(generate_source, 'tcsh -f -c')));
+assert(~isempty(strfind(generate_source, '.mlsc_progress')));
+lifecycle_source = read_text(fullfile(root_dir, 'src', 'mlsc', ...
+    'mlsc_lifecycle.m'));
+assert(~isempty(strfind(lifecycle_source, 'att_map.nii')));
+progress_source = read_text(fullfile(root_dir, 'src', 'mlsc', ...
+    'mlsc_progress.m'));
+assert(~isempty(strfind(progress_source, '.mlsc_progress')));
+
+r2010b_files = {fullfile(root_dir, 'src', 'core', ...
+    'pseudo_CT_run_local_legacy_subject.m'); ...
+    fullfile(root_dir, 'src', 'config', 'pseudo_CT_load_profile.m'); ...
+    fullfile(root_dir, 'src', 'config', 'pseudo_CT_list_profiles.m'); ...
+    fullfile(root_dir, 'src', 'ui', 'pseudo_CT_profile_selector.m'); ...
+    fullfile(root_dir, 'src', 'ui', 'pseudo_CT_profile_selector_layout.m'); ...
+    fullfile(root_dir, 'src', 'ui', 'pseudo_CT_prepare_profile_choices.m'); ...
+    fullfile(root_dir, 'run_pseudo_CT.m'); ...
+    fullfile(root_dir, 'src', 'remote', 'run_normalization_cmd.m'); ...
+    fullfile(root_dir, 'src', 'config', 'profiles', 'local_legacy.m'); ...
+    fullfile(root_dir, 'src', 'config', 'profiles', 'mlsc_legacy.m'); ...
+    fullfile(root_dir, 'src', 'config', 'profiles', 'local_current.m')};
+for ii = 1:length(r2010b_files)
+    seam_source = read_text(r2010b_files{ii});
+    assert(isempty(strfind(seam_source, 'strjoin(')));
+    assert(isempty(strfind(seam_source, 'addParameter')));
+    assert(isempty(strfind(seam_source, 'string(')));
+end
+
+% --- T009 F2 local-legacy behavioral fixture (non-live, deterministic) ---
+% Fake local commands and artifacts prove behavior, not source strings:
+% spaced paths exercise POSIX single-quote handling through real system
+% calls; nonzero runner exit and success-but-missing att_map both reject.
+% dcm2nii is shadowed with a fixture copy stub, mri_normalize is a fake
+% PATH executable, and each runner is a fixture shell script. nifti-only
+% plus no-cleanup isolates runner and verification without live DICOM
+% work; production nifti-and-dicom parity is asserted separately above.
+% R2010b-safe char-only.
+local_legacy_behavioral_fixture(local_legacy_cfg);
 
 fprintf(['Profile authority tests passed: %d dynamically discovered profiles, ', ...
     'mode-conditional schemas/resources, exact MLSC policies and metadata, ', ...
@@ -449,5 +667,213 @@ end
 function local_cleanup(directory)
 if exist(directory, 'dir') == 7
     rmdir(directory, 's');
+end
+end
+
+function local_legacy_behavioral_fixture(base_config)
+fixture_root = [tempname ' with space'];
+mkdir(fixture_root);
+fixture_cleanup = onCleanup(@() local_cleanup(fixture_root)); %#ok<NASGU>
+stub_dir = fullfile(fixture_root, 'stub dir');
+fake_bin = fullfile(fixture_root, 'fake bin');
+fixture_data = fullfile(fixture_root, 'fixture data with space');
+local_mkdir(stub_dir);
+local_mkdir(fake_bin);
+local_mkdir(fixture_data);
+local_write(fullfile(stub_dir, 'dcm2nii.m'), ...
+    ['function out_path = dcm2nii(in_path, out_path, varargin)' char(10) ...
+     'if ~ischar(in_path) || ~ischar(out_path)' char(10) ...
+     'error(''fixture:InvalidPath'', ''paths must be char'');' char(10) ...
+     'end' char(10) ...
+     '[copy_ok, copy_msg] = copyfile(in_path, out_path, ''f'');' char(10) ...
+     'if ~copy_ok' char(10) ...
+     'error(''fixture:CopyFailed'', ''copy failed: %s'', copy_msg);' char(10) ...
+     'end' char(10) 'end' char(10)]);
+local_write(fullfile(fake_bin, 'mri_normalize'), ...
+    ['#!/bin/bash' char(10) ...
+     'printf ''%s\n'' "$1" >> "$LOCAL_LEGACY_FS_LOG"' char(10) ...
+     'printf ''%s\n'' "$2" >> "$LOCAL_LEGACY_FS_LOG"' char(10) ...
+     'cp -- "$1" "$2"' char(10)]);
+mcr_dir = fullfile(fixture_data, 'mcr root with space');
+batch_dir = fullfile(fixture_data, 'batch templates with space');
+atlas_dir = fullfile(fixture_data, 'atlas root with space');
+local_mkdir(mcr_dir);
+local_mkdir(batch_dir);
+local_mkdir(atlas_dir);
+defaults_file = fullfile(fixture_data, 'defaults file with space.mat');
+local_write(defaults_file, 'fixture');
+env_file = fullfile(fixture_data, 'freesurfer env with space');
+local_write(env_file, ['setenv LOCAL_LEGACY_FIXTURE 1' char(10)]);
+input_dir = fullfile(fixture_data, 'input dir with space');
+local_mkdir(input_dir);
+input_file = fullfile(input_dir, 'input image with space.nii');
+local_write(input_file, 'MPRAGE-FIXTURE');
+runner_ok = fullfile(fixture_data, 'runner ok with space.sh');
+runner_fail = fullfile(fixture_data, 'runner fail with space.sh');
+runner_noatt = fullfile(fixture_data, 'runner noatt with space.sh');
+runner_body = ['printf ''%s\n'' "$1" >> "$LOCAL_LEGACY_RUNNER_LOG"' char(10) ...
+    'printf ''%s\n'' "$2" >> "$LOCAL_LEGACY_RUNNER_LOG"' char(10) ...
+    'printf ''%s\n'' "$3" >> "$LOCAL_LEGACY_RUNNER_LOG"' char(10) ...
+    'printf ''%s\n'' "$4" >> "$LOCAL_LEGACY_RUNNER_LOG"' char(10) ...
+    'printf ''%s\n'' "$5" >> "$LOCAL_LEGACY_RUNNER_LOG"' char(10) ...
+    'printf ''%s\n'' "$6" >> "$LOCAL_LEGACY_RUNNER_LOG"' char(10)];
+local_write(runner_ok, ['#!/bin/bash' char(10) runner_body ...
+    'att_dir=$(dirname "$2")' char(10) ...
+    'printf ''fixture-att-map'' > "$att_dir/att_map.nii"' char(10) ...
+    'exit 0' char(10)]);
+local_write(runner_fail, ['#!/bin/bash' char(10) runner_body 'exit 7' char(10)]);
+local_write(runner_noatt, ['#!/bin/bash' char(10) runner_body 'exit 0' char(10)]);
+fs_log = fullfile(fixture_data, 'fs.log');
+runner_log = fullfile(fixture_data, 'runner.log');
+local_legacy_make_executable(fullfile(fake_bin, 'mri_normalize'));
+local_legacy_make_executable(runner_ok);
+local_legacy_make_executable(runner_fail);
+local_legacy_make_executable(runner_noatt);
+old_matlab_path = path();
+old_path_env = getenv('PATH');
+old_fs_env = getenv('LOCAL_LEGACY_FS_LOG');
+old_runner_env = getenv('LOCAL_LEGACY_RUNNER_LOG');
+addpath(stub_dir, '-begin');
+clear('dcm2nii');
+rehash;
+stub_cleanup = onCleanup(@() local_legacy_restore_stub(old_matlab_path)); %#ok<NASGU>
+setenv('PATH', [fake_bin pathsep old_path_env]);
+setenv('LOCAL_LEGACY_FS_LOG', fs_log);
+setenv('LOCAL_LEGACY_RUNNER_LOG', runner_log);
+env_cleanup = onCleanup(@() local_legacy_restore_env(old_path_env, old_fs_env, old_runner_env)); %#ok<NASGU>
+cfg_ok = base_config;
+cfg_ok.atlas_root = atlas_dir;
+cfg_ok.normalization.source_command = ['source ' env_file];
+cfg_ok.io_policy.output = 'nifti-only';
+cfg_ok.cleanup_on_success = false;
+cfg_ok.legacy.runner = runner_ok;
+cfg_ok.legacy.mcr_root = mcr_dir;
+cfg_ok.legacy.defaults_mat = defaults_file;
+cfg_ok.legacy.batch_templates = batch_dir;
+temp_ok = fullfile(fixture_data, 'temp ok with space');
+proc_ok = fullfile(fixture_data, 'proc ok with space');
+if exist(fs_log, 'file') == 2
+    delete(fs_log);
+end
+if exist(runner_log, 'file') == 2
+    delete(runner_log);
+end
+job_ok = struct('mprage_fn', input_file, 'temp_dir', temp_ok, 'processing_dir', proc_ok);
+job_ok.correct_aliasing = 1;
+ok = pseudo_CT_run_local_legacy_subject(job_ok, cfg_ok, 1, 1, false);
+assert(ok == 1);
+seed_ok = fullfile(temp_ok, 'mprage.nii');
+normalized_ok = fullfile(temp_ok, 'mprage_normalized.nii');
+assert(exist(seed_ok, 'file') == 2);
+assert(exist(normalized_ok, 'file') == 2);
+assert(dir(normalized_ok).bytes > 0);
+assert(exist(fullfile(temp_ok, 'att_map.nii'), 'file') == 2);
+assert(dir(fullfile(temp_ok, 'att_map.nii')).bytes > 0);
+assert(exist(fullfile(proc_ok, 'att_map.nii'), 'file') == 2);
+fs_lines = local_legacy_read_lines(fs_log);
+assert(length(fs_lines) == 2);
+assert(strcmp(fs_lines{1}, seed_ok));
+assert(strcmp(fs_lines{2}, normalized_ok));
+runner_lines = local_legacy_read_lines(runner_log);
+assert(length(runner_lines) == 6);
+assert(strcmp(runner_lines{1}, mcr_dir));
+assert(strcmp(runner_lines{2}, normalized_ok));
+assert(strcmp(runner_lines{3}, batch_dir));
+assert(strcmp(runner_lines{4}, '0'));
+assert(strcmp(runner_lines{5}, '1'));
+assert(strcmp(runner_lines{6}, defaults_file));
+cfg_fail = cfg_ok;
+cfg_fail.legacy.runner = runner_fail;
+temp_fail = fullfile(fixture_data, 'temp fail with space');
+proc_fail = fullfile(fixture_data, 'proc fail with space');
+if exist(fs_log, 'file') == 2
+    delete(fs_log);
+end
+if exist(runner_log, 'file') == 2
+    delete(runner_log);
+end
+job_fail = struct('mprage_fn', input_file, 'temp_dir', temp_fail, 'processing_dir', proc_fail);
+job_fail.correct_aliasing = 1;
+failed = pseudo_CT_run_local_legacy_subject(job_fail, cfg_fail, 1, 1, false);
+assert(failed == 0);
+normalized_fail = fullfile(temp_fail, 'mprage_normalized.nii');
+assert(exist(normalized_fail, 'file') == 2);
+assert(exist(fullfile(temp_fail, 'att_map.nii'), 'file') ~= 2);
+assert(exist(fullfile(proc_fail, 'att_map.nii'), 'file') ~= 2);
+fail_runner_lines = local_legacy_read_lines(runner_log);
+assert(length(fail_runner_lines) == 6);
+assert(strcmp(fail_runner_lines{2}, normalized_fail));
+cfg_noatt = cfg_ok;
+cfg_noatt.legacy.runner = runner_noatt;
+temp_noatt = fullfile(fixture_data, 'temp noatt with space');
+proc_noatt = fullfile(fixture_data, 'proc noatt with space');
+if exist(fs_log, 'file') == 2
+    delete(fs_log);
+end
+if exist(runner_log, 'file') == 2
+    delete(runner_log);
+end
+job_noatt = struct('mprage_fn', input_file, 'temp_dir', temp_noatt, 'processing_dir', proc_noatt);
+job_noatt.correct_aliasing = 1;
+missing = pseudo_CT_run_local_legacy_subject(job_noatt, cfg_noatt, 1, 1, false);
+assert(missing == 0);
+normalized_noatt = fullfile(temp_noatt, 'mprage_normalized.nii');
+assert(exist(normalized_noatt, 'file') == 2);
+assert(exist(fullfile(temp_noatt, 'att_map.nii'), 'file') ~= 2);
+assert(exist(fullfile(proc_noatt, 'att_map.nii'), 'file') ~= 2);
+noatt_runner_lines = local_legacy_read_lines(runner_log);
+assert(length(noatt_runner_lines) == 6);
+assert(strcmp(noatt_runner_lines{2}, normalized_noatt));
+path(old_matlab_path);
+clear('dcm2nii');
+rehash;
+setenv('PATH', old_path_env);
+setenv('LOCAL_LEGACY_FS_LOG', old_fs_env);
+setenv('LOCAL_LEGACY_RUNNER_LOG', old_runner_env);
+fprintf('Local-legacy behavioral fixture passed: spaced quoting, runner failure, missing att_map.\n');
+end
+
+function quoted = local_legacy_shell_quote(value)
+single_quote = char(39);
+quoted = single_quote;
+for ii = 1:length(value)
+    if value(ii) == single_quote
+        quoted = [quoted single_quote char(34) single_quote char(34) single_quote]; %#ok<AGROW>
+    else
+        quoted = [quoted value(ii)]; %#ok<AGROW>
+    end
+end
+quoted = [quoted single_quote];
+end
+
+function local_legacy_make_executable(file_path)
+[status, detail] = system(['/bin/chmod 700 ' local_legacy_shell_quote(file_path)]);
+assert(status == 0, detail);
+end
+
+function lines = local_legacy_read_lines(file_path)
+fid = fopen(file_path, 'r');
+assert(fid ~= -1);
+text = fread(fid, inf, '*char')';
+fclose(fid);
+lines = regexp(text, '\r\n|\n|\r', 'split');
+if ~isempty(lines) && isempty(lines{end})
+    lines = lines(1:end-1);
+end
+lines = lines(:);
+end
+
+function local_legacy_restore_env(old_path, old_fs, old_runner)
+setenv('PATH', old_path);
+setenv('LOCAL_LEGACY_FS_LOG', old_fs);
+setenv('LOCAL_LEGACY_RUNNER_LOG', old_runner);
+end
+
+function local_legacy_restore_stub(old_path)
+clear('dcm2nii');
+path(old_path);
+try
+    rehash;
+catch %#ok<CTCH>
 end
 end

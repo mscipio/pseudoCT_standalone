@@ -2,18 +2,27 @@
 
 ## Purpose
 
-MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR MPRAGE inputs. Three execution profiles: `local-current` (editable MATLAB), `local-near-parity-r2010b`, and `launchpad` (legacy compiled backend via SSH).
+MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR MPRAGE inputs. Six active profiles: `local-current` (current source MATLAB, local), `local-legacy` (legacy v2.0 compiled Aether backend, direct-local), `mlsc-legacy` (legacy v2.0 compiled Aether backend, MLSC via Slurm), plus specialized `local-mprage-only`, `mlsc-mprage-only`, and `devel`. The bare key `mlsc` is only a deprecated alias for `mlsc-legacy`. Deprecated `launchpad`, `launchpad-mprage-only`, and `local-near-parity-r2010b` live under `src/config/profiles/deprecated/`, are excluded from discovery, and are not supported.
+
+Implementation (`current` vs `legacy-v2`) and execution (`local` vs `mlsc`)
+are independent profile fields. Three profiles exist now
+(`local-current`, `local-legacy`, `mlsc-legacy`); `mlsc-current` is a
+reserved future combination that does not exist and cannot be selected. The
+selector shows exactly three Recommended rows (`LOCAL - Current` with a dev
+note that the final version label is set at release prep, `LOCAL - Legacy
+v2.0 (Aether)`, `MLSC - Legacy v2.0 (Aether)`) and a Specialized / Custom
+disclosure (collapsed on every open) holding the three specialized profiles.
 
 ## Entry Points
 
-- `run_pseudo_CT.m` — primary entrypoint with 3 profiles, named arguments, and GUI integration. Profiles: `local-current` (default), `local-near-parity-r2010b`, `launchpad`.
+- `run_pseudo_CT.m` — primary entrypoint with 6 profiles, named arguments, and GUI integration. Profiles: `local-current` (default), `local-legacy`, `mlsc-legacy`, `local-mprage-only`, `mlsc-mprage-only`, `devel` (`mlsc` resolves to `mlsc-legacy` as a deprecated alias).
 
   Call with no arguments to open the profile selector GUI, then the single-subject GUI.
   Call with named arguments for CLI/script mode:
   ```
   run_pseudo_CT()
   run_pseudo_CT('profile', 'local-current')
-  run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch')
+  run_pseudo_CT('profile', 'mlsc-legacy', 'subjects', 'batch')
   run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, 'correct_aliasing', 0)
   ```
 
@@ -30,7 +39,7 @@ MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR
 | External `Batch_atlas/` | Atlas NIfTI images + SPM batch `.mat` templates, configured by `atlas_root` |
 | `vers/` | Local overrides for `spm_vol_nifti`, `spm_preproc_write8`, `spm_dicom_convert` |
 | External `spm8-r6313/` | Deployment-provided SPM8 installation, configured by `spm_root` |
-| `ssh2_v2_m1_r5/` | SSH/SCP toolbox for Launchpad path |
+| `ssh2_v2_m1_r5/` | SSH/SCP toolbox for the deprecated Launchpad path |
 | `imgaussian/` | External image filtering (MEX/C) |
 
 ## Dependencies & Environment
@@ -43,16 +52,16 @@ MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR
   its release archives.
 - **DICOM-to-NIfTI conversion** — the standalone converter at the selected
   profile's `config.d2n_root`; this external directory is validated during
-  startup for both local and Launchpad execution.
-- **Launchpad deployment (launchpad profiles only)** — the compiled runner, MCR,
+  startup for both local and deprecated Launchpad execution.
+- **Launchpad deployment (deprecated launchpad profiles only)** — the compiled runner, MCR,
   defaults MAT, and remote batch-template directory are provisioned separately
   and configured through `config.launchpad.*`.
-- **FreeSurfer 5.3** — provisioned externally and sourced through the selected profile's `config.normalization.source_command` (currently `/usr/local/freesurfer/nmr-stable53-env`). No FreeSurfer setup script is shipped under `src/config/`. Local profiles set normalization to localhost; Launchpad profiles use their configured remote host and cluster path.
-- **Java SSH library** — the Launchpad SSH path uses the bundled custom
+- **FreeSurfer 5.3** — provisioned externally and sourced through the selected profile's `config.normalization.source_command` (currently `/usr/local/freesurfer/nmr-stable53-env`). No FreeSurfer setup script is shipped under `src/config/`. Local profiles set normalization to localhost with direct synchronous calls (no SSH/Slurm); deprecated Launchpad profiles use their configured remote host and cluster path.
+- **Java SSH library** — the deprecated Launchpad SSH path uses the bundled custom
   `ganymed-ssh2-m1.jar` under `ssh2_v2_m1_r5/`. `atlas_based_attenuation_map.m`
   may additionally load `ganymed-ssh2-build250.jar` when the external atlas
   bundle provides it.
-- **Aliasing and recentering (local profiles only)** — the external standalone selected by `config.aliasing_root` (the production profiles use `/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest`) owns both operations. The field is required in all 6 profiles by `pseudo_CT_load_profile.m`; `setup_pseudo_CT_paths.m` validates it in preflight for local profiles only (error id `AliasingRootMissing`), adds it to the MATLAB path with `addpath(..., '-begin')`, and runs `clear correct_aliasing; rehash` after. The GUI exposes independent controls, and the local OR gate calls `correct_aliasing` with independent `AliasCorrection` and `Centering` flags only when either is requested. A successful result with `details.*.performed = false` is reported as a “Not required” no-op. The facade requires MATLAB R2019+; on R2010b it is not called or inspected, the original input is retained, and the run continues with an unavailable diagnostic rather than failing. Launchpad profiles skip this validation and import — only aliasing is delegated to the compiled `Pseudo_CT_launchpad` via remote `check_aliasing`, unchanged; no local recentering is performed.
+- **Aliasing and recentering (local profiles only)** — the external standalone selected by `config.aliasing_root` (the production profiles use `/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest`) owns both operations. The field is required in all 6 profiles by `pseudo_CT_load_profile.m`; `setup_pseudo_CT_paths.m` validates it in preflight for local profiles only (error id `AliasingRootMissing`), adds it to the MATLAB path with `addpath(..., '-begin')`, and runs `clear correct_aliasing; rehash` after. The GUI exposes independent controls, and the local OR gate calls `correct_aliasing` with independent `AliasCorrection` and `Centering` flags only when either is requested. A successful result with `details.*.performed = false` is reported as a “Not required” no-op. The facade requires MATLAB R2019+; on R2010b it is not called or inspected, the original input is retained, and the run continues with an unavailable diagnostic rather than failing. Deprecated Launchpad profiles skip this validation and import — only aliasing is delegated to the compiled `Pseudo_CT_launchpad` via remote `check_aliasing`, unchanged; no local recentering is performed.
 
 ## Execution Model
 
@@ -60,9 +69,23 @@ MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR
 
 1. `run_pseudo_CT` with a local profile adds `src/`, the configured external SPM package, `vers/`, `imgaussian/`, and `ssh2_v2_m1_r5/` to the MATLAB path via `setup_pseudo_CT_paths`, which validates the configured resources before path setup.
 2. Collects jobs (GUI or batch), creates `MR_PET/`, `MR_PET/tmp/`, `MR/pseudo_muMAP/` dirs.
-3. For each subject: DICOM→NIfTI, FreeSurfer normalization (via SSH or local), SPM new segment + DARTEL + inverse warp, CT→att_map, NIfTI→DICOM, QC image, output promotion, and profile-controlled cleanup of `MR_PET/tmp/`.
+3. For each subject: DICOM→NIfTI, local FreeSurfer normalization via a direct synchronous call, then per implementation: local-current runs SPM new segment + DARTEL + inverse warp in the interpreter, while local-legacy invokes the unchanged compiled backend synchronously; both continue with CT→att_map, NIfTI→DICOM, QC image, output promotion, and profile-controlled cleanup of `MR_PET/tmp/`.
 
-### Launchpad Path
+Local-legacy normalization is owned by its own helper
+`src/core/pseudo_CT_run_local_legacy_subject.m` (isolated
+`env -u LD_LIBRARY_PATH tcsh -f -c 'source ...; mri_normalize ...'`
+child); the shared `src/remote/run_normalization_cmd.m` helper is unchanged
+and serves local-current.
+
+### MLSC Path
+
+Same input/DICOM output layer, but the MLSC lifecycle authenticates over
+SSH (control path only), submits one Slurm job per subject, stages through
+node-local `$TMPDIR`, verifies copy-back of the required `att_map.nii`, and
+reuses the existing local finalization. See
+[MLSC/Slurm Pipeline](pipeline-mlsc.md).
+
+### Launchpad Path (deprecated, not supported)
 
 Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core atlas processing to a compiled Launchpad app (`Pseudo_CT_launchpad`). Polls for remote completion.
 
@@ -72,14 +95,14 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 - **Warning suppression** — the entrypoint calls `warning('off', 'all')` and restores on exit.
 - **Output folder discovery** — `pseudo_CT_resolve_output_dirs.m` walks up from the MPRAGE file to find the `MR/` parent. Outputs go to `<subject_root>/MR_PET/` (processing), `<subject_root>/MR_PET/tmp/` (intermediate), `<subject_root>/MR/pseudo_muMAP/` (DICOM).
 - **UMAP auto-discovery** — `pseudo_CT_auto_discover_ute_umap.m` looks for `MR/UMAP/*0001.*` or `MR/*UMAP*/*0001.*` relative to the MPRAGE path. Subjects without a detected UMAP are silently skipped in batch mode.
-- **Aliasing and centering** — `load_mr_4_AC.fig` provides two independent GUI controls for nose/back aliasing correction and pre-normalization MPRAGE recentering. Profile defaults are `aliasing_default = 1` and `recenter_before_normalization = 'Yes'` in all shipped profiles; batch and explicit-list jobs carry both fields. The external `correct_aliasing` facade uses the file-based API `correct_aliasing(inputPath, outputPath, 'AliasCorrection', ..., 'Centering', ..., 'Overwrite', ...)`, returning `{status, outputs, message, details}`. Its per-operation `details.*.performed` values distinguish applied operations from successful “Not required” no-ops. The local R2010b guard reports the R2019+ limitation without failing or switching to a legacy implementation. Legacy in-package implementations are preserved unmodified under `deprecated/` for reference only and are not on the active MATLAB path. Launchpad forwards only remote `check_aliasing` and performs no local recentering.
+- **Aliasing and centering** — `load_mr_4_AC.fig` provides two independent GUI controls for nose/back aliasing correction and pre-normalization MPRAGE recentering. Profile defaults are `aliasing_default = 1` and `recenter_before_normalization = 'Yes'` in all shipped profiles; batch and explicit-list jobs carry both fields. The external `correct_aliasing` facade uses the file-based API `correct_aliasing(inputPath, outputPath, 'AliasCorrection', ..., 'Centering', ..., 'Overwrite', ...)`, returning `{status, outputs, message, details}`. Its per-operation `details.*.performed` values distinguish applied operations from successful “Not required” no-ops. The local R2010b guard reports the R2019+ limitation without failing or switching to a legacy implementation. Legacy in-package implementations are preserved unmodified under `deprecated/` for reference only and are not on the active MATLAB path. Deprecated Launchpad forwards only remote `check_aliasing` and performs no local recentering.
 - **Profile fields are authoritative** — resource paths and behavior-changing settings come from the selected profile in `src/config/profiles/`; configure external resource paths there rather than relying on repository-relative directories.
-- **Current operation settings** — all shipped profiles use `aliasing_default = 1`, `recenter_before_normalization = 'Yes'`, and `zero_background = 'No'`. The historical parity comparison used `recenter_before_normalization = 'No'`; that is not the current local default. Local aliasing and recentering remain independent and are OR-gated at the external facade. Launchpad owns normalization in its remote compiled workflow: the current orchestration runs `mri_normalize` before invoking the compiled backend, and only remote `check_aliasing` is forwarded; the local recentering value is ignored and no local recentering is performed. Bone reduction remains enabled.
+- **Current operation settings** — all shipped profiles use `aliasing_default = 1`, `recenter_before_normalization = 'Yes'`, and `zero_background = 'No'`. The historical parity comparison used `recenter_before_normalization = 'No'`; that is not the current local default. Local aliasing and recentering remain independent and are OR-gated at the external facade. Deprecated Launchpad owns normalization in its remote compiled workflow: the current orchestration runs `mri_normalize` before invoking the compiled backend, and only remote `check_aliasing` is forwarded; the local recentering value is ignored and no local recentering is performed. Bone reduction remains enabled.
 - **New Segment host boundary** — one controlled subject matched the historical New Segment result on legacy PBS E5472/RHEL7/glibc 2.17. Celer R2010 compiled and interpreted runs matched each other but followed a different iterative numerical path. CPU dispatch and system-math effects were not isolated independently; this is not universal parity proof.
 
 ## Shell Mode & Compiled App
 
-- `run_pseudo_CT.m` supports a **deployed (compiled) mode** via `isdeployed`: if called with one arg pointing to a `.mat` defaults file, it loads that instead of the default profile configuration. This preserves the existing launchpad deployed mode contract.
+- `run_pseudo_CT.m` supports a **deployed (compiled) mode** via `isdeployed`: if called with one arg pointing to a `.mat` defaults file, it loads that instead of the default profile configuration. This preserves the existing legacy compiled deployed-mode contract (historical Launchpad contract).
 - Local mode has its deployed code path handled through the same unified entrypoint (in contrast to the old local entrypoint which had it commented out).
 
 ## Testing & CI

@@ -8,11 +8,19 @@ if nargin < 2 || isempty(config_root)
     config_root = fileparts(mfilename('fullpath'));
 end
 
+% Single canonical-resolution authority: accept only exact hyphenated
+% canonical keys discovered from src/config/profiles plus the deprecated
+% alias mlsc -> mlsc-legacy. Underscore spellings, display labels,
+% mlsc-current, Launchpad and near-parity names are rejected. Discovery
+% stays non-recursive so the alias creates no row.
+trimmed = strtrim(profile_name);
+if strcmp(trimmed, 'mlsc')
+    trimmed = 'mlsc-legacy';
+end
 profiles = pseudo_CT_list_profiles(config_root, false);
-requested = strrep(strtrim(profile_name), '-', '_');
 profile = struct();
 for ii = 1:length(profiles)
-    if strcmp(requested, profiles(ii).function_name)
+    if strcmp(trimmed, profiles(ii).name)
         profile = profiles(ii);
         break;
     end
@@ -37,7 +45,7 @@ if ~isstruct(config) || numel(config) ~= 1
         'Profile %s must return one config struct.', profile.name);
 end
 
-required = {'mode'; 'spm_root'; 'atlas_root'; 'd2n_root'; ...
+required = {'mode'; 'implementation'; 'spm_root'; 'atlas_root'; 'd2n_root'; ...
     'aliasing_root'; ...
     'recenter_before_normalization'; 'zero_background'; ...
     'cleanup_on_success'; 'pca_order'; 'required_matlab_release'; ...
@@ -59,6 +67,12 @@ if ~ismember(config.mode, {'local', 'launchpad', 'mlsc'})
         ['config.mode must be ''local'', ''launchpad'', or ''mlsc'' ', ...
          'in profile %s.'], profile.name);
 end
+if ~ischar(config.implementation) || ...
+        ~ismember(config.implementation, {'current', 'legacy-v2'})
+    error('pseudo_CT:InvalidProfile', ...
+        ['config.implementation must be ''current'' or ''legacy-v2'' ', ...
+         'in profile %s.'], profile.name);
+end
 if strcmp(config.mode, 'launchpad')
     require_fields(config.launchpad, ...
         {'host'; 'runner'; 'mcr_root'; 'defaults_mat'; ...
@@ -70,6 +84,12 @@ elseif strcmp(config.mode, 'mlsc')
          'nodes'; 'ntasks'; 'cpus_per_task'; 'memory'; 'time'}, ...
         'config.mlsc');
     validate_mlsc(config.mlsc, profile.name);
+end
+if strcmp(config.implementation, 'legacy-v2')
+    require_fields(config.legacy, ...
+        {'runner'; 'mcr_root'; 'defaults_mat'; 'batch_templates'; ...
+         'att_map'}, 'config.legacy');
+    validate_legacy(config.legacy, profile.name);
 end
 if ~ischar(config.aliasing_root) || isempty(strtrim(config.aliasing_root))
     error('pseudo_CT:InvalidProfile', ...
@@ -195,6 +215,33 @@ for ii = 1:length(forbidden_fields)
         error('pseudo_CT:InvalidProfile', ...
             'config.mlsc must not persist credentials or a Slurm account in profile %s.', ...
             profile_name);
+    end
+end
+end
+
+function validate_legacy(legacy, profile_name)
+string_fields = {'runner'; 'mcr_root'; 'defaults_mat'; ...
+    'batch_templates'; 'att_map'};
+for ii = 1:length(string_fields)
+    field_name = string_fields{ii};
+    if ~ischar(legacy.(field_name)) || isempty(strtrim(legacy.(field_name)))
+        error('pseudo_CT:InvalidProfile', ...
+            'config.legacy.%s must be a non-empty string in profile %s.', ...
+            field_name, profile_name);
+    end
+end
+if ~strcmp(legacy.att_map, 'att_map.nii')
+    error('pseudo_CT:InvalidProfile', ...
+        'config.legacy.att_map must be ''att_map.nii'' in profile %s.', ...
+        profile_name);
+end
+orchestration_fields = {'host'; 'shell'; 'freesurfer_env'; 'partition'; ...
+    'nodes'; 'ntasks'; 'cpus_per_task'; 'memory'; 'time'};
+for ii = 1:length(orchestration_fields)
+    if isfield(legacy, orchestration_fields{ii})
+        error('pseudo_CT:InvalidProfile', ...
+            'config.legacy must not carry orchestration field %s in profile %s.', ...
+            orchestration_fields{ii}, profile_name);
     end
 end
 end

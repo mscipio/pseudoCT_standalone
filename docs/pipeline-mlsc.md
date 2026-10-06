@@ -16,16 +16,24 @@ R2010b.
 
 ## Profile contract
 
+The MLSC column of the implementation x execution matrix
+(see [pipeline-local.md](pipeline-local.md)) is the legacy v2.0 compiled
+implementation (Aether lineage) run on the cluster via Slurm. The bare key
+`mlsc` is only a deprecated alias for `mlsc-legacy` and creates no selector
+row. The `mlsc-current` combination (current source MATLAB on MLSC) is a
+reserved future combination: it does not exist, cannot be selected, and no
+`mlsc_current.m` profile is shipped.
+
 The profile selector separates the standard remote workflow from the specialized
 MPRAGE-only workflow:
 
 | Profile | Input/reference policy | Output policy | Use |
 |---|---|---|---|
-| `mlsc` | Standard MPRAGE + required UMAP reference | NIfTI and DICOM | Recommended remote/cluster profile |
-| `mlsc_mprage_only` | MPRAGE with no reference required | NIfTI only | Specialized, not recommended for routine use |
+| `mlsc-legacy` | Standard MPRAGE + required UMAP reference | NIfTI and DICOM | Recommended remote/cluster profile |
+| `mlsc-mprage-only` | MPRAGE with no reference required | NIfTI only | Specialized, not recommended for routine use |
 
-`mlsc` uses the normal mMR GUI and discovers the UMAP from the subject's MR
-directory. `mlsc_mprage_only` uses the MPRAGE-only GUI, does not require a UMAP,
+`mlsc-legacy` uses the normal mMR GUI and discovers the UMAP from the subject's MR
+directory. `mlsc-mprage-only` uses the MPRAGE-only GUI, does not require a UMAP,
 and skips DICOM generation because there is no reference geometry. Both profiles
 use the same MLSC/Slurm resources and node-local processing contract.
 
@@ -34,8 +42,8 @@ live readiness checks remain open. Other specialized profiles are retained for k
 compatibility, validation, or development purposes; do not select one without a
 specific reason.
 
-**Launchpad is currently unavailable.** It will soon be discontinued/decommissioned
-and is being replaced by MLSC. Its source and profile are retained only for
+**Launchpad is deprecated and not supported.** It will soon be discontinued/decommissioned
+and is being replaced by MLSC. Its deprecated source and profile are retained only for
 transitional/reference purposes and must not be treated as a recommended or
 usable remote workflow.
 
@@ -133,8 +141,8 @@ MPRAGE into the existing shared subject temporary directory:
 <subject_root>/MR_PET/tmp/mprage.nii
 ```
 
-For the standard `mlsc` profile, the MPRAGE and its UMAP reference are collected
-using the normal input rules. For `mlsc_mprage_only`, an MPRAGE NIfTI or converted
+For the standard `mlsc-legacy` profile, the MPRAGE and its UMAP reference are collected
+using the normal input rules. For `mlsc-mprage-only`, an MPRAGE NIfTI or converted
 DICOM input is sufficient and no UMAP is required.
 
 The shared temporary directory is the control and staging location. Before a
@@ -282,7 +290,7 @@ Only an eligible MLSC lifecycle result proceeds to the existing mode-neutral
 post-remote finalization path. It is reused rather than duplicated:
 
 1. Apply the configured local background-mask step when requested.
-2. For the standard `mlsc` profile, convert the shared `att_map.nii` to DICOM
+2. For the standard `mlsc-legacy` profile, convert the shared `att_map.nii` to DICOM
    using the discovered UMAP geometry and write the series under
    `MR/pseudo_muMAP/`.
 3. Use `pseudo_CT_promote_final_outputs` to stage and promote the required
@@ -290,7 +298,7 @@ post-remote finalization path. It is reused rather than duplicated:
 4. On successful promotion, remove the shared `MR_PET/tmp/` directory when
    `cleanup_on_success` is enabled.
 
-The `mlsc_mprage_only` profile skips DICOM output by policy and promotes the
+The `mlsc-mprage-only` profile skips DICOM output by policy and promotes the
 NIfTI attenuation map plus any available optional outputs. If promotion fails,
 the temporary files are preserved and the subject is reported as failed.
 
@@ -306,7 +314,7 @@ Each requested subject receives the usual local log under `MR_PET`, named in the
 form:
 
 ```text
-pseudo_CT_mlsc_<runid>.log
+pseudo_CT_mlsc-legacy_<runid>.log
 ```
 
 The log records the selected profile and mode, input and shared temporary paths,
@@ -375,7 +383,7 @@ demonstrate script and lifecycle behavior but do not replace the live checks.
   `sbatch --parsable` returns one numeric job ID, and that the machine-
   readable `squeue`/`sacct` queries work. No pseudoCT processing is required
   in this step.
-- **D) One-subject MLSC E2E.** Run one subject through the standard `mlsc`
+- **D) One-subject MLSC E2E.** Run one subject through the standard `mlsc-legacy`
   profile and verify node-local `mri_normalize` and compiled-runner execution,
   required and optional outputs, non-empty shared copy-back, lifecycle logs and
   evidence, existing local finalization, DICOM output, and cleanup of both

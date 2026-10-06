@@ -205,6 +205,44 @@
             </figcaption>
           </figure>
 
+          <p>
+            PseudoCT uses profile-based execution. Implementation
+            (<code>current</code> source MATLAB vs <code>legacy-v2</code>
+            compiled Aether backend) and execution (<code>local</code>
+            workstation vs <code>mlsc</code> cluster via Slurm) are
+            independent properties:
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>Local workstation</th>
+                <th>MLSC cluster (Slurm)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Current source MATLAB</td>
+                <td><code>local-current</code> (available now)</td>
+                <td><code>mlsc-current</code> (future, not available)</td>
+              </tr>
+              <tr>
+                <td>Legacy v2.0 compiled (Aether)</td>
+                <td><code>local-legacy</code> (available now)</td>
+                <td><code>mlsc-legacy</code> (available now)</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            Three profiles exist now: <code>local-current</code>,
+            <code>local-legacy</code>, and <code>mlsc-legacy</code>.
+            <code>mlsc-current</code> is a reserved future combination that
+            does not exist and cannot be selected. The bare key
+            <code>mlsc</code> is only a deprecated alias for
+            <code>mlsc-legacy</code>. Launchpad profiles are deprecated and
+            not supported.
+          </p>
+
           <div class="profile-card">
             <div class="profile-title">
               <h3>Local MATLAB (Current)</h3>
@@ -213,7 +251,8 @@
             <p>
               Runs the full MPRAGE + UMAP workflow locally on the workstation
               using the current Martinos MATLAB environment. This is the
-              recommended profile for routine processing.
+              recommended profile for routine processing. The final version
+              label is set at release prep.
             </p>
             <p>
               On an average workstation, expect approximately
@@ -223,13 +262,29 @@
 
           <div class="profile-card">
             <div class="profile-title">
-              <h3><code>mlsc</code> (Recommended Remote/Cluster Workflow)</h3>
-              <span class="badge good">Recommended remote</span>
+              <h3>LOCAL - Legacy v2.0 (Aether), direct-local</h3>
+              <span class="badge good">Recommended</span>
             </div>
             <p>
-              MLSC is the replacement remote/cluster workflow for Launchpad. The
-              standard MLSC profile runs the MPRAGE + UMAP workflow and requires
-              the UMAP reference. It produces both NIfTI and DICOM output.
+              Runs the full MPRAGE + UMAP workflow locally on the workstation
+              using the legacy v2.0 compiled implementation (Aether lineage)
+              via direct-local synchronous execution. There is no SSH, no
+              Slurm submission, and no password dialog on this path.
+              Recommended where the legacy backend is required.
+            </p>
+          </div>
+
+          <div class="profile-card">
+            <div class="profile-title">
+              <h3>MLSC - Legacy v2.0 (Aether), via Slurm</h3>
+              <span class="badge good">Recommended</span>
+            </div>
+            <p>
+              The standard <code>mlsc-legacy</code> profile runs the MPRAGE +
+              UMAP workflow on the MLSC cluster using the legacy v2.0 compiled
+              implementation (Aether lineage) via Slurm submission. It
+              requires the UMAP reference and produces both NIfTI and DICOM
+              output.
             </p>
             <p>
               Expected processing time is approximately
@@ -241,7 +296,7 @@
 
           <div class="profile-card muted">
             <div class="profile-title">
-              <h3>[Specialized] <code>mlsc_mprage_only</code> - MPRAGE Only</h3>
+              <h3>[Specialized] <code>mlsc-mprage-only</code> - MPRAGE Only</h3>
               <span class="badge warning-badge">Not for routine use</span>
             </div>
             <p>
@@ -253,26 +308,30 @@
 
           <div class="profile-card muted">
             <div class="profile-title">
-              <h3>Launchpad (Aether Legacy Workflow)</h3>
-              <span class="badge warning-badge">Currently unavailable</span>
+              <h3>Launchpad (historical, deprecated)</h3>
+              <span class="badge warning-badge">Not supported</span>
             </div>
             <p>
-              This is the historical compiled backend. Launchpad is currently
-              unavailable and will soon be discontinued/decommissioned. MLSC is
-              its replacement remote/cluster workflow.
+              This is the historical compiled backend on a remote PBS cluster.
+              Launchpad is deprecated and not supported: its profiles are
+              excluded from discovery, are never shown in the selector, and
+              must not be treated as a recommended or usable workflow.
             </p>
             <p>
-              The Launchpad source and profile are retained only for
-              transitional/reference purposes. Do not treat Launchpad as a
-              recommended or usable remote workflow.
+              The Launchpad source and deprecated profiles are retained only
+              for transitional/reference purposes. Use Local MATLAB for
+              routine processing.
             </p>
           </div>
 
           <div class="callout warning">
-            <strong>Specialized / Development profiles</strong>
+            <strong>Specialized / Custom profiles</strong>
             <p>
-              Additional profiles exist for specific systems, validation work,
-              compatibility testing, and development. The MLSC MPRAGE-only
+              Additional profiles (<code>local-mprage-only</code>,
+              <code>mlsc-mprage-only</code>, <code>devel</code>) live under
+              the Specialized / Custom disclosure in the selector, which
+              starts collapsed on every open and expands with the
+              <code>[+]</code> control. The MLSC MPRAGE-only
               profile is documented here because its no-reference/NIfTI-only
               behavior is explicit; other specialized profiles are not intended
               for routine use.
@@ -400,7 +459,7 @@ sacct --allocations --noheader --parsable2 --jobs=JOBID \
             post-remote finalization path. The standard profile optionally
             applies the local background mask, converts the NIfTI attenuation map
             to DICOM using the UMAP geometry, and promotes outputs with the same
-            finalizer used by the Launchpad path. The MPRAGE-only profile skips
+            finalizer used by the historical Launchpad path. The MPRAGE-only profile skips
             DICOM by policy and promotes NIfTI output only.
           </p>
           <p>
@@ -416,7 +475,7 @@ sacct --allocations --noheader --parsable2 --jobs=JOBID \
           <h3>Logs and evidence</h3>
           <p>
             Each subject receives a local log under <code>MR_PET</code> named
-            <code>pseudo_CT_mlsc_&lt;runid&gt;.log</code>, plus the usual
+              <code>pseudo_CT_mlsc-legacy_&lt;runid&gt;.log</code>, plus the usual
             <code>pseudo_CT_profile_summary.txt</code>. These record the selected
             profile, paths, stages, scheduler/failure details, and final status.
             The credential-free lifecycle evidence schema is
@@ -454,7 +513,7 @@ sacct --allocations --noheader --parsable2 --jobs=JOBID \
               <strong>D) One-subject E2E.</strong> Verify node-local normalization
               and compiled-runner execution, required and optional outputs,
               non-empty shared copy-back, lifecycle logs/evidence, existing local
-              finalization, DICOM output for standard <code>mlsc</code>, and
+              finalization, DICOM output for standard <code>mlsc-legacy</code>, and
               cleanup of node-local <code>$TMPDIR</code> and normal shared
               temporary data.
             </li>
@@ -732,11 +791,11 @@ sacct --allocations --noheader --parsable2 --jobs=JOBID \
     └── pseudo_CT_profile_summary.txt</code></pre>
 
           <p>
-            The standard <code>mlsc</code> profile uses the same final output
+            The standard <code>mlsc-legacy</code> profile uses the same final output
             layout after verified copy-back and local finalization. Its required
             output is <code>MR_PET/att_map.nii</code>; the QC fusion TIFF, version
             record, and normalized MPRAGE are optional when produced. The
-            specialized <code>mlsc_mprage_only</code> profile does not require a
+              specialized <code>mlsc-mprage-only</code> profile does not require a
             UMAP and produces NIfTI output only, so it does not create the final
             DICOM series under <code>MR/pseudo_muMAP/</code>.
           </p>
@@ -947,11 +1006,12 @@ sacct --allocations --noheader --parsable2 --jobs=JOBID \
               <tr>
                 <td>Launchpad does not run</td>
                 <td>
-                  The legacy Launchpad workflow is currently unavailable and will
-                  soon be discontinued/decommissioned. Its source and profile
-                  are retained only for transitional/reference purposes. Use
-                  Local MATLAB for routine processing; do not treat Launchpad as
-                  a recommended usable remote.
+                  The legacy Launchpad workflow is deprecated and not
+                  supported: its profiles are excluded from discovery and
+                  never shown in the selector. Its source and deprecated
+                  profiles are retained only for transitional/reference
+                  purposes. Use Local MATLAB for routine processing; do not
+                  treat Launchpad as a recommended usable remote.
                 </td>
               </tr>
               <tr>

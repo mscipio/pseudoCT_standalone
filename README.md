@@ -84,7 +84,40 @@ New releases may add functionality or correct minor issues. If a problem is iden
 
 ## Execution profiles
 
-PseudoCT uses profile-based execution.
+PseudoCT uses profile-based execution. Implementation and execution are
+independent profile properties: implementation is `current` (source MATLAB)
+or `legacy-v2` (compiled Aether backend; Aether names the lineage, not a
+host), and execution is `local` (workstation) or `mlsc` (MLSC cluster via
+Slurm).
+
+|  | Local workstation | MLSC cluster (Slurm) |
+|---|---|---|
+| Current source MATLAB | `local-current` (available now) | `mlsc-current` (future, not available) |
+| Legacy v2.0 compiled (Aether) | `local-legacy` (available now) | `mlsc-legacy` (available now) |
+
+Availability:
+
+| Profile key | Implementation | Execution | Status |
+|---|---|---|---|
+| `local-current` | current | local | Available now |
+| `local-legacy` | legacy-v2 | local | Available now |
+| `mlsc-legacy` | legacy-v2 | MLSC/Slurm | Available now; see the readiness note below |
+| `mlsc-current` | current | MLSC/Slurm | Reserved future combination; not available, not selectable, not aliased |
+
+The profile selector shows exactly three Recommended rows in order:
+`LOCAL - Current`, `LOCAL - Legacy v2.0 (Aether)`, and
+`MLSC - Legacy v2.0 (Aether)`, with WHERE (LOCAL vs MLSC) and WHICH
+(Current vs Legacy v2.0) visible in each label. `LOCAL - Current` carries a
+dev note: the final version label is set at release prep. The remaining
+profiles (`local-mprage-only`, `mlsc-mprage-only`, `devel`) live under the
+Specialized / Custom disclosure, which starts collapsed on every open and
+expands with the `[+]` control; scripts continue to use the stable canonical
+keys, never display labels. The bare key `mlsc` is only a deprecated alias
+for `mlsc-legacy` and creates no selector row. The Launchpad profiles
+(`launchpad`, `launchpad-mprage-only`) and `local-near-parity-r2010b` are
+deprecated: they are retained under `src/config/profiles/deprecated/` for
+reference, are never shown in the selector, and are not supported for
+processing.
 
 ### Local MATLAB (Current)
 
@@ -94,13 +127,29 @@ Runs the full MPRAGE + UMAP workflow locally using the current Martinos MATLAB e
 
 Typical processing time on an average workstation is approximately 30 minutes per subject.
 
-### MLSC (Recommended Remote/Cluster Workflow)
+### Local Legacy v2.0 (Aether, direct-local)
 
-MLSC is the replacement remote/cluster workflow for Launchpad. The main `mlsc`
-profile is the standard MPRAGE + UMAP workflow, requires the UMAP reference, and
+**Recommended where the legacy backend is required.**
+
+Runs the full MPRAGE + UMAP workflow locally on the workstation using the
+legacy v2.0 compiled implementation (Aether lineage) via direct-local
+synchronous execution: stage locally, normalize locally with FreeSurfer in
+an isolated child environment (`env -u LD_LIBRARY_PATH tcsh -f -c
+'source ...; mri_normalize ...'`), invoke the unchanged compiled runner
+synchronously, verify the required `att_map.nii`, then hand off to the
+shared local finalization. There is no SSH, no Slurm submission, no
+password dialog, and no account discovery on this path. The isolated
+normalization command is owned by the local-legacy helper
+(`src/core/pseudo_CT_run_local_legacy_subject.m`); the shared
+`src/remote/run_normalization_cmd.m` helper is unchanged and continues to
+serve local-current.
+
+### MLSC Legacy v2.0 (Aether, via Slurm)
+
+The main `mlsc-legacy` profile is the standard MPRAGE + UMAP workflow, requires the UMAP reference, and
 produces both NIfTI and DICOM output. It is the recommended remote profile.
 
-The specialized `mlsc_mprage_only` profile accepts an MPRAGE without a reference
+The specialized `mlsc-mprage-only` profile accepts an MPRAGE without a reference
 UMAP and produces NIfTI output only. It is not recommended for routine use; select
 it only for a known specialized workflow.
 
@@ -142,21 +191,23 @@ readiness checks: a remote `true` command returning exit status 0, `sshare`
 account discovery, a lightweight Slurm/`$TMPDIR` test, and a one-subject
 end-to-end run.
 
-### Launchpad (Aether Legacy Workflow)
+### Launchpad (historical, deprecated)
 
-The historical Launchpad workflow uses the legacy compiled pseudoCT backend.
+The historical Launchpad workflow used the legacy compiled pseudoCT backend
+on a remote PBS cluster via SSH.
 
-**Launchpad is currently unavailable.**
+**Launchpad is deprecated and not supported.** Its profiles are excluded
+from discovery, are never shown in the selector, and must not be treated as
+a recommended or usable workflow. The Launchpad source and deprecated
+profiles are retained only for transitional/reference purposes. Martinos
+users should use Local MATLAB for routine processing while the MLSC live
+readiness checks remain open.
 
-It will soon be discontinued/decommissioned and is being replaced by MLSC. The
-Launchpad source and profile are retained only for transitional/reference purposes;
-they must not be treated as a recommended or usable remote workflow. Martinos users
-should use Local MATLAB for routine processing while the MLSC live readiness
-checks remain open.
+### Specialized / Custom profiles
 
-### Specialized profiles
-
-Additional profiles, including the MLSC MPRAGE-only profile, are available for
+Additional profiles live under the Specialized / Custom disclosure in the
+selector (`local-mprage-only`, `mlsc-mprage-only`, `devel`), including the
+MLSC MPRAGE-only profile, and are available for
 specific systems, compatibility testing, validation, and development workflows.
 
 They are not intended for routine use.

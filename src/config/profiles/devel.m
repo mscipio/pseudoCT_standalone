@@ -3,6 +3,9 @@ function config = devel()
 
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'local';
+% Implementation lineage: 'current' is source MATLAB, 'legacy-v2' is the
+% compiled Aether backend.
+config.implementation = 'current';
 % SPM installation used by this profile.
 config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
 % Atlas images and SPM batch templates used by the pipeline.

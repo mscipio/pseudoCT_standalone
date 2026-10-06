@@ -1,5 +1,9 @@
 # Launchpad Execution Pipeline
 
+> Historical/deprecated reference only. Launchpad profiles are excluded from
+> discovery, are never shown in the selector, and are not supported for
+> processing. Use `local-current`, `local-legacy`, or `mlsc-legacy` instead.
+
 This document describes the end-to-end Launchpad pseudo-CT pipeline. It differs
 fundamentally from the local path: the local MATLAB layer handles DICOM I/O and
 output promotion, while the compiled `Pseudo_CT_launchpad` backend (MATLAB Compiler

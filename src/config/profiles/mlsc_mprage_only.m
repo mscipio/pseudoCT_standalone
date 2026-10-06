@@ -3,6 +3,9 @@ function config = mlsc_mprage_only()
 
 % Select the local processing path or the remote MLSC path.
 config.mode = 'mlsc';
+% Implementation lineage: 'current' is source MATLAB, 'legacy-v2' is the
+% compiled Aether backend.
+config.implementation = 'legacy-v2';
 % SPM installation used by local finalization support code.
 config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
 % Atlas images and SPM batch templates used by local finalization.
@@ -38,7 +41,7 @@ config.compatibility_profile = 'mlsc';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = '[CUSTOM] MLSC - MPRAGE Only';
 config.presentation.description = ...
-    'Generate NIfTI-only pseudoCT locally from MPRAGE without requiring a UMAP reference.';
+    'Generate NIfTI-only pseudoCT on MLSC from MPRAGE without requiring a UMAP reference.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
 config.presentation.order = 20;
@@ -74,4 +77,20 @@ config.mlsc.ntasks = 1;
 config.mlsc.cpus_per_task = 4;
 config.mlsc.memory = '8G';
 config.mlsc.time = '02:00:00';
+
+% Immutable legacy compiled facts (neutral contract shared with the legacy
+% profiles). These mirror the orchestration block values above for runner,
+% mcr_root, defaults_mat, and batch_templates plus the required
+% attenuation-map filename. No host, Slurm, partition, nodes, tasks,
+% memory, time, or shell-orchestration values are carried here.
+% Unchanged compiled runner script.
+config.legacy.runner = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/run_Pseudo_CT_launchpad.sh';
+% MATLAB Compiler Runtime root used by the compiled backend.
+config.legacy.mcr_root = '/usr/pubsw/common/matlab/7.11/';
+% Defaults MAT file passed to the compiled backend.
+config.legacy.defaults_mat = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/default_pseudo_CT_package_deployed.mat';
+% Atlas and SPM batch templates passed to the compiled backend.
+config.legacy.batch_templates = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/Batch_atlas';
+% Required attenuation-map filename produced by the compiled backend.
+config.legacy.att_map = 'att_map.nii';
 end

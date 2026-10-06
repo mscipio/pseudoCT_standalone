@@ -23,14 +23,15 @@ function run_pseudo_CT(varargin)
 %   Examples:
 %       run_pseudo_CT()
 %       run_pseudo_CT('profile', 'local-current')
-%       run_pseudo_CT('profile', 'launchpad', 'subjects', 'batch')
+%       run_pseudo_CT('profile', 'mlsc-legacy', 'subjects', 'batch')
 %       run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, ...
 %                     'correct_aliasing', 0)
 %
 %   RUN_PSEUDO_CT(DEFAULTS_MAT) is supported only in deployed mode.
 %   DEFAULTS_MAT should point to a MAT file containing the defaults
 %   structure expected by the compiled application. This preserves the
-%   existing launchpad deployed mode contract.
+%   existing legacy compiled deployed-mode contract (historical Launchpad
+%   contract).
 %
 %   Outputs:
 %       - final DICOM pseudo-muMAP images are written to MR/pseudo_muMAP
@@ -478,8 +479,14 @@ switch config.mode
                 %     jj, length(jobs), jobs(jj).mprage_fn));
             end
             try
-                if local_run_subject(jobs(jj), dir_batch_templates, ...
-                         show_subject_dialog, profile_name, config, jj, length(jobs))
+                if strcmp(config.implementation, 'legacy-v2')
+                    subject_success = pseudo_CT_run_local_legacy_subject( ...
+                        jobs(jj), config, jj, length(jobs), show_subject_dialog);
+                else
+                    subject_success = local_run_subject(jobs(jj), dir_batch_templates, ...
+                         show_subject_dialog, profile_name, config, jj, length(jobs));
+                end
+                if subject_success
                     num_success = num_success + 1;
                 else
                     context = local_subject_context(jobs(jj), jj, length(jobs));
@@ -1105,14 +1112,24 @@ end
 
 
 function name = canonical_profile_name(requested, profiles)
-%CANONICAL_PROFILE_NAME Accept profile display names or function filenames.
+%CANONICAL_PROFILE_NAME Resolve exact hyphenated keys plus deprecated alias.
+%   Accepts only exact hyphenated canonical keys discovered from
+%   src/config/profiles plus the deprecated alias mlsc -> mlsc-legacy.
+%   Underscore spellings, display labels, mlsc-current, Launchpad and
+%   near-parity names are rejected. Discovery stays non-recursive so the
+%   alias creates no row.
 
+if ~ischar(requested)
+    name = '';
+    return;
+end
 requested = strtrim(requested);
-requested_function = strrep(requested, '-', '_');
+if strcmp(requested, 'mlsc')
+    requested = 'mlsc-legacy';
+end
 name = '';
 for ii = 1:length(profiles)
-    if strcmp(requested, profiles(ii).name) || ...
-            strcmp(requested_function, profiles(ii).function_name)
+    if strcmp(requested, profiles(ii).name)
         name = profiles(ii).name;
         return;
     end

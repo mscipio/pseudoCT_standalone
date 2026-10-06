@@ -1,8 +1,25 @@
 # Local Execution Pipeline
 
 This document describes the end-to-end local pseudo-CT pipeline as implemented by
-`atlas_based_attenuation_map.m`. Stages below correspond to the log output from
+`atlas_based_attenuation_map.m` (local-current) and by direct-local invocation
+of the unchanged legacy v2.0 compiled backend (local-legacy). Stages below correspond to the log output from
 `run_pseudo_CT` with a `mode='local'` profile.
+
+Local execution is one half of the implementation x execution matrix:
+
+|  | Local workstation | MLSC cluster (Slurm) |
+|---|---|---|
+| Current source MATLAB | `local-current` (available now) | `mlsc-current` (future, not available) |
+| Legacy v2.0 compiled (Aether) | `local-legacy` (available now) | `mlsc-legacy` (available now) |
+
+Both local profiles run fully on the workstation with direct synchronous
+calls: there is no SSH, no Slurm submission, no password dialog, and no
+account discovery on the local path. MLSC/Slurm responsibilities
+(authentication, submission, node-local `$TMPDIR` staging, lifecycle
+polling, verified copy-back) are documented in
+[pipeline-mlsc.md](pipeline-mlsc.md), not here. The bare key `mlsc` is only
+a deprecated alias for `mlsc-legacy`. Launchpad profiles are deprecated and
+not supported.
 
 Section references are to sections within the same repository unless the complete
 path is shown.
@@ -55,7 +72,7 @@ Called by `run_pseudo_CT → local_run_subject`. The input can be either:
 To use a pre-converted NIfTI instead of raw DICOM:
 
 ```matlab
-run_pseudo_CT('profile', 'local-near-parity-r2010b', 'subjects', ...
+run_pseudo_CT('profile', 'local-current', 'subjects', ...
     {'/path/to/subject/MR_PET/mprage.nii'})
 ```
 
@@ -103,10 +120,21 @@ original untouched.
   └── MR_PET/tmp/mprage_normalized.nii
 ```
 
-Runs `mri_normalize` on the MPRAGE to correct intensity non-uniformity. When
-`config.normalization.host` is `'127.0.0.1'`, the command runs locally via
-`system()`. Otherwise, the MPRAGE is SCP'd to the remote host, `mri_normalize`
-runs there, and the result is SCP'd back.
+Runs `mri_normalize` on the MPRAGE to correct intensity non-uniformity.
+Local profiles set `config.normalization.host` to `'127.0.0.1'` with
+`config.normalization.cluster = 'No'`, so the command always runs locally
+via `system()` with direct synchronous calls. The two local profiles differ
+only in which code owns that local call:
+
+- **local-current** uses the local branch of the shared
+  `run_normalization_cmd` helper (`src/remote/`), which is left unchanged.
+- **local-legacy** uses an isolated normalization command owned by its own
+  helper, `pseudo_CT_run_local_legacy_subject` (`src/core/`): the FreeSurfer
+  environment is sourced only inside the child via
+  `env -u LD_LIBRARY_PATH tcsh -f -c 'source <freesurfer-env>; mri_normalize
+  <input> <output>'` with safely quoted paths. The child alone carries the
+  normalization environment; the MATLAB workspace is never altered, and no
+  SSH, Slurm, password dialog, or account discovery is involved.
 
 Before normalization, local jobs carry two independent permissions:
 `correct_aliasing` for nose/back aliasing correction and
@@ -154,13 +182,17 @@ pending deletion.
 **Tools used:**
 - `correct_aliasing` (external standalone at `aliasing_root` from profile config) —
   owns both nose/back alias correction and subject centering for local profiles.
-  It is guarded on older releases (e.g. `local-near-parity-r2010b`) because it
+  It is guarded on older MATLAB releases (e.g. R2010b) because it
   requires MATLAB R2019+; requested operations are reported unavailable without
-  failing the historical path. Launchpad profiles delegate aliasing to the
+  failing the historical path. Deprecated Launchpad profiles delegate aliasing to the
   compiled backend and do not require the local standalone.
-- `mri_normalize` (FreeSurfer 5.3) — via SSH or local `system()` call.
-- `ssh_login_pseudo_CT` / `ssh2_config` (`src/remote/`) — SSH connection.
-- `scp_put_david` / `scp_get_david` — file transfer when remote.
+- `mri_normalize` (FreeSurfer 5.3) — always via a local `system()` call on
+  the local profiles; there is no SSH/Slurm on this path.
+- `run_normalization_cmd` (`src/remote/`) — shared helper; its local branch
+  serves local-current and was left unchanged by the local-legacy change.
+- `pseudo_CT_run_local_legacy_subject` (`src/core/`) — local-legacy helper
+  owning the isolated `env -u LD_LIBRARY_PATH tcsh -f -c` normalization
+  above; it never calls the MLSC/Slurm lifecycle.
 
 ---
 
@@ -527,4 +559,4 @@ the intermediate files for debugging.
 
 - [Parity Assessment](parity-assessment.md) — numerical reproducibility across
   execution environments
-- [Launchpad Pipeline](pipeline-launchpad.md) — the remote execution equivalent
+- [Launchpad Pipeline](pipeline-launchpad.md) — historical/deprecated remote path, not supported

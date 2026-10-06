@@ -3,6 +3,9 @@ function config = local_current()
 
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'local';
+% Implementation lineage: 'current' is source MATLAB, 'legacy-v2' is the
+% compiled Aether backend.
+config.implementation = 'current';
 % SPM installation used by this profile.
 config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
 % Atlas images and SPM batch templates used by the pipeline.
@@ -40,9 +43,9 @@ config.io_policy.gui = 'mMR';
 % a profile name requires all non-policy settings to match that baseline.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'LOCAL (Current)';
+config.presentation.display_name = 'LOCAL - Current';
 config.presentation.description = ...
-    'Run the full MPRAGE + UMAP workflow locally on your workstation.';
+    'Run the full MPRAGE + UMAP workflow locally on your workstation using the current source MATLAB implementation (dev; final version label set at release prep).';
 config.presentation.group = 'recommended';
 config.presentation.recommended = true;
 config.presentation.order = 10;
