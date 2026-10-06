@@ -85,9 +85,43 @@ recommended_display = {ordered(1).display_name; ordered(2).display_name; ...
 assert(isequal(recommended_display, {'LOCAL - Current'; ...
     'LOCAL - Legacy v2.0 (Aether)'; 'MLSC - Legacy v2.0 (Aether)'}));
 local_current_config = pseudo_CT_load_profile('local-current', config_root);
-assert(~isempty(strfind(local_current_config.presentation.description, 'dev')));
+local_legacy_config = pseudo_CT_load_profile('local-legacy', config_root);
+mlsc_legacy_config = pseudo_CT_load_profile('mlsc-legacy', config_root);
+local_mprage_config = pseudo_CT_load_profile('local-mprage-only', config_root);
+mlsc_mprage_config = pseudo_CT_load_profile('mlsc-mprage-only', config_root);
+devel_config = pseudo_CT_load_profile('devel', config_root);
 assert(~isempty(strfind(local_current_config.presentation.display_name, ...
     'LOCAL')));
+assert(strcmp(local_current_config.presentation.description, ...
+    ['Run the full MPRAGE + UMAP workflow locally ' ...
+    'using the current MATLAB source.']));
+assert(strcmp(local_legacy_config.presentation.description, ...
+    ['Run the full MPRAGE + UMAP workflow locally ' ...
+    'using the legacy v2.0 compiled backend (Aether).']));
+assert(strcmp(mlsc_legacy_config.presentation.description, ...
+    ['Run the full MPRAGE + UMAP workflow on the MLSC cluster ' ...
+    'using the legacy v2.0 compiled backend (Aether).']));
+assert(isempty(strfind(local_current_config.presentation.description, char(10))));
+assert(isempty(strfind(local_legacy_config.presentation.description, char(10))));
+assert(isempty(strfind(mlsc_legacy_config.presentation.description, char(10))));
+assert(strcmp(local_mprage_config.presentation.display_name, ...
+    'Local MPRAGE Only'));
+assert(strcmp(mlsc_mprage_config.presentation.display_name, ...
+    'MLSC MPRAGE Only'));
+assert(strcmp(devel_config.presentation.display_name, ...
+    'Development Current MATLAB'));
+assert(isempty(strfind(local_mprage_config.presentation.display_name, ...
+    '[CUSTOM]')));
+assert(isempty(strfind(mlsc_mprage_config.presentation.display_name, ...
+    '[CUSTOM]')));
+assert(isempty(strfind(devel_config.presentation.display_name, ...
+    '[DEVELOPMENT]')));
+assert(all(double(local_current_config.presentation.description) < 128));
+assert(all(double(local_legacy_config.presentation.description) < 128));
+assert(all(double(mlsc_legacy_config.presentation.description) < 128));
+assert(all(double(local_mprage_config.presentation.display_name) < 128));
+assert(all(double(mlsc_mprage_config.presentation.display_name) < 128));
+assert(all(double(devel_config.presentation.display_name) < 128));
 assert(~ismember('mlsc', {ordered.name}));
 assert(~ismember('launchpad', {ordered.name}));
 assert(~ismember('launchpad-mprage-only', {ordered.name}));
@@ -113,6 +147,10 @@ assert(isempty(strfind(selector_source, 'addParameter')));
 assert(isempty(strfind(selector_source, 'string(')));
 assert(~isempty(strfind(selector_source, '[+]')));
 assert(~isempty(strfind(selector_source, '[-]')));
+assert(isempty(strfind(selector_source, '[Recommended]')));
+assert(isempty(strfind(selector_source, 'Profile labels describe the workflow')));
+assert(~isempty(strfind(selector_source, '''Cancel''')));
+assert(~isempty(strfind(selector_source, 'Run Selected')));
 assert(~isempty(strfind(selector_source, 'Selected (hidden)')));
 assert(~isempty(strfind(selector_source, '''Visible'', ''off''')));
 assert(~isempty(strfind(selector_source, '''Visible'', ''on''')));

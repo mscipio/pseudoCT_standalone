@@ -44,8 +44,7 @@ config.io_policy.gui = 'mMR';
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'LOCAL - Current';
-config.presentation.description = ...
-    'Run the full MPRAGE + UMAP workflow locally on your workstation using the current source MATLAB implementation (dev; final version label set at release prep).';
+config.presentation.description = 'Run the full MPRAGE + UMAP workflow locally using the current MATLAB source.';
 config.presentation.group = 'recommended';
 config.presentation.recommended = true;
 config.presentation.order = 10;

@@ -63,10 +63,13 @@ if ~isdeployed && ~isempty(varargin)
     end
 end
 
+% Input-selection cancel relies on explicit cancel outputs (mprage_fn == 0
+% from Cancel/X-close via CloseRequestFcn plus OutputFcn guards). GUI errors
+% are never swallowed: any throw from load_mr_4_AC propagates with its
+% identifier and diagnostics, never silent empty.
 [mprage_fn, ute_fn, umap_fn, correct_aliasing, ...
     recenter_before_normalization] = load_mr_4_AC(config.io_policy.gui, config);
-
-if mprage_fn == 0
+if isnumeric(mprage_fn) && isscalar(mprage_fn) && mprage_fn == 0
     return;
 end
 if strcmp(config.io_policy.reference, 'none')

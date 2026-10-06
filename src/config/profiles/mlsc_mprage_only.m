@@ -39,7 +39,7 @@ config.io_policy.gui = 'mprage-only';
 % Compatibility baseline keeps all non-policy settings equal to MLSC.
 config.compatibility_profile = 'mlsc';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = '[CUSTOM] MLSC - MPRAGE Only';
+config.presentation.display_name = 'MLSC MPRAGE Only';
 config.presentation.description = ...
     'Generate NIfTI-only pseudoCT on MLSC from MPRAGE without requiring a UMAP reference.';
 config.presentation.group = 'specialized';

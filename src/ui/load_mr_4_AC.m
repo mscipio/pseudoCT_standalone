@@ -105,6 +105,11 @@ set(handles.recentering_button, 'Value', handles.recenter_before_normalization);
 % Update handles structure
 guidata(hObject, handles);
 
+% X-close (window-X) before or after partial selection is explicit cancel:
+% route through CloseRequestFcn so zero defaults are restored and uiwait is
+% resumed instead of destroying the figure while uiwait is pending.
+set(hObject, 'CloseRequestFcn', @load_mr_4_AC_CloseRequestFcn);
+
 % UIWAIT makes load_mr_4_AC wait for user response (see UIRESUME)
 uiwait(handles.load_mr_4_AC);
 
@@ -117,6 +122,38 @@ function varargout = load_mr_4_AC_OutputFcn(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 
+% X-close before selection deletes the figure while uiwait is pending, so
+% handles may arrive as a non-struct (historical 'Dot indexing not
+% supported for double' at handles.mprage_fn). Treat any non-struct or
+% incomplete handles as explicit cancel with zero defaults so collect_jobs
+% returns empty jobs and run_pseudo_CT exits cleanly with no jobs started.
+if ~isstruct(handles)
+    try
+        handles = guidata(hObject);
+    catch
+        handles = struct();
+    end
+end
+if ~isstruct(handles)
+    handles = struct('mprage_fn', 0, 'ute_fn', 0, 'umap_fn', 0, ...
+        'correct_aliasing', 0, 'recenter_before_normalization', 0);
+end
+if ~isfield(handles, 'mprage_fn')
+    handles.mprage_fn = 0;
+end
+if ~isfield(handles, 'ute_fn')
+    handles.ute_fn = 0;
+end
+if ~isfield(handles, 'umap_fn')
+    handles.umap_fn = 0;
+end
+if ~isfield(handles, 'correct_aliasing')
+    handles.correct_aliasing = 0;
+end
+if ~isfield(handles, 'recenter_before_normalization')
+    handles.recenter_before_normalization = 0;
+end
+
 % Get default command line output from handles structure
 varargout{1} = handles.mprage_fn;
 varargout{2} = handles.ute_fn;
@@ -126,7 +163,46 @@ if nargout > 4
     varargout{5} = handles.recenter_before_normalization;
 end
 
-delete(handles.load_mr_4_AC);
+if isfield(handles, 'load_mr_4_AC') && ishghandle(handles.load_mr_4_AC)
+    delete(handles.load_mr_4_AC);
+elseif ishghandle(hObject)
+    delete(hObject);
+end
+
+% --- Executes when the user attempts to close the figure (window-X).
+function load_mr_4_AC_CloseRequestFcn(hObject, eventdata, handles)
+% LOAD_MR_4_AC_CLOSEREQUESTFCN X-close is explicit cancel: restore zero
+% defaults and resume so OutputFcn returns the empty-cancel contract.
+% R2010b GUIDE API only: guidata/uiresume/ishghandle.
+if nargin < 3
+    handles = struct();
+end
+if ~isstruct(handles)
+    handles = struct();
+end
+try
+    stored = guidata(hObject);
+    if isstruct(stored)
+        handles = stored;
+    end
+catch
+end
+handles.mprage_fn = 0;
+handles.ute_fn = 0;
+handles.umap_fn = 0;
+handles.correct_aliasing = 0;
+handles.recenter_before_normalization = 0;
+if ishghandle(hObject)
+    if strcmp(get(hObject, 'waitstatus'), 'waiting')
+        try
+            guidata(hObject, handles);
+        catch
+        end
+        uiresume(hObject);
+    else
+        delete(hObject);
+    end
+end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

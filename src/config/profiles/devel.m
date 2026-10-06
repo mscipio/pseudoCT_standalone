@@ -43,7 +43,7 @@ config.io_policy.gui = 'mMR';
 % a profile name requires all non-policy settings to match that baseline.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = '[DEVELOPMENT] Local - Current MATLAB';
+config.presentation.display_name = 'Development Current MATLAB';
 config.presentation.description = ...
     'DO NOT USE: This profile is for development and testing only.';
 config.presentation.group = 'specialized';

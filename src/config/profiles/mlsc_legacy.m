@@ -40,8 +40,7 @@ config.io_policy.gui = 'mMR';
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'MLSC - Legacy v2.0 (Aether)';
-config.presentation.description = ...
-    'Run the full MPRAGE + UMAP workflow on the MLSC cluster using the legacy v2.0 compiled implementation (Aether lineage) via Slurm submission.';
+config.presentation.description = 'Run the full MPRAGE + UMAP workflow on the MLSC cluster using the legacy v2.0 compiled backend (Aether).';
 config.presentation.group = 'recommended';
 config.presentation.recommended = true;
 config.presentation.order = 30;

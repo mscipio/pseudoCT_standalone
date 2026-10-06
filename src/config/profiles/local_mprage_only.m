@@ -43,7 +43,7 @@ config.io_policy.gui = 'mprage-only';
 % a profile name requires all non-policy settings to match that baseline.
 config.compatibility_profile = 'local-current';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = '[CUSTOM] Local MATLAB - MPRAGE Only';
+config.presentation.display_name = 'Local MPRAGE Only';
 config.presentation.description = ...
     'Generate NIfTI-only pseudoCT locally from MPRAGE without requiring a UMAP reference.';
 config.presentation.group = 'specialized';
