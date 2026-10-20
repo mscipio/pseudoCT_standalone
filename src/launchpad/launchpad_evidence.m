@@ -41,7 +41,7 @@ end
 function snapshot = new_snapshot(values)
 snapshot = struct();
 snapshot.schema = 'pseudo-CT.launchpad-evidence/v1';
-snapshot.profile = 'launchpad';
+snapshot.profile = 'launchpad-legacy';
 snapshot.lifecycle = {'init'};
 snapshot.subject_count = 0;
 snapshot.jobname = '';

@@ -30,7 +30,8 @@ for ii = 1:length(profiles)
     assert(strcmp(fileparts(profiles(ii).file_path), profile_dir));
 end
 % T005 narrow update: canonical set grows 6 -> 7 with mlsc-current only.
-expected_active = {'devel'; 'local-current'; 'local-legacy'; ...
+% Launchpad restoration: canonical set grows 7 -> 8 with launchpad-legacy only.
+expected_active = {'devel'; 'launchpad-legacy'; 'local-current'; 'local-legacy'; ...
     'local-mprage-only'; 'mlsc-current'; 'mlsc-legacy'; 'mlsc-mprage-only'};
 assert(length(profiles) == length(expected_active));
 assert(isequal(sort(names(:)), sort(expected_active)));
@@ -89,6 +90,21 @@ assert(~isempty(strfind(lower(mlsc.presentation.display_name), 'mlsc')));
 % and cluster phrasing (no runtime change).
 assert(~isempty(strfind(lower(mlsc.presentation.display_name), 'legacy')));
 assert(~isempty(strfind(lower(mlsc.presentation.description), 'cluster')));
+% Presentation update: launchpad-legacy moves to recommended last (order 80
+% unchanged). Identity/mode/implementation untouched; default stays
+% local-current via the explicit lookup in pseudo_CT_prepare_profile_choices
+% (verified at the ordering asserts above), never first-recommended fallback.
+launchpad_legacy = configs{local_config_index(names, 'launchpad-legacy')};
+assert(strcmp(launchpad_legacy.mode, 'launchpad'));
+assert(strcmp(launchpad_legacy.implementation, 'legacy-v2'));
+assert(strcmp(launchpad_legacy.presentation.display_name, ...
+    'LAUNCHPAD - Legacy v2.0 (Aether)'));
+assert(strcmp(launchpad_legacy.presentation.description, ...
+    'Remote pseudoCT processing using Aether v2.0.'));
+assert(isempty(strfind(launchpad_legacy.presentation.description, char(10))));
+assert(strcmp(launchpad_legacy.presentation.group, 'recommended'));
+assert(launchpad_legacy.presentation.recommended);
+assert(~strcmp(ordered_profiles(default_index).name, 'launchpad-legacy'));
 assert(strcmp(mlsc_mprage.io_policy.reference, 'none'));
 assert(strcmp(mlsc_mprage.io_policy.output, 'nifti-only'));
 assert(strcmp(mlsc_mprage.io_policy.gui, 'mprage-only'));
@@ -343,13 +359,17 @@ list_source = read_text(fullfile(root_dir, 'src', 'config', ...
     'pseudo_CT_list_profiles.m'));
 assert(~isempty(strfind(list_source, 'dir(fullfile(profile_dir, ''*.m''))')));
 % T005 narrow update: seven primary profiles (adds mlsc-current only).
-assert(length(files) == 7);
+% Launchpad restoration: eight grows 7 -> 8 with launchpad-legacy only.
+assert(length(files) == 8);
 assert(exist(fullfile(profile_dir, 'mlsc.m'), 'file') ~= 2);
 assert(~ismember('mlsc', names));
 
 % T005 narrow update: mlsc-current joins the canonical set.
+% Launchpad restoration: launchpad-legacy joins the canonical set (accepted);
+% bare 'launchpad' stays rejected (deprecated, no discovery row).
 canonical_names = {'local-current'; 'local-legacy'; 'mlsc-current'; ...
-    'mlsc-legacy'; 'local-mprage-only'; 'mlsc-mprage-only'; 'devel'};
+    'mlsc-legacy'; 'local-mprage-only'; 'mlsc-mprage-only'; 'devel'; ...
+    'launchpad-legacy'};
 for ii = 1:length(canonical_names)
     resolved = pseudo_CT_load_profile(canonical_names{ii}, config_root);
     assert(isstruct(resolved) && numel(resolved) == 1);
@@ -365,6 +385,8 @@ assert(~isempty(strfind(entry_source, 'strcmp(requested, ''mlsc'')')));
 assert(~isempty(strfind(entry_source, 'requested = ''mlsc-legacy''')));
 
 % T005 narrow update: mlsc-current is now a valid canonical profile.
+% Launchpad restoration: launchpad-legacy is accepted via canonical_names above;
+% the bare deprecated 'launchpad' key stays rejected (no discovery row).
 rejected_fixed = {'launchpad'; 'launchpad-mprage-only'; ...
     'local-near-parity-r2010b'};
 for ii = 1:length(rejected_fixed)
@@ -423,7 +445,7 @@ end
 for ii = 1:length(configs)
     assert(isfield(configs{ii}, 'mode'));
     assert(isfield(configs{ii}, 'implementation'));
-    assert(ismember(configs{ii}.mode, {'local'; 'mlsc'}));
+    assert(ismember(configs{ii}.mode, {'local'; 'mlsc'; 'launchpad'}));
     assert(ismember(configs{ii}.implementation, {'current'; 'legacy-v2'}));
     assert(~strcmp(configs{ii}.mode, 'legacy'));
     assert(~strcmp(configs{ii}.implementation, 'mlsc'));

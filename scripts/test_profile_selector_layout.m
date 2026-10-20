@@ -75,23 +75,30 @@ assert(strcmp(ordered(default_index).name, 'local-current'));
 recommended_names = {ordered(strcmp({ordered.group}, 'recommended')).name};
 specialized_names = {ordered(strcmp({ordered.group}, 'specialized')).name};
 % T005 narrow update: four recommended (adds MLSC Current second); specialized was three.
+% Launchpad restoration: specialized grows 3 -> 4 with launchpad-legacy (order 80).
+% Presentation update: launchpad-legacy moves to recommended last (order 80
+% unchanged); recommended grows 4 -> 5, specialized shrinks 4 -> 3.
 % Default stays local-current (explicit lookup, never first-recommended).
 assert(isequal(recommended_names(:)', ...
-    {'local-current', 'mlsc-current', 'local-legacy', 'mlsc-legacy'}));
+    {'local-current', 'mlsc-current', 'local-legacy', 'mlsc-legacy', ...
+    'launchpad-legacy'}));
 assert(isequal(specialized_names(:)', ...
     {'local-mprage-only', 'mlsc-mprage-only', 'devel'}));
-assert(length(recommended_names) == 4);
+assert(length(recommended_names) == 5);
 assert(length(specialized_names) == 3);
 recommended_display = {ordered(1).display_name; ordered(2).display_name; ...
-    ordered(3).display_name; ordered(4).display_name};
+    ordered(3).display_name; ordered(4).display_name; ...
+    ordered(5).display_name};
 assert(isequal(recommended_display, {'LOCAL - Current'; 'MLSC - Current'; ...
-    'LOCAL - Legacy v2.0 (Aether)'; 'MLSC - Legacy v2.0 (Aether)'}));
+    'LOCAL - Legacy v2.0 (Aether)'; 'MLSC - Legacy v2.0 (Aether)'; ...
+    'LAUNCHPAD - Legacy v2.0 (Aether)'}));
 local_current_config = pseudo_CT_load_profile('local-current', config_root);
 mlsc_current_config = pseudo_CT_load_profile('mlsc-current', config_root);
 local_legacy_config = pseudo_CT_load_profile('local-legacy', config_root);
 mlsc_legacy_config = pseudo_CT_load_profile('mlsc-legacy', config_root);
 local_mprage_config = pseudo_CT_load_profile('local-mprage-only', config_root);
 mlsc_mprage_config = pseudo_CT_load_profile('mlsc-mprage-only', config_root);
+launchpad_legacy_config = pseudo_CT_load_profile('launchpad-legacy', config_root);
 devel_config = pseudo_CT_load_profile('devel', config_root);
 assert(~isempty(strfind(local_current_config.presentation.display_name, ...
     'LOCAL')));
@@ -111,10 +118,17 @@ assert(isempty(strfind(local_current_config.presentation.description, char(10)))
 assert(isempty(strfind(mlsc_current_config.presentation.description, char(10))));
 assert(isempty(strfind(local_legacy_config.presentation.description, char(10))));
 assert(isempty(strfind(mlsc_legacy_config.presentation.description, char(10))));
+assert(isempty(strfind(launchpad_legacy_config.presentation.description, char(10))));
 assert(strcmp(local_mprage_config.presentation.display_name, ...
     'Local MPRAGE Only'));
 assert(strcmp(mlsc_mprage_config.presentation.display_name, ...
     'MLSC MPRAGE Only'));
+assert(strcmp(launchpad_legacy_config.presentation.display_name, ...
+    'LAUNCHPAD - Legacy v2.0 (Aether)'));
+assert(strcmp(launchpad_legacy_config.presentation.description, ...
+    'Remote pseudoCT processing using Aether v2.0.'));
+assert(strcmp(launchpad_legacy_config.presentation.group, 'recommended'));
+assert(launchpad_legacy_config.presentation.recommended);
 assert(strcmp(devel_config.presentation.display_name, ...
     'Development Current MATLAB'));
 assert(isempty(strfind(local_mprage_config.presentation.display_name, ...
@@ -129,9 +143,12 @@ assert(all(double(local_legacy_config.presentation.description) < 128));
 assert(all(double(mlsc_legacy_config.presentation.description) < 128));
 assert(all(double(local_mprage_config.presentation.display_name) < 128));
 assert(all(double(mlsc_mprage_config.presentation.display_name) < 128));
+assert(all(double(launchpad_legacy_config.presentation.display_name) < 128));
+assert(all(double(launchpad_legacy_config.presentation.description) < 128));
 assert(all(double(devel_config.presentation.display_name) < 128));
 assert(~ismember('mlsc', {ordered.name}));
 assert(~ismember('launchpad', {ordered.name}));
+assert(ismember('launchpad-legacy', {ordered.name}));
 assert(~ismember('launchpad-mprage-only', {ordered.name}));
 assert(~ismember('local-near-parity-r2010b', {ordered.name}));
 

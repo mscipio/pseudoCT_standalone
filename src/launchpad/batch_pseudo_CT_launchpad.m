@@ -14,6 +14,7 @@ clean_folder = 1;
 keep_tmp = 0;
 check_aliasing = config.aliasing_default;
 output_log_files = {};
+profile_name = 'launchpad-legacy';
 
 if length(P) == 0
     P = spm_select(Inf, 'any', 'Choose the subjects to run Pseudo-CT on cluster!');
@@ -39,6 +40,8 @@ if num_extra_args > 0 && rem(num_extra_args, 2) == 0
                 check_aliasing = varargin{ii+1};
             case 'output_contexts'
                 output_log_files = varargin{ii+1};
+            case 'profile_name'
+                profile_name = varargin{ii+1};
             otherwise
                 % Legacy output: disp('Unkown parameter!!');
                 pseudo_CT_output('ERROR', struct('log_files', {output_log_files}), ...
@@ -67,7 +70,7 @@ else
 end
 
 att_map_filename = 'att_map.nii';
-evidence = launchpad_evidence('init', struct('profile', 'launchpad', ...
+evidence = launchpad_evidence('init', struct('profile', profile_name, ...
     'subject_count', size(P, 1)));
 
 ssh2_conn = ssh2_config(ssh_log{3}, ssh_log{1}, ssh_log{2});

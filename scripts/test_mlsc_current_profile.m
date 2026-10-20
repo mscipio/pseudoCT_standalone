@@ -10,7 +10,8 @@ function test_mlsc_current_profile()
 %     6) mlsc-mprage-only stays legacy
 %     7) local-mprage-only keeps its existing intent
 %     8) default remains local-current
-%     9) selector shows exactly four recommended rows + three specialized
+%     9) selector shows exactly five recommended rows + three specialized
+%        (launchpad-legacy joins recommended, order 80)
 %    10) deprecated profiles stay out of the primary selector
 %    11) mlsc-current pins /usr/pubsw/common/matlab/26.1 (never .../current)
 %    12) current-specific fields with no legacy leak (namespaces separate)
@@ -48,8 +49,8 @@ for ii = 1:length(profiles)
         'Discovery left the primary profile directory.');
 end
 
-% Canonical set is exactly seven (adds mlsc-current only).
-expected_active = {'devel'; 'local-current'; 'local-legacy'; ...
+% Canonical set is exactly eight (adds mlsc-current + launchpad-legacy).
+expected_active = {'devel'; 'launchpad-legacy'; 'local-current'; 'local-legacy'; ...
     'local-mprage-only'; 'mlsc-current'; 'mlsc-legacy'; ...
     'mlsc-mprage-only'};
 assert(length(profiles) == length(expected_active));
@@ -96,19 +97,20 @@ assert(strcmp(local_mprage.compatibility_profile, 'local-current'));
 [ordered, default_index] = pseudo_CT_prepare_profile_choices(profiles);
 assert(strcmp(ordered(default_index).name, 'local-current'));
 
-% 9) Selector shows exactly four recommended rows; specialized is three.
+% 9) Selector shows exactly five recommended rows (launchpad-legacy joins
+% recommended last, order 80 unchanged); specialized shrinks 4 -> 3.
 % Default stays local-current via explicit lookup (never first-recommended).
 recommended = ordered(strcmp({ordered.group}, 'recommended'));
 specialized = ordered(strcmp({ordered.group}, 'specialized'));
-assert(length(recommended) == 4);
+assert(length(recommended) == 5);
 assert(length(specialized) == 3);
 assert(isequal({recommended.name}, {'local-current'; 'mlsc-current'; ...
-    'local-legacy'; 'mlsc-legacy'}'));
+    'local-legacy'; 'mlsc-legacy'; 'launchpad-legacy'}'));
 assert(isequal({specialized.name}, {'local-mprage-only'; ...
     'mlsc-mprage-only'; 'devel'}'));
 assert(isequal({recommended.display_name}, {'LOCAL - Current'; ...
     'MLSC - Current'; 'LOCAL - Legacy v2.0 (Aether)'; ...
-    'MLSC - Legacy v2.0 (Aether)'}'));
+    'MLSC - Legacy v2.0 (Aether)'; 'LAUNCHPAD - Legacy v2.0 (Aether)'}'));
 assert(isempty(strfind(mlsc_current.presentation.display_name, 'v3')));
 assert(isempty(strfind(lower(mlsc_current.presentation.display_name), ...
     'pseudoct3')));
@@ -254,7 +256,7 @@ assert(isempty(strfind(legacy_summary, 'MLSC Current Artifact')));
 legacy_check = local_legacy_invocation(root_dir);
 
 fprintf(['MLSC current profile tests passed: 2x2 identity, mlsc alias, ', ...
-    'default local-current, four recommended, deprecated excluded, pinned ', ...
+    'default local-current, five recommended, deprecated excluded, pinned ', ...
     '26.1, current-only contract, fail-closed Gate A, legacy unchanged, ', ...
     'single layout. Legacy check: %s\n'], legacy_check);
 end
