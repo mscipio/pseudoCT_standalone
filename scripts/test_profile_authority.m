@@ -29,8 +29,9 @@ for ii = 1:length(profiles)
     assert(isempty(strfind(profiles(ii).file_path, 'deprecated')));
     assert(strcmp(fileparts(profiles(ii).file_path), profile_dir));
 end
+% T005 narrow update: canonical set grows 6 -> 7 with mlsc-current only.
 expected_active = {'devel'; 'local-current'; 'local-legacy'; ...
-    'local-mprage-only'; 'mlsc-legacy'; 'mlsc-mprage-only'};
+    'local-mprage-only'; 'mlsc-current'; 'mlsc-legacy'; 'mlsc-mprage-only'};
 assert(length(profiles) == length(expected_active));
 assert(isequal(sort(names(:)), sort(expected_active)));
 
@@ -231,6 +232,8 @@ selector_source = read_text(fullfile(root_dir, 'src', 'ui', ...
     'pseudo_CT_profile_selector.m'));
 atlas_source = read_text(fullfile(root_dir, 'src', 'core', ...
     'atlas_based_attenuation_map.m'));
+compute_source = read_text(fullfile(root_dir, 'src', 'core', ...
+    'pseudo_CT_current_compute.m'));
 launchpad_source = read_text(fullfile(root_dir, 'src', 'launchpad', ...
     'batch_pseudo_CT_launchpad.m'));
 assert(~isempty(strfind(entry_source, 'switch config.mode')));
@@ -240,9 +243,12 @@ assert(~isempty(strfind(selector_source, 'pseudo_CT_profile_selector_layout')));
 assert(~isempty(strfind(selector_source, '''Style'', ''slider''')));
 assert(~isempty(strfind(selector_source, 'profiles(selected_index).name')));
 assert(length(strfind(entry_source, 'config.fwhm')) >= 2);
-assert(~isempty(strfind(atlas_source, 'if config.bone_enabled')));
-assert(~isempty(strfind(atlas_source, 'config.zero_background')));
-assert(~isempty(strfind(atlas_source, ...
+% Shared-boundary refactor: post-normalization computation (bone gate,
+% background policy, MNI alignment) lives in pseudo_CT_current_compute;
+% atlas_based_attenuation_map stays a thin prepare/normalize/compute facade.
+assert(~isempty(strfind(compute_source, 'if config.bone_enabled')));
+assert(~isempty(strfind(compute_source, 'config.zero_background')));
+assert(~isempty(strfind(compute_source, ...
     'move_image_2_MNI(P_orig, fullfile(dir_batch_templates, ''ch2.nii''), ...')));
 assert(~isempty(strfind(launchpad_source, 'config.launchpad.runner')));
 assert(isempty(strfind(launchpad_source, 'pseudo_CT_load_profile')));
@@ -265,8 +271,9 @@ end
 % Production/release profiles must use the canonical shared-filesystem path.
 canonical_aliasing_root = ['/usr/pubsw/packages/mrpet/standalone_apps/' ...
     'correct_aliasing/correct_aliasing_standalone-latest'];
+% T005 narrow update: mlsc-current uses the same canonical aliasing root.
 production_names = {'local-current', 'local-legacy', 'local-mprage-only', ...
-    'mlsc-legacy', 'mlsc-mprage-only'};
+    'mlsc-current', 'mlsc-legacy', 'mlsc-mprage-only'};
 for ii = 1:length(production_names)
     idx = find(strcmp(names, production_names{ii}), 1);
     assert(~isempty(idx));
@@ -320,7 +327,13 @@ for ii = 1:length(legacy_entrypoints)
     assert(exist(legacy_entrypoints{ii}, 'file') ~= 2);
 end
 
-assert(~isempty(strfind(atlas_source, 'correct_aliasing(')));
+% Shared boundary (pre-facade): the local path still performs aliasing
+% correction directly in the facade; the new prepare helper owns the same
+% contract for the mlsc-current path. No facade delegation yet (out of scope).
+prepare_check = read_text(fullfile(root_dir, 'src', 'core', ...
+    'pseudo_CT_current_prepare.m'));
+assert(~isempty(strfind(prepare_check, 'result = correct_aliasing(')));
+assert(~isempty(strfind(atlas_source, 'result = correct_aliasing(')));
 assert(isempty(strfind(entry_source, 'correct_aliasing(')));
 assert(~isempty(strfind(entry_source, '''check_aliasing''')));
 assert(~isempty(strfind(launchpad_source, 'check_aliasing')));
@@ -329,12 +342,14 @@ assert(~isempty(strfind(launchpad_source, 'check_aliasing')));
 list_source = read_text(fullfile(root_dir, 'src', 'config', ...
     'pseudo_CT_list_profiles.m'));
 assert(~isempty(strfind(list_source, 'dir(fullfile(profile_dir, ''*.m''))')));
-assert(length(files) == 6);
+% T005 narrow update: seven primary profiles (adds mlsc-current only).
+assert(length(files) == 7);
 assert(exist(fullfile(profile_dir, 'mlsc.m'), 'file') ~= 2);
 assert(~ismember('mlsc', names));
 
-canonical_names = {'local-current'; 'local-legacy'; 'mlsc-legacy'; ...
-    'local-mprage-only'; 'mlsc-mprage-only'; 'devel'};
+% T005 narrow update: mlsc-current joins the canonical set.
+canonical_names = {'local-current'; 'local-legacy'; 'mlsc-current'; ...
+    'mlsc-legacy'; 'local-mprage-only'; 'mlsc-mprage-only'; 'devel'};
 for ii = 1:length(canonical_names)
     resolved = pseudo_CT_load_profile(canonical_names{ii}, config_root);
     assert(isstruct(resolved) && numel(resolved) == 1);
@@ -349,7 +364,8 @@ assert(~isempty(strfind(loader_source, 'trimmed = ''mlsc-legacy''')));
 assert(~isempty(strfind(entry_source, 'strcmp(requested, ''mlsc'')')));
 assert(~isempty(strfind(entry_source, 'requested = ''mlsc-legacy''')));
 
-rejected_fixed = {'mlsc-current'; 'launchpad'; 'launchpad-mprage-only'; ...
+% T005 narrow update: mlsc-current is now a valid canonical profile.
+rejected_fixed = {'launchpad'; 'launchpad-mprage-only'; ...
     'local-near-parity-r2010b'};
 for ii = 1:length(rejected_fixed)
     rejected_ok = false;
@@ -387,7 +403,8 @@ root_on_path = ~isempty(strfind([path pathsep], [root_dir pathsep]));
 if ~root_on_path
     addpath(root_dir, '-begin');
 end
-entrypoint_rejected = {'mlsc-current'; 'launchpad'; ...
+% T005 narrow update: mlsc-current is now accepted at the entrypoint.
+entrypoint_rejected = {'launchpad'; ...
     'local-near-parity-r2010b'; 'local_current'; ...
     configs{local_config_index(names, 'local-current')}.presentation.display_name};
 for ii = 1:length(entrypoint_rejected)
@@ -410,18 +427,106 @@ for ii = 1:length(configs)
     assert(ismember(configs{ii}.implementation, {'current'; 'legacy-v2'}));
     assert(~strcmp(configs{ii}.mode, 'legacy'));
     assert(~strcmp(configs{ii}.implementation, 'mlsc'));
-    assert(~(strcmp(configs{ii}.implementation, 'current') && ...
-        strcmp(configs{ii}.mode, 'mlsc')));
+    % T005 narrow update: exactly one mlsc+current cell (mlsc-current).
+    if strcmp(configs{ii}.implementation, 'current') && ...
+            strcmp(configs{ii}.mode, 'mlsc')
+        assert(strcmp(profiles(ii).name, 'mlsc-current'));
+    end
 end
 local_current_cfg = configs{local_config_index(names, 'local-current')};
 local_legacy_cfg = configs{local_config_index(names, 'local-legacy')};
+mlsc_current_cfg = configs{local_config_index(names, 'mlsc-current')};
 mlsc_legacy_cfg = configs{local_config_index(names, 'mlsc-legacy')};
 assert(strcmp(local_current_cfg.mode, 'local'));
 assert(strcmp(local_current_cfg.implementation, 'current'));
 assert(strcmp(local_legacy_cfg.mode, 'local'));
 assert(strcmp(local_legacy_cfg.implementation, 'legacy-v2'));
+assert(strcmp(mlsc_current_cfg.mode, 'mlsc'));
+assert(strcmp(mlsc_current_cfg.implementation, 'current'));
 assert(strcmp(mlsc_legacy_cfg.mode, 'mlsc'));
 assert(strcmp(mlsc_legacy_cfg.implementation, 'legacy-v2'));
+% T005 narrow update: current/legacy namespaces stay separate.
+assert(~isfield(mlsc_current_cfg, 'legacy'));
+assert(isfield(mlsc_current_cfg, 'current'));
+assert(~isfield(local_current_cfg, 'current'));
+assert(~isfield(local_legacy_cfg, 'current'));
+assert(~isfield(mlsc_legacy_cfg, 'current'));
+
+% --- T014 pinned-MCR authority (fail-closed pre-Gate-A) ---
+% T014 is authoritative over stale T004 catalog/resolver wording: the only
+% accepted MCR_ROOT is the pinned version-specific tree (never the current
+% symlink), bound by SHA-256 runner identity plus build/resource manifests
+% carrying the T007-pending native marker. Loader, setup, and validator
+% own disjoint pieces of one contract; execution stays fail-closed.
+t014_pinned = '/usr/pubsw/common/matlab/26.1';
+assert(strcmp(mlsc_current_cfg.current.mcr_root, t014_pinned));
+assert(strcmp(mlsc_current_validate('pinned_mcr_root'), t014_pinned));
+assert(isfield(mlsc_current_cfg.current, 'build_manifest'));
+assert(isfield(mlsc_current_cfg.current, 'resource_manifest'));
+assert(isfield(mlsc_current_cfg.current, 'required_outputs'));
+assert(ismember('att_map.nii', mlsc_current_cfg.current.required_outputs));
+assert(ismember('Fusion_MR_Pseudo_CT_validation.tiff', ...
+    mlsc_current_cfg.current.required_outputs));
+assert(ismember('Pseudo_CT_AC_Version.txt', ...
+    mlsc_current_cfg.current.required_outputs));
+t014_profile = read_text(fullfile(profile_dir, 'mlsc_current.m'));
+assert(~isempty(strfind(t014_profile, 'Gate A has NOT occurred')));
+assert(~isempty(strfind(t014_profile, 'never the current symlink')));
+t014_loader = read_text(fullfile(root_dir, 'src', 'config', ...
+    'pseudo_CT_load_profile.m'));
+assert(~isempty(strfind(t014_loader, ...
+    'function validate_current(current, mlsc, profile_name)')));
+assert(~isempty(strfind(t014_loader, '/usr/pubsw/common/matlab/26.1')));
+assert(~isempty(strfind(t014_loader, ...
+    'config.current.mcr_root must be the pinned')));
+t014_setup = read_text(fullfile(root_dir, 'src', 'config', ...
+    'setup_pseudo_CT_paths.m'));
+assert(~isempty(strfind(t014_setup, 'local_validate_current_setup(config)')));
+assert(~isempty(strfind(t014_setup, 'must not carry a legacy block')));
+t014_validate = read_text(fullfile(root_dir, 'src', 'mlsc', ...
+    'mlsc_current_validate.m'));
+assert(~isempty(strfind(t014_validate, '/usr/pubsw/common/matlab/26.1')));
+assert(~isempty(strfind(t014_validate, 'runner_checksum')));
+assert(~isempty(strfind(t014_validate, 'SHA-256')));
+assert(~isempty(strfind(t014_validate, ...
+    't007-gate-a-pending: existence-only; production loadability evidence comes later')));
+% Fail-closed pre-Gate-A on the real (artifact-absent) profile: contract
+% and execution validation both reject without simulating success.
+t014_contract_failed = false;
+try
+    mlsc_current_validate('validate_contract', mlsc_current_cfg);
+catch ME
+    t014_contract_failed = strncmp(ME.identifier, 'pseudo_CT:MLSC', ...
+        length('pseudo_CT:MLSC'));
+end
+assert(t014_contract_failed);
+t014_exec_failed = false;
+try
+    mlsc_current_validate('validate_for_execution', mlsc_current_cfg);
+catch ME
+    t014_exec_failed = strncmp(ME.identifier, 'pseudo_CT:MLSC', ...
+        length('pseudo_CT:MLSC'));
+end
+assert(t014_exec_failed);
+t014_preflight = read_text(fullfile(root_dir, 'src', 'mlsc', ...
+    'mlsc_preflight.m'));
+assert(~isempty(strfind(t014_preflight, ...
+    'mlsc_current_validate(''validate_contract''')));
+t014_backend = read_text(fullfile(root_dir, 'src', 'mlsc', ...
+    'mlsc_backend.m'));
+assert(~isempty(strfind(t014_backend, ...
+    'mlsc_current_validate(''validate_for_execution''')));
+% CURRENT PREPARE->normalize->COMPUTE: prepare owns alias/recenter before
+% the external FreeSurfer boundary; compute runs only on verified
+% normalized output. The payload enters prepare before compute, never
+% reversed.
+t014_payload = read_text(fullfile(root_dir, 'src', 'mlsc', ...
+    'mlsc_current_payload.m'));
+t014_prepare_pos = strfind(t014_payload, '= pseudo_CT_current_prepare(');
+t014_compute_pos = strfind(t014_payload, '= pseudo_CT_current_compute(');
+assert(length(t014_prepare_pos) == 1 && length(t014_compute_pos) == 1 && ...
+    t014_prepare_pos(1) < t014_compute_pos(1));
+assert(~isempty(strfind(t014_payload, 'Verified normalized input missing')));
 
 assert(isfield(local_legacy_cfg, 'legacy'));
 assert(isfield(mlsc_legacy_cfg, 'legacy'));

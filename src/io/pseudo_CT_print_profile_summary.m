@@ -8,12 +8,22 @@ if strcmp(config.mode, 'local')
     catch
         pca_backend = 'unavailable';
     end
+elseif isfield(config, 'implementation') && ischar(config.implementation) && ...
+        strcmp(config.implementation, 'current') && ...
+        isfield(config, 'pca_order') && iscell(config.pca_order) && ...
+        ~isempty(config.pca_order)
+    % MLSC current owns its payload PCA order (callable-first); the
+    % 'remote' label below describes the legacy compiled backend only.
+    pca_backend = local_join_names(config.pca_order);
 end
 
 lines = {};
 lines{end+1} = '=== pseudo-CT Profile Summary ===';
 lines{end+1} = sprintf('Profile:            %s', profile_name);
 lines{end+1} = sprintf('Mode:               %s', config.mode);
+if isfield(config, 'implementation') && ischar(config.implementation)
+    lines{end+1} = sprintf('Implementation:     %s', config.implementation);
+end
 lines{end+1} = '';
 lines{end+1} = '--- Paths ---';
 lines{end+1} = sprintf('SPM root:           %s', config.spm_root);
@@ -48,6 +58,33 @@ if strcmp(config.mode, 'launchpad')
     lines{end+1} = sprintf('Queue:              %s', config.launchpad.queue);
     lines{end+1} = sprintf('Scratch:            %s', config.launchpad.scratch);
     lines{end+1} = sprintf('Batch templates:    %s', config.launchpad.batch_templates);
+end
+
+if isfield(config, 'implementation') && ischar(config.implementation) && ...
+        strcmp(config.implementation, 'current') && ...
+        strcmp(config.mode, 'mlsc') && isfield(config, 'current')
+    lines{end+1} = '';
+    lines{end+1} = '--- MLSC Current Artifact (operator-supplied, pending Gate-A verification) ---';
+    lines{end+1} = sprintf('Runner:             %s', config.current.runner);
+    lines{end+1} = sprintf('MCR root:           %s', config.current.mcr_root);
+    lines{end+1} = sprintf('Build manifest:     %s', config.current.build_manifest);
+    lines{end+1} = sprintf('Resource manifest:  %s', config.current.resource_manifest);
+    lines{end+1} = sprintf('Artifact root:      %s', local_artifact_root(config));
+    lines{end+1} = sprintf('Gate-A record:      %s', local_gate_a_record(config));
+    if isfield(config.current, 'required_outputs') && ...
+            iscell(config.current.required_outputs)
+        lines{end+1} = sprintf('Required outputs:   %s', ...
+            local_join_names(config.current.required_outputs));
+    end
+    lines{end+1} = 'Status:             Real execution fails preflight pending artifact/native evidence.';
+    lines{end+1} = '';
+    lines{end+1} = '--- MLSC Scheduler ---';
+    lines{end+1} = sprintf('Host:               %s', config.mlsc.host);
+    lines{end+1} = sprintf('Shell:              %s', config.mlsc.shell);
+    lines{end+1} = sprintf('Partition:          %s', config.mlsc.partition);
+    lines{end+1} = sprintf('CPUs per task:      %d', config.mlsc.cpus_per_task);
+    lines{end+1} = sprintf('Memory:             %s', config.mlsc.memory);
+    lines{end+1} = sprintf('Time:               %s', config.mlsc.time);
 end
 
 lines{end+1} = '';
@@ -88,5 +125,56 @@ if nargin >= 3 && ~isempty(processing_dirs)
         pseudo_CT_output('INFO', output_context, ...
             'Detailed profile summary saved as pseudo_CT_profile_summary.txt.');
     end
+end
+end
+
+function text = local_join_names(names)
+%LOCAL_JOIN_NAMES R2010b-compatible comma join for required outputs.
+text = '';
+for ii = 1:numel(names)
+    if ii > 1
+        text = [text ', ']; %#ok<AGROW>
+    end
+    if ischar(names{ii})
+        text = [text strtrim(names{ii})]; %#ok<AGROW>
+    end
+end
+end
+
+function value = local_artifact_root(config)
+%LOCAL_ARTIFACT_ROOT Resolved artifact root for summary display (H).
+%   The T007 build layout keeps manifests at the artifact root, so the root
+%   is the directory containing the build manifest. R2010b only.
+value = '';
+try
+    if isstruct(config) && isfield(config, 'current') && ...
+            isstruct(config.current) && ...
+            isfield(config.current, 'build_manifest') && ...
+            ischar(config.current.build_manifest) && ...
+            ~isempty(strtrim(config.current.build_manifest))
+        [parent, ~, ~] = fileparts(strtrim(config.current.build_manifest));
+        value = parent;
+    end
+catch %#ok<CTCH>
+    value = '';
+end
+if isempty(value)
+    value = '(unknown)';
+end
+end
+
+function value = local_gate_a_record(config)
+%LOCAL_GATE_A_RECORD Resolved Gate-A record for summary display (H).
+value = '(none)';
+try
+    if isstruct(config) && isfield(config, 'current') && ...
+            isstruct(config.current) && ...
+            isfield(config.current, 'gate_a_record') && ...
+            ischar(config.current.gate_a_record) && ...
+            ~isempty(strtrim(config.current.gate_a_record))
+        value = strtrim(config.current.gate_a_record);
+    end
+catch %#ok<CTCH>
+    value = '(none)';
 end
 end

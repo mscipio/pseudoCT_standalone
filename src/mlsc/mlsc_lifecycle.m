@@ -50,8 +50,10 @@ function result = mlsc_lifecycle(subject, config, runtime, transport)
 %   secret-free incomplete-trailing indicator (logical flag plus
 %   pending-byte count, never the trailing content) is persisted in
 %   result.progress and terminal evidence so a terminal partial record
-%   remains diagnosable.  Stage-in, normalization, and pseudoCT milestones
-%   render at stage 3/8, verify and copy-back milestones render only at
+%   remains diagnosable.  Stage-in, preparation, alias-recenter,
+%   normalization, alignment-mask, segmentation, bone, DARTEL-warp-reslice,
+%   pseudoCT, and attenuation-QC milestones render at stage 3/8, verify
+%   and copy-back milestones render only at
 %   stage 4/8, and a successful copy-back completion represents the
 %   verified return to shared temp.  The durable archive is generated only
 %   from the validated recognized milestone sequence (order preserved,
@@ -543,9 +545,21 @@ contract = struct('represented', false, 'node_local_processing', false, ...
     'shared_input_staging', false, 'shared_output_staging', false, ...
     'required_output', 'att_map.nii', 'no_scp_network_payload', true, ...
     'heavy_processing_root', '$TMPDIR');
+contract.is_current = false;
 end
 
 function contract = local_contract_from_artifact(artifact)
+%LOCAL_CONTRACT_FROM_ARTIFACT Node-local/copy-back contract from script.
+%   T004 current seam (T014 authoritative): legacy checks unchanged. When
+%   the artifact selects current (is_current), additionally require the
+%   pinned launcher invocation, prepare BEFORE external normalization
+%   BEFORE compute, staged job/resource manifests, PREPARE-derived dynamic
+%   normalization (corrected selection without sourcing the handoff),
+%   three-output plus mandatory-evidence verify and copy-back, current
+%   milestones, pinned startup recheck, FreeSurfer isolation, and no
+%   global LD_LIBRARY_PATH. The existing heartbeat/progress/cancellation/
+%   receipt/timeout/cleanup/finalization model is reused with no second
+%   poller.
 contract = local_empty_contract();
 if ~isstruct(artifact)
     return;
@@ -556,6 +570,9 @@ if isfield(artifact, 'script_text')
 end
 if isfield(artifact, 'heavy_processing_root')
     contract.heavy_processing_root = artifact.heavy_processing_root;
+end
+if isfield(artifact, 'is_current') && isequal(artifact.is_current, true)
+    contract.is_current = true;
 end
 contract.node_local_processing = strcmp(contract.heavy_processing_root, '$TMPDIR') && ...
     ~isempty(strfind(script, 'cd "$TMPDIR"')) && ...
@@ -573,6 +590,65 @@ end
 contract.represented = contract.node_local_processing && ...
     contract.shared_input_staging && contract.shared_output_staging && ...
     contract.no_scp_network_payload;
+if contract.is_current
+    current_ok = ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" prepare')) && ...
+        ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" compute')) && ...
+        ~isempty(strfind(script, 'cp -- "$shared_job_manifest" "$local_job_manifest"')) && ...
+        ~isempty(strfind(script, 'cp -- "$shared_resource_manifest" "$local_resource_manifest"')) && ...
+        ~isempty(strfind(script, 'env -u LD_LIBRARY_PATH')) && ...
+        ~isempty(strfind(script, 'tcsh -f -c')) && ...
+        ~isempty(strfind(script, 'Fusion_MR_Pseudo_CT_validation.tiff')) && ...
+        ~isempty(strfind(script, 'Pseudo_CT_AC_Version.txt')) && ...
+        ~isempty(strfind(script, 'mlsc_current_output_verification.txt')) && ...
+        ~isempty(strfind(script, 'mlsc_current_prepare_evidence.txt')) && ...
+        ~isempty(strfind(script, 'mlsc_current_handoff.mat')) && ...
+        ~isempty(strfind(script, 'preparation|done')) && ...
+        ~isempty(strfind(script, 'alias_recenter|done')) && ...
+        ~isempty(strfind(script, 'alignment_mask|done')) && ...
+        ~isempty(strfind(script, 'segmentation|done')) && ...
+        ~isempty(strfind(script, 'bone|done')) && ...
+        ~isempty(strfind(script, 'dartel_warp_reslice|done')) && ...
+        ~isempty(strfind(script, 'attenuation_qc|done')) && ...
+        ~isempty(strfind(script, 'prepare_selected=')) && ...
+        ~isempty(strfind(script, 'prepare_expected=')) && ...
+        ~isempty(strfind(script, 'pinned_mcr_root=')) && ...
+        isempty(strfind(script, 'export LD_LIBRARY_PATH')) && ...
+        isempty(strfind(script, 'source "$shared_temp/mlsc_current_handoff')) && ...
+        isempty(strfind(script, 'source $TMPDIR/mlsc_current_handoff')) && ...
+        isempty(strfind(script, 'eval '));
+    prepare_pos = strfind(script, '"$current_runner" "$current_mcr_root" prepare');
+    compute_pos = strfind(script, '"$current_runner" "$current_mcr_root" compute');
+    if isempty(prepare_pos) || isempty(compute_pos) || ...
+            ~(prepare_pos(1) < compute_pos(1))
+        current_ok = false;
+    end
+    if needs_normalization_in_script(script)
+        tcsh_pos = strfind(script, 'tcsh -f -c');
+        if isempty(tcsh_pos) || ~(prepare_pos(1) < tcsh_pos(1)) || ...
+                ~(tcsh_pos(1) < compute_pos(1))
+            current_ok = false;
+        end
+        % R001: dynamic PREPARE-derived normalization must sit between
+        % prepare and compute and must reference the resolved selection.
+        if isempty(strfind(script, 'MLSC_INPUT_NAME=$prepare_selected')) || ...
+                isempty(strfind(script, 'MLSC_NORMALIZED_NAME=$prepare_expected'))
+            current_ok = false;
+        end
+    end
+    % R003: mandatory evidence verify/copy-back (not copy_optional for
+    % handoff/evidence) must be present.
+    if isempty(strfind(script, 'cp -- "$TMPDIR/mlsc_current_handoff.mat" "$shared_temp/mlsc_current_handoff.mat"')) || ...
+            isempty(strfind(script, 'cp -- "$TMPDIR/mlsc_current_output_verification.txt" "$shared_temp/mlsc_current_output_verification.txt"')) || ...
+            isempty(strfind(script, 'Shared output verification copy-back is missing or empty.'))
+        current_ok = false;
+    end
+    contract.represented = contract.represented && current_ok;
+end
+end
+
+function flag = needs_normalization_in_script(script)
+flag = ~isempty(strfind(script, 'normalize|start')) && ...
+    ~isempty(strfind(script, 'mri_normalize'));
 end
 
 function record = local_empty_accounting_record(job_id)
@@ -625,9 +701,15 @@ if strcmp(record.state, 'completed')
         result.failure_detail = ...
             'Scheduler COMPLETED did not prove the node-local processing/copy-back contract.';
     elseif ~result.copy_back.verified
+        if isfield(result.contract, 'is_current') && ...
+                isequal(result.contract.is_current, true)
+            result.failure_detail = ...
+                'Scheduler COMPLETED had no complete current outputs in the shared subject temp.';
+        else
+            result.failure_detail = ...
+                'Scheduler COMPLETED had no non-empty att_map.nii in the shared subject temp.';
+        end
         result.workflow_state = 'failed';
-        result.failure_detail = ...
-            'Scheduler COMPLETED had no non-empty att_map.nii in the shared subject temp.';
     else
         result.workflow_state = 'completed';
         result.success = true;
@@ -692,9 +774,31 @@ end
 end
 
 function copy_back = local_verify_copyback(result, subject)
+%LOCAL_VERIFY_COPYBACK Exit-0 plus missing output is failure.
+%   Legacy requires non-empty att_map.nii. Current requires the complete
+%   three-output set (att_map.nii plus validation TIFF plus version TXT)
+%   plus mandatory durable evidence (handoff, prepare evidence, output
+%   verification); exit 0 with any required output or evidence missing or
+%   empty fails. The output-verification evidence attests the verified
+%   normalized input and every required output with fingerprints, including
+%   the finite float32 attenuation with dimensions/affine provenance
+%   recorded by compute; copyback identity (shared bytes equal the
+%   verified node-local bytes) is rechecked here before success via the
+%   existing verification/failure path. Reuses the existing
+%   receipt/timeout/cleanup/finalization model with no second poller.
+%   Current participates identically in cancellation/state/receipt
+%   handling; validation failures occur before science where possible.
 copy_back = struct('contract_represented', result.contract.represented, ...
     'verified', false, 'att_map_path', '', 'att_map_present', false, ...
     'att_map_nonempty', false);
+is_current = false;
+try
+    if isfield(result.contract, 'is_current') && ...
+            isequal(result.contract.is_current, true)
+        is_current = true;
+    end
+catch %#ok<CTCH>
+end
 shared_temp = local_subject_value(subject, {'shared_temp'; 'temp_dir'});
 if isempty(shared_temp)
     return;
@@ -705,8 +809,791 @@ if copy_back.att_map_present
     info = dir(copy_back.att_map_path);
     copy_back.att_map_nonempty = ~isempty(info) && info(1).bytes > 0;
 end
+if ~is_current
+    copy_back.verified = copy_back.contract_represented && ...
+        copy_back.att_map_present && copy_back.att_map_nonempty;
+    return;
+end
+% Explicit authoritative key->basename map owned by the current output
+% contract: no underscore/dot inference. The validation TIFF is the
+% Fusion basename or, as declared, the explicit Composite variant.
+output_map = local_current_output_filename_map();
+validation_candidates = {output_map.validation_fusion; ...
+    output_map.validation_composite};
+validation_path = '';
+validation_ok = false;
+for vv = 1:length(validation_candidates)
+    candidate_path = fullfile(shared_temp, validation_candidates{vv});
+    if exist(candidate_path, 'file') == 2
+        info = dir(candidate_path);
+        if ~isempty(info) && info(1).bytes > 0
+            validation_path = candidate_path;
+            validation_ok = true;
+            break;
+        end
+    end
+end
+if ~validation_ok
+    % Fall back to the Fusion path for evidence reporting when neither
+    % variant is present/nonempty (still fails).
+    validation_path = fullfile(shared_temp, output_map.validation_fusion);
+end
+version_path = fullfile(shared_temp, output_map.version);
+version_ok = false;
+if exist(version_path, 'file') == 2
+    info = dir(version_path);
+    version_ok = ~isempty(info) && info(1).bytes > 0;
+end
+copy_back.validation_path = validation_path;
+copy_back.version_path = version_path;
+copy_back.validation_nonempty = validation_ok;
+copy_back.version_nonempty = version_ok;
+copy_back.validation_basename = '';
+if validation_ok
+    [~, v_base, v_ext] = fileparts(validation_path);
+    copy_back.validation_basename = [v_base v_ext];
+end
+% Mandatory durable evidence: handoff + prepare/output verification are
+% required for current success, never optional. Nonempty-files-only is
+% insufficient without them.
+handoff_path = fullfile(shared_temp, 'mlsc_current_handoff.mat');
+prepare_evidence_path = fullfile(shared_temp, ...
+    'mlsc_current_prepare_evidence.txt');
+output_verification_path = fullfile(shared_temp, ...
+    'mlsc_current_output_verification.txt');
+handoff_ok = local_is_nonempty_file(handoff_path);
+prepare_ok = local_is_nonempty_file(prepare_evidence_path);
+verification_ok = local_is_nonempty_file(output_verification_path);
+copy_back.handoff_path = handoff_path;
+copy_back.prepare_evidence_path = prepare_evidence_path;
+copy_back.output_verification_path = output_verification_path;
+copy_back.handoff_nonempty = handoff_ok;
+copy_back.prepare_evidence_nonempty = prepare_ok;
+copy_back.output_verification_nonempty = verification_ok;
+evidence_content_ok = false;
+identity_ok = false;
+att_map_content_ok = false;
+if verification_ok
+    evidence_content_ok = local_verification_evidence_ok( ...
+        output_verification_path);
+    identity_ok = local_copyback_identity_ok(shared_temp, ...
+        output_verification_path);
+end
+if handoff_ok && prepare_ok && verification_ok
+    att_map_content_ok = local_att_map_content_ok( ...
+        copy_back.att_map_path, output_verification_path);
+end
+copy_back.evidence_content_ok = evidence_content_ok;
+copy_back.copyback_identity_ok = identity_ok;
+copy_back.att_map_content_ok = att_map_content_ok;
 copy_back.verified = copy_back.contract_represented && ...
-    copy_back.att_map_present && copy_back.att_map_nonempty;
+    copy_back.att_map_present && copy_back.att_map_nonempty && ...
+    validation_ok && version_ok && handoff_ok && prepare_ok && ...
+    verification_ok && evidence_content_ok && identity_ok && ...
+    att_map_content_ok;
+end
+
+function ok = local_is_nonempty_file(path_name)
+ok = false;
+try
+    if ~ischar(path_name) || size(path_name, 1) ~= 1 || ...
+            isempty(path_name) || any(path_name == char(0))
+        return;
+    end
+    if exist(path_name, 'file') ~= 2
+        return;
+    end
+    info = dir(path_name);
+    ok = ~isempty(info) && info(1).bytes > 0;
+catch %#ok<CTCH>
+    ok = false;
+end
+end
+
+function map = local_current_output_filename_map()
+%LOCAL_CURRENT_OUTPUT_FILENAME_MAP Explicit key->basename contract.
+%   Owned by the current output contract. Keys are stable logical names;
+%   values are exact basenames with no underscore/dot inference. Covers
+%   att_map.nii, the Fusion validation TIFF and its explicit Composite
+%   variant as declared, plus Pseudo_CT_AC_Version.txt. Any other declared
+%   required output is handled as its explicitly declared basename (parsed
+%   from the verification evidence, never inferred). R2010b only.
+map = struct();
+map.att_map = 'att_map.nii';
+map.validation_fusion = 'Fusion_MR_Pseudo_CT_validation.tiff';
+map.validation_composite = 'Composite_Fusion_MR_Pseudo_CT_validation.tiff';
+map.version = 'Pseudo_CT_AC_Version.txt';
+end
+
+function ok = local_verification_evidence_ok(verification_path)
+%LOCAL_VERIFICATION_EVIDENCE_OK Structured verification content contract.
+%   Current-only: the local string/size substring fallback is DISABLED.
+%   Requires the compute-written structured schema
+%   (pseudo-CT.mlsc-current-output-verification/v1), the verified
+%   normalized-input marker, explicit 'output <exact-basename>:' lines with
+%   bytes and mandatory SHA-256 for every declared required output
+%   (att_map.nii, version TXT, and the Fusion TIFF or its explicit
+%   Composite variant as declared), plus the structured att_map semantic
+%   block (basename/bytes/sha256/datatype/dim/affine/finite tied to the
+%   exact file). Missing/malformed/missing-SHA lines fail. No log-string
+%   fallback, no parity, no tolerances, no size-only fallback. R2010b only.
+ok = false;
+try
+    content = local_read_text(verification_path);
+    if isempty(content)
+        return;
+    end
+    if isempty(strfind(content, 'pseudo-CT.mlsc-current-output-verification/v1'))
+        return;
+    end
+    if isempty(strfind(content, 'normalized_input_verified'))
+        return;
+    end
+    % NORMALIZED_INPUT SHA STRICT: the 'normalized_input:' fingerprint
+    % line must carry exactly ^[0-9A-Fa-f]{64}$ after whitespace
+    % normalization (same strict policy as required-output SHA). Missing,
+    % empty, 63/65-hex, 64hex+suffix, prefix+64hex, trailing tokens, and
+    % non-hex all fail. The verified marker never overrides a malformed
+    % SHA; evidence must be internally consistent.
+    if ~local_is_valid_normalized_input_sha(content)
+        return;
+    end
+    entries = local_expected_output_entries(verification_path);
+    if isempty(entries)
+        return;
+    end
+    basenames = {};
+    for ii = 1:length(entries)
+        basenames{end + 1, 1} = entries{ii}.basename; %#ok<AGROW>
+    end
+    output_map = local_current_output_filename_map();
+    has_att = local_contains_basename(basenames, output_map.att_map);
+    has_ver = local_contains_basename(basenames, output_map.version);
+    has_fusion = local_contains_basename(basenames, output_map.validation_fusion);
+    has_composite = local_contains_basename(basenames, output_map.validation_composite);
+    if ~has_att || ~has_ver || ~(has_fusion || has_composite)
+        return;
+    end
+    % Every declared entry must carry bytes and mandatory SHA-256 (B5A).
+    % Missing/empty/malformed/unverifiable SHA fails. No size-only fallback.
+    for ii = 1:length(entries)
+        if ~(entries{ii}.bytes > 0 && isfinite(entries{ii}.bytes))
+            return;
+        end
+        if ~local_is_valid_sha256(entries{ii}.sha256)
+            return;
+        end
+    end
+    % Structured att_map semantic block is mandatory (no fallback).
+    if ~local_has_att_map_semantic_block(content)
+        return;
+    end
+    ok = true;
+catch %#ok<CTCH>
+    ok = false;
+end
+end
+
+function ok = local_copyback_identity_ok(shared_temp, verification_path)
+%LOCAL_COPYBACK_IDENTITY_OK Shared bytes equal verified node-local bytes.
+%   Uses the EXPLICIT authoritative key->basename map: each verification
+%   entry carries its exact declared basename (no fieldname inference), and
+%   each shared file fullfile(shared_temp, <exact-basename>) must exist
+%   with identical byte size and mandatory identical SHA-256 content hash
+%   (independently recomputed, B5A). Missing/malformed SHA, hash mismatch,
+%   and same-size different-content fail. Datenum is ignored because
+%   copyback creates a new timestamp. R2010b only.
+ok = false;
+try
+    entries = local_expected_output_entries(verification_path);
+    if isempty(entries)
+        return;
+    end
+    for ii = 1:length(entries)
+        basename = entries{ii}.basename;
+        if ~local_is_controlled_basename(basename)
+            return;
+        end
+        shared_path = fullfile(shared_temp, basename);
+        if exist(shared_path, 'file') ~= 2
+            return;
+        end
+        info = dir(shared_path);
+        if isempty(info) || info(1).bytes ~= entries{ii}.bytes
+            return;
+        end
+        if ~local_is_valid_sha256(entries{ii}.sha256)
+            return;
+        end
+        actual_hash = local_file_sha256_hex(shared_path);
+        if isempty(actual_hash) || ~strcmp(lower(strtrim(actual_hash)), ...
+                lower(strtrim(entries{ii}.sha256)))
+            return;
+        end
+    end
+    ok = true;
+catch %#ok<CTCH>
+    ok = false;
+end
+end
+
+function entries = local_expected_output_entries(verification_path)
+%LOCAL_EXPECTED_OUTPUT_ENTRIES Parse explicit output identity entries.
+%   Each 'output <exact-basename>:' line is parsed with its exact declared
+%   basename (no transformation) plus bytes and mandatory strict 64-hex
+%   SHA-256 (B5A). Covers the declared required outputs including the
+%   Composite variant as declared. Unknown/malformed lines are skipped;
+%   empty means fail. R2010b.
+entries = {};
+try
+    content = local_read_text(verification_path);
+    if isempty(content)
+        entries = {};
+        return;
+    end
+    lines = local_split_lines(content);
+    for ii = 1:length(lines)
+        line = strtrim(lines{ii});
+        prefix = 'output ';
+        if ~strncmp(line, prefix, length(prefix))
+            continue;
+        end
+        rest = strtrim(line(length(prefix) + 1:end));
+        colon = strfind(rest, ':');
+        if isempty(colon)
+            continue;
+        end
+        basename = strtrim(rest(1:colon(1) - 1));
+        if ~local_is_controlled_basename(basename)
+            continue;
+        end
+        tail = rest(colon(1) + 1:end);
+        bytes_pos = strfind(tail, 'bytes=');
+        if isempty(bytes_pos)
+            continue;
+        end
+        number_text = tail(bytes_pos(1) + 6:end);
+        bytes_value = sscanf(number_text, '%d', 1);
+        if isempty(bytes_value) || ~isfinite(bytes_value) || bytes_value <= 0
+            continue;
+        end
+        sha_text = '';
+        fingerprint_text = strtrim(tail);
+        sha_pos = strfind(lower(tail), 'sha256=');
+        if ~isempty(sha_pos)
+            sha_tail = tail(sha_pos(1) + 7:end);
+            % B5A: strict 64-hex SHA-256. The ENTIRE normalized value
+            % after sha256= must match ^[0-9a-fA-F]{64}$ exactly.
+            % Prefix extraction is forbidden: 63/65-hex, 64hex+suffix,
+            % prefix+64hex, trailing tokens, non-hex, and missing/empty
+            % are not retained; the entry then fails the mandatory check.
+            sha_candidate = strtrim(sha_tail);
+            if ~isempty(regexp(sha_candidate, '^[0-9a-fA-F]{64}$', 'once'))
+                sha_text = lower(sha_candidate);
+            end
+        end
+        entry = struct('basename', basename, 'bytes', double(bytes_value(1)), ...
+            'sha256', sha_text, 'fingerprint', fingerprint_text);
+        entries{end + 1, 1} = entry; %#ok<AGROW>
+    end
+catch %#ok<CTCH>
+    entries = {};
+end
+end
+
+function expected = local_expected_output_bytes(verification_path)
+%LOCAL_EXPECTED_OUTPUT_BYTES Legacy wrapper (explicit basenames only).
+%   Retained for compatibility; new code uses local_expected_output_entries
+%   with exact basenames (no underscore/dot inference). Returns a struct
+%   keyed by explicit safe keys for the declared basenames. R2010b only.
+expected = struct();
+try
+    entries = local_expected_output_entries(verification_path);
+    if isempty(entries)
+        expected = struct();
+        return;
+    end
+    output_map = local_current_output_filename_map();
+    for ii = 1:length(entries)
+        basename = entries{ii}.basename;
+        if strcmp(basename, output_map.att_map)
+            expected.att_map_nii = entries{ii}.bytes;
+        elseif strcmp(basename, output_map.validation_fusion)
+            expected.Fusion_MR_Pseudo_CT_validation_tiff = entries{ii}.bytes;
+        elseif strcmp(basename, output_map.validation_composite)
+            expected.Composite_Fusion_MR_Pseudo_CT_validation_tiff = entries{ii}.bytes;
+        elseif strcmp(basename, output_map.version)
+            expected.Pseudo_CT_AC_Version_txt = entries{ii}.bytes;
+        else
+            % Any other declared required output: explicit basename key
+            % sanitized without inference collisions (fail closed on clash).
+            safe = local_safe_key(basename);
+            if isfield(expected, safe)
+                expected = struct();
+                return;
+            end
+            expected.(safe) = entries{ii}.bytes;
+        end
+    end
+catch %#ok<CTCH>
+    expected = struct();
+end
+end
+
+function ok = local_att_map_content_ok(att_map_path, verification_path)
+%LOCAL_ATT_MAP_CONTENT_OK Structured semantic verification for att_map.nii.
+%   No string/size fallback. Requires the narrow structured contract tied
+%   to the exact file: exact basename/path identity (att_map.nii),
+%   mandatory independently recomputed SHA-256 (B5A/B5B) plus byte size
+%   matching the compute-side record, NIfTI datatype 16 (float32), finite
+%   dimensions, finite affine/geometry sufficient for wrong-geometry
+%   detection (exact match, no tolerance), and finite voxel data. Rejects
+%   mismatch/malformed/missing/wrong dims/dtype/affine/nonfinite/missing
+%   SHA. No parity, no tolerances. R2010b only.
+ok = false;
+try
+    [~, base_name, ext_name] = fileparts(att_map_path);
+    if ~strcmp([base_name ext_name], 'att_map.nii')
+        return;
+    end
+    if exist(att_map_path, 'file') ~= 2
+        return;
+    end
+    content = local_read_text(verification_path);
+    if isempty(content)
+        return;
+    end
+    semantic = local_parse_att_map_semantic(content);
+    if isempty(semantic)
+        return;
+    end
+    if ~strcmp(strtrim(semantic.basename), 'att_map.nii')
+        return;
+    end
+    info = dir(att_map_path);
+    if isempty(info) || info(1).bytes <= 0
+        return;
+    end
+    if info(1).bytes ~= semantic.bytes
+        return;
+    end
+    % B5A/B5B: att_map SHA-256 MANDATORY. Missing/malformed/unverifiable
+    % fails closed. No size-only fallback.
+    if ~local_is_valid_sha256(semantic.sha256)
+        return;
+    end
+    actual_hash = local_file_sha256_hex(att_map_path);
+    if isempty(actual_hash) || ~strcmp(lower(strtrim(actual_hash)), ...
+            lower(strtrim(semantic.sha256)))
+        return;
+    end
+    % Independent NIfTI header/geometry/data checks (SPM required for
+    % current; no fallback when SPM is unavailable or file is malformed).
+    if exist('spm_vol', 'file') ~= 2
+        return;
+    end
+    try
+        V = spm_vol(att_map_path);
+    catch %#ok<CTCH>
+        return;
+    end
+    if ~isstruct(V) || isempty(V)
+        return;
+    end
+    V = V(1);
+    if ~isfield(V, 'dim') || ~isfield(V, 'mat') || ~isfield(V, 'dt')
+        return;
+    end
+    if ~isnumeric(V.dim) || numel(V.dim) < 3 || any(~isfinite(V.dim(:))) || ...
+            any(V.dim(:) <= 0)
+        return;
+    end
+    if ~isnumeric(V.mat) || numel(V.mat) ~= 16 || any(~isfinite(V.mat(:))) || ...
+            isequal(V.mat, zeros(size(V.mat)))
+        return;
+    end
+    if ~isnumeric(V.dt) || isempty(V.dt) || V.dt(1) ~= 16
+        return;
+    end
+    % Exact structured match (no tolerance): datatype, dimensions, affine.
+    if V.dt(1) ~= semantic.datatype
+        return;
+    end
+    if ~local_dims_equal(V.dim, semantic.dim)
+        return;
+    end
+    if ~local_affine_equal(V.mat, semantic.affine)
+        return;
+    end
+    try
+        data = spm_read_vols(V);
+    catch %#ok<CTCH>
+        return;
+    end
+    if ~isnumeric(data) && ~islogical(data)
+        return;
+    end
+    if isempty(data) || ~all(isfinite(data(:)))
+        return;
+    end
+    if ~isequal(semantic.finite, 1)
+        return;
+    end
+    ok = true;
+catch %#ok<CTCH>
+    ok = false;
+end
+end
+
+function semantic = local_parse_att_map_semantic(content)
+%LOCAL_PARSE_ATT_MAP_SEMANTIC Parse the structured att_map block.
+semantic = [];
+try
+    if isempty(content) || ~ischar(content)
+        return;
+    end
+    basename = local_field_value(content, 'att_map_basename:');
+    bytes_text = local_field_value(content, 'att_map_bytes:');
+    sha_text = local_field_value(content, 'att_map_sha256:');
+    dtype_text = local_field_value(content, 'att_map_datatype:');
+    dim_text = local_field_value(content, 'att_map_dim:');
+    affine_text = local_field_value(content, 'att_map_affine:');
+    finite_text = local_field_value(content, 'att_map_finite:');
+    if isempty(basename) || isempty(bytes_text) || isempty(dtype_text) || ...
+            isempty(dim_text) || isempty(affine_text) || isempty(finite_text)
+        return;
+    end
+    % B5A/B5B: att_map SHA-256 structural evidence mandatory.
+    if ~local_is_valid_sha256(sha_text)
+        return;
+    end
+    if ~strcmp(strtrim(basename), 'att_map.nii')
+        return;
+    end
+    bytes_value = sscanf(strtrim(bytes_text), '%d', 1);
+    dtype_value = sscanf(strtrim(dtype_text), '%d', 1);
+    finite_value = sscanf(strtrim(finite_text), '%d', 1);
+    if isempty(bytes_value) || ~isfinite(bytes_value) || bytes_value <= 0
+        return;
+    end
+    if isempty(dtype_value) || dtype_value ~= 16
+        return;
+    end
+    if isempty(finite_value) || finite_value ~= 1
+        return;
+    end
+    dim_value = sscanf(strtrim(dim_text), '%f', inf);
+    if isempty(dim_value) || any(~isfinite(dim_value)) || any(dim_value <= 0)
+        return;
+    end
+    affine_value = sscanf(strtrim(affine_text), '%f', inf);
+    if isempty(affine_value) || numel(affine_value) ~= 16 || ...
+            any(~isfinite(affine_value))
+        return;
+    end
+    affine_value = reshape(affine_value, 4, 4);
+    semantic = struct('basename', 'att_map.nii', ...
+        'bytes', double(bytes_value(1)), ...
+        'sha256', lower(strtrim(sha_text)), ...
+        'datatype', double(dtype_value(1)), ...
+        'dim', dim_value(:)', ...
+        'affine', affine_value, ...
+        'finite', 1);
+catch %#ok<CTCH>
+    semantic = [];
+end
+end
+
+function present = local_has_att_map_semantic_block(content)
+present = false;
+try
+    semantic = local_parse_att_map_semantic(content);
+    present = ~isempty(semantic);
+catch %#ok<CTCH>
+    present = false;
+end
+end
+
+function value = local_field_value(content, marker)
+value = '';
+try
+    pos = strfind(content, marker);
+    if isempty(pos)
+        return;
+    end
+    tail = content(pos(1) + length(marker):end);
+    newline = strfind(tail, char(10));
+    if ~isempty(newline)
+        tail = tail(1:newline(1) - 1);
+    end
+    carriage = strfind(tail, char(13));
+    if ~isempty(carriage)
+        tail = tail(1:carriage(1) - 1);
+    end
+    value = strtrim(tail);
+catch %#ok<CTCH>
+    value = '';
+end
+end
+
+function flag = local_contains_basename(list, target)
+flag = false;
+try
+    for ii = 1:length(list)
+        if ischar(list{ii}) && strcmp(strtrim(list{ii}), target)
+            flag = true;
+            return;
+        end
+    end
+catch %#ok<CTCH>
+    flag = false;
+end
+end
+
+function flag = local_is_controlled_basename(name_text)
+flag = false;
+try
+    if ~ischar(name_text) || size(name_text, 1) ~= 1 || ...
+            isempty(strtrim(name_text)) || any(name_text == char(0))
+        return;
+    end
+    trimmed = strtrim(name_text);
+    if ~isempty(strfind(trimmed, '..')) || ~isempty(strfind(trimmed, '/')) || ...
+            ~isempty(strfind(trimmed, char(92)))
+        return;
+    end
+    flag = true;
+catch %#ok<CTCH>
+    flag = false;
+end
+end
+
+function flag = local_dims_equal(actual_dim, expected_dim)
+flag = false;
+try
+    a = actual_dim(:)';
+    e = expected_dim(:)';
+    if length(a) < 3 || length(e) < 3
+        return;
+    end
+    % Compare the first three spatial dimensions exactly (no tolerance).
+    % Extra trailing singleton dimensions are ignored only when both sides
+    % agree they are singletons; any spatial mismatch fails.
+    if length(a) ~= length(e)
+        % Allow 3-vs-4 length only when the extra element is 1 on both.
+        maxlen = max(length(a), length(e));
+        a(end + 1:maxlen) = 1;
+        e(end + 1:maxlen) = 1;
+    end
+    flag = isequal(a, e);
+catch %#ok<CTCH>
+    flag = false;
+end
+end
+
+function flag = local_affine_equal(actual_mat, expected_mat)
+flag = false;
+try
+    if ~isequal(size(actual_mat), size(expected_mat))
+        return;
+    end
+    % Exact geometry identity sufficient for wrong-geometry detection.
+    % No tolerance: any affine element mismatch fails.
+    flag = isequal(actual_mat, expected_mat);
+catch %#ok<CTCH>
+    flag = false;
+end
+end
+
+function text = local_read_text(path_name)
+text = '';
+try
+    fid = fopen(path_name, 'r');
+    if fid == -1
+        return;
+    end
+    raw = fread(fid, inf, '*char')';
+    fclose(fid);
+    if ischar(raw)
+        text = raw;
+    end
+catch %#ok<CTCH>
+    try
+        fclose(fid);
+    catch %#ok<CTCH>
+    end
+    text = '';
+end
+end
+
+function lines = local_split_lines(content)
+lines = {};
+try
+    normalized = strrep(content, char(13), char(10));
+    parts = regexp(normalized, char(10), 'split');
+    for ii = 1:length(parts)
+        lines{end + 1, 1} = parts{ii}; %#ok<AGROW>
+    end
+catch %#ok<CTCH>
+    lines = {};
+end
+end
+
+function safe = local_safe_key(basename)
+safe = '';
+try
+    safe = regexprep(basename, '[^A-Za-z0-9]', '_');
+    if isempty(safe) || ~isletter(safe(1))
+        safe = ['k_' safe];
+    end
+catch %#ok<CTCH>
+    safe = 'k_unknown';
+end
+end
+
+function hex = local_file_sha256_hex(path_name)
+%LOCAL_FILE_SHA256_HEX SHA-256 content hash, fail-closed (B4B/B5A).
+%   Java SHA-256 when available, else the approved deterministic sha256sum
+%   mechanism. No FNV/filesize/mtime fallback: when hashing is unavailable
+%   the result is '' and callers fail closed. R2010b only.
+hex = '';
+try
+    fid = fopen(path_name, 'r');
+    if fid == -1
+        return;
+    end
+    raw = fread(fid, inf, '*uint8')';
+    fclose(fid);
+    if isempty(raw)
+        return;
+    end
+    try
+        digest = java.security.MessageDigest.getInstance('SHA-256');
+        digest.update(raw);
+        bytes = typecast(digest.digest(), 'uint8');
+        candidate = lower(reshape(dec2hex(bytes, 2)', 1, []));
+        if local_is_valid_sha256(candidate)
+            hex = candidate;
+            return;
+        end
+    catch %#ok<CTCH>
+    end
+    try
+        quoted = local_shell_quote(path_name);
+        [status, out] = system(['sha256sum ' quoted ' 2>/dev/null']);
+        if status == 0 && ischar(out) && ~isempty(strtrim(out))
+            tok = regexp(strtrim(out), '^([0-9a-fA-F]{64})(?![0-9a-fA-F])', ...
+                'tokens', 'once');
+            if ~isempty(tok)
+                candidate = lower(strtrim(tok{1}));
+                if local_is_valid_sha256(candidate)
+                    hex = candidate;
+                    return;
+                end
+            end
+        end
+    catch %#ok<CTCH>
+    end
+    hex = '';
+catch %#ok<CTCH>
+    try
+        fclose(fid);
+    catch %#ok<CTCH>
+    end
+    hex = '';
+end
+end
+
+function flag = local_is_valid_sha256(value)
+%LOCAL_IS_VALID_SHA256 Strict 64-hex SHA-256 shape (B5A). R2010b only.
+flag = false;
+try
+    if ~ischar(value) || size(value, 1) ~= 1
+        return;
+    end
+    trimmed = strtrim(value);
+    if length(trimmed) ~= 64
+        return;
+    end
+    if isempty(regexp(trimmed, '^[0-9a-fA-F]{64}$', 'once'))
+        return;
+    end
+    flag = true;
+catch %#ok<CTCH>
+    flag = false;
+end
+end
+
+function flag = local_is_valid_normalized_input_sha(content)
+%LOCAL_IS_VALID_NORMALIZED_INPUT_SHA Strict normalized-input SHA-256.
+%   Parses the 'normalized_input:' fingerprint line (exact prefix, never
+%   the 'normalized_input_verified:' marker) and requires the ENTIRE
+%   normalized value after sha256= to match ^[0-9a-fA-F]{64}$ exactly
+%   (same strict policy as required-output SHA). Prefix extraction is
+%   forbidden: missing line, missing sha256=, empty, 63/65-hex,
+%   64hex+suffix, prefix+64hex, trailing tokens, and non-hex all fail.
+%   R2010b only.
+flag = false;
+try
+    if ~ischar(content) || isempty(content)
+        return;
+    end
+    normalized = strrep(content, char(13), char(10));
+    parts = regexp(normalized, char(10), 'split');
+    found = false;
+    for ii = 1:length(parts)
+        line = strtrim(parts{ii});
+        if strncmp(line, 'normalized_input:', length('normalized_input:'))
+            tail = line(length('normalized_input:') + 1:end);
+            sha_pos = strfind(lower(tail), 'sha256=');
+            if isempty(sha_pos)
+                return;
+            end
+            sha_tail = tail(sha_pos(1) + 7:end);
+            sha_candidate = strtrim(sha_tail);
+            if isempty(regexp(sha_candidate, '^[0-9a-fA-F]{64}$', 'once'))
+                return;
+            end
+            if ~local_is_valid_sha256(sha_candidate)
+                return;
+            end
+            found = true;
+        end
+    end
+    if ~found
+        return;
+    end
+    flag = true;
+catch %#ok<CTCH>
+    flag = false;
+end
+end
+
+function quoted = local_shell_quote(value)
+%LOCAL_SHELL_QUOTE POSIX single-quote for the sha256sum fallback.
+quoted = '''''';
+try
+    if ~ischar(value) || size(value, 1) ~= 1 || isempty(value)
+        quoted = '''''';
+        return;
+    end
+    single_quote = char(39);
+    double_quote = char(34);
+    quoted = single_quote;
+    for ii = 1:length(value)
+        if value(ii) == char(0)
+            error('pseudo_CT:MLSCPreflight', 'NUL in path.');
+        elseif value(ii) == single_quote
+            quoted = [quoted single_quote double_quote single_quote ...
+                double_quote single_quote]; %#ok<AGROW>
+        else
+            quoted = [quoted value(ii)]; %#ok<AGROW>
+        end
+    end
+    quoted = [quoted single_quote];
+catch %#ok<CTCH>
+    quoted = '''''';
+end
 end
 
 function result = local_apply_deadline(result, state, transport, detail)
@@ -1658,6 +2545,14 @@ try
         level = 'SUCCESS';
         stage_index = 3;
         message = 'MLSC stage-in completed.';
+    elseif strcmp(milestone, 'preparation|done')
+        level = 'SUCCESS';
+        stage_index = 3;
+        message = 'MLSC preparation completed.';
+    elseif strcmp(milestone, 'alias_recenter|done')
+        level = 'SUCCESS';
+        stage_index = 3;
+        message = 'MLSC alias-recenter completed.';
     elseif strcmp(milestone, 'normalize|start')
         level = 'INFO';
         stage_index = 3;
@@ -1666,6 +2561,22 @@ try
         level = 'SUCCESS';
         stage_index = 3;
         message = 'MLSC normalization completed.';
+    elseif strcmp(milestone, 'alignment_mask|done')
+        level = 'SUCCESS';
+        stage_index = 3;
+        message = 'MLSC alignment-mask completed.';
+    elseif strcmp(milestone, 'segmentation|done')
+        level = 'SUCCESS';
+        stage_index = 3;
+        message = 'MLSC segmentation completed.';
+    elseif strcmp(milestone, 'bone|done')
+        level = 'SUCCESS';
+        stage_index = 3;
+        message = 'MLSC bone completed.';
+    elseif strcmp(milestone, 'dartel_warp_reslice|done')
+        level = 'SUCCESS';
+        stage_index = 3;
+        message = 'MLSC DARTEL-warp-reslice completed.';
     elseif strcmp(milestone, 'pseudoCT|start')
         level = 'INFO';
         stage_index = 3;
@@ -1674,6 +2585,10 @@ try
         level = 'SUCCESS';
         stage_index = 3;
         message = 'MLSC pseudo-CT completed.';
+    elseif strcmp(milestone, 'attenuation_qc|done')
+        level = 'SUCCESS';
+        stage_index = 3;
+        message = 'MLSC attenuation-QC completed.';
     elseif strcmp(milestone, 'verify|start')
         level = 'INFO';
         stage_index = 4;
@@ -1951,11 +2866,20 @@ end
 
 function recognized = local_is_archivable_record(line)
 %LOCAL_IS_ARCHIVABLE_RECORD Enumerated records only, never free-form.
+%   Mirrors mlsc_progress local_is_record (including T004 current
+%   milestones) so the durable archive preserves the validated sequence.
 recognized = strcmp(line, 'stage_in|done') || ...
+    strcmp(line, 'preparation|done') || ...
+    strcmp(line, 'alias_recenter|done') || ...
     strcmp(line, 'normalize|start') || ...
     strcmp(line, 'normalize|done') || ...
+    strcmp(line, 'alignment_mask|done') || ...
+    strcmp(line, 'segmentation|done') || ...
+    strcmp(line, 'bone|done') || ...
+    strcmp(line, 'dartel_warp_reslice|done') || ...
     strcmp(line, 'pseudoCT|start') || ...
     strcmp(line, 'pseudoCT|done') || ...
+    strcmp(line, 'attenuation_qc|done') || ...
     strcmp(line, 'verify|start') || ...
     strcmp(line, 'verify|done') || ...
     strcmp(line, 'copy_back|start') || ...

@@ -15,6 +15,29 @@ function run_pseudo_CT(varargin)
 %     'correct_aliasing' - 0 or 1 to override the profile's
 %                          anti-aliasing default. Omit to use the profile
 %                          default.
+%     'mlsc_current_artifact_root'
+%                        - Absolute directory supplying the operator-selected
+%                          mlsc-current artifact (T007 build layout):
+%                            <root>/payload_build/run_mlsc_current_payload.sh
+%                            <root>/mlsc_current_build.mat
+%                            <root>/mlsc_current_resources.mat
+%                          No independent runner/build/resource overrides.
+%                          Omit to use the canonical /usr/pubsw default.
+%                          Only mlsc-current may consume this option.
+%     'mlsc_current_gate_a_record'
+%                        - Absolute MAT path to the structured Gate-A record.
+%                          When artifact_root is supplied and this is omitted,
+%                          it defaults to <root>/mlsc_current_gate_a.mat.
+%                          The validated record currently lives in a separate
+%                          directory, so pass its explicit absolute path.
+%                          Only mlsc-current may consume this option.
+%
+%   The artifact overrides only select which exact paths populate
+%   config.current.runner/build_manifest/resource_manifest/gate_a_record.
+%   They do NOT bypass Gate-A validation: validate_contract and
+%   validate_for_execution still recompute every hash and binding, and wrong
+%   or incomplete paths fail closed. MCR_ROOT is never overridable and stays
+%   the pinned /usr/pubsw/common/matlab/26.1.
 %
 %   Profiles are auto-discovered from src/config/profiles/. Each .m
 %   file in that directory defines one execution profile. To add a new
@@ -26,6 +49,9 @@ function run_pseudo_CT(varargin)
 %       run_pseudo_CT('profile', 'mlsc-legacy', 'subjects', 'batch')
 %       run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, ...
 %                     'correct_aliasing', 0)
+%       run_pseudo_CT('profile', 'mlsc-current', ...
+%                     'mlsc_current_artifact_root', '/path/to/artifact', ...
+%                     'mlsc_current_gate_a_record', '/path/to/mlsc_current_gate_a.mat')
 %
 %   RUN_PSEUDO_CT(DEFAULTS_MAT) is supported only in deployed mode.
 %   DEFAULTS_MAT should point to a MAT file containing the defaults
@@ -64,6 +90,10 @@ interactive_gui = ~isdeployed && nargin == 0;
 % input or authentication block.  A supplied provider selects strict pinned
 % host-key verification, which fails closed on any doubt.
 mlsc_host_key_provider = [];
+% Public mlsc-current artifact overrides (T009 Option A). Empty defaults
+% keep the canonical /usr/pubsw profile paths unchanged.
+mlsc_current_artifact_root = '';
+mlsc_current_gate_a_record = '';
 
 %% === 1. Handle deployed mode (before any argument parsing) ===
 if isdeployed
@@ -93,12 +123,19 @@ else
     % value selects strict pinned host-key verification.
     p.addParamValue('mlsc_host_key_provider', [], ...
         @(x) isempty(x) || ischar(x) || isa(x, 'function_handle'));
+    % T009 Option A: explicit operator-selected mlsc-current artifact
+    % overrides. Only mlsc-current may consume them (enforced after profile
+    % load); they never bypass Gate-A validation and never override MCR_ROOT.
+    p.addParamValue('mlsc_current_artifact_root', '', @(x) ischar(x));
+    p.addParamValue('mlsc_current_gate_a_record', '', @(x) ischar(x));
     p.parse(varargin{:});
-    
+
     profile_name = p.Results.profile;
     subjects_arg = p.Results.subjects;
     aliasing_arg = p.Results.correct_aliasing;
     mlsc_host_key_provider = p.Results.mlsc_host_key_provider;
+    mlsc_current_artifact_root = p.Results.mlsc_current_artifact_root;
+    mlsc_current_gate_a_record = p.Results.mlsc_current_gate_a_record;
 end
 
 %% === Validate profile name against available profile files ===
@@ -128,6 +165,11 @@ warn_cleanup = onCleanup(@() warning(orig_warn));
 
 %% === Load the selected profile once and set up its resources ===
 config = pseudo_CT_load_profile(profile_name, fullfile(pathp, 'src', 'config'));
+% T009 Option A: apply explicit mlsc-current artifact overrides through the
+% real public config path. Default (both empty) leaves the canonical
+% /usr/pubsw profile unchanged; only mlsc-current may consume overrides.
+config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, ...
+    mlsc_current_artifact_root, mlsc_current_gate_a_record);
 if ~isempty(config.required_matlab_release) && ...
         ~strcmp(version('-release'), config.required_matlab_release)
     % Legacy output: warning(['Profile ''%s'' requires MATLAB R%s; running R%s. ', ...
@@ -401,6 +443,20 @@ switch config.mode
                     subject = struct('subject_id', jobs(ii).mprage_fn, ...
                         'shared_input', jobs(ii).seed_nii, ...
                         'shared_temp', jobs(ii).temp_dir);
+                    % T004 current seam: credential-free per-job alias/
+                    % recenter overrides travel in the subject so the
+                    % current job manifest carries effective overrides
+                    % (never profile defaults). Legacy path unchanged.
+                    try
+                        if isfield(config, 'implementation') && ...
+                                ischar(config.implementation) && ...
+                                strcmp(config.implementation, 'current')
+                            subject.check_aliasing = jobs(ii).correct_aliasing;
+                            subject.recenter_before_normalization = ...
+                                jobs(ii).recenter_before_normalization;
+                        end
+                    catch %#ok<CTCH>
+                    end
                     lifecycle = struct();
                     try
                         lifecycle = mlsc_lifecycle(subject, config, runtime, transport);
@@ -692,7 +748,18 @@ context = local_attach_mlsc_job(context, job_id);
 context = local_stage_context(context, 5);
 stage_started = tic;
 pseudo_CT_output('INFO', context, 'Applying local post-processing.');
-if strcmp(config.zero_background, 'Yes')
+% T004 current: the shared current core owns zero-background policy, so the
+% legacy post-fetch re-mask is skipped for current. Legacy/launchpad keep
+% the historical post-fetch mask.
+is_current_finalize = false;
+try
+    is_current_finalize = isfield(config, 'implementation') && ...
+        ischar(config.implementation) && ...
+        strcmp(config.implementation, 'current');
+catch %#ok<CTCH>
+    is_current_finalize = false;
+end
+if strcmp(config.zero_background, 'Yes') && ~is_current_finalize
     pseudo_CT_apply_background_mask(job.temp_dir, context);
 end
 pseudo_CT_output('SUCCESS', context, ...
@@ -1115,7 +1182,7 @@ function name = canonical_profile_name(requested, profiles)
 %CANONICAL_PROFILE_NAME Resolve exact hyphenated keys plus deprecated alias.
 %   Accepts only exact hyphenated canonical keys discovered from
 %   src/config/profiles plus the deprecated alias mlsc -> mlsc-legacy.
-%   Underscore spellings, display labels, mlsc-current, Launchpad and
+%   Underscore spellings, display labels, Launchpad and
 %   near-parity names are rejected. Discovery stays non-recursive so the
 %   alias creates no row.
 

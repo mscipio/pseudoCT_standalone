@@ -34,20 +34,39 @@ if strcmp(config.mode, 'launchpad')
         end
     end
 elseif strcmp(config.mode, 'mlsc')
+    is_current_setup = false;
+    try
+        is_current_setup = isfield(config, 'implementation') && ...
+            ischar(config.implementation) && ...
+            strcmp(config.implementation, 'current');
+    catch %#ok<CTCH>
+        is_current_setup = false;
+    end
+    if is_current_setup
+        local_validate_current_setup(config);
+        mlsc_files = {config.mlsc.shell; config.mlsc.freesurfer_env};
+    else
     mlsc_files = {config.mlsc.runner; config.mlsc.defaults_mat; ...
         config.mlsc.shell; config.mlsc.freesurfer_env};
+    end
     for ii = 1:length(mlsc_files)
         if exist(mlsc_files{ii}, 'file') ~= 2
             error('pseudo_CT:MissingResource', ...
                 'Configured MLSC file not found: %s', mlsc_files{ii});
         end
     end
+    if is_current_setup
+        % Current artifact-file existence stays with preflight/validator
+        % (fail-closed pending Gate A); setup keeps the interpreted
+        % submitting-host dependencies below.
+    else
     mlsc_dirs = {config.mlsc.mcr_root; config.mlsc.batch_templates};
     for ii = 1:length(mlsc_dirs)
         if exist(mlsc_dirs{ii}, 'dir') ~= 7
             error('pseudo_CT:MissingResource', ...
                 'Configured MLSC directory not found: %s', mlsc_dirs{ii});
         end
+    end
     end
 else
     % Local mode: validate the external aliasing-correction standalone.
@@ -105,6 +124,41 @@ for ii = 1:length(overrides)
         error('VERS:WrongOrder', ...
             'Override %s is not first on the MATLAB path: %s', ...
             overrides{ii}, actual);
+    end
+end
+end
+
+function local_validate_current_setup(config)
+%LOCAL_VALIDATE_CURRENT_SETUP Fail-closed current strings for setup (T005).
+%   Requires the neutral config.current artifact strings and rejects any
+%   legacy block/fields. Artifact-file existence is NOT checked here;
+%   preflight/validator own that gate pending Gate A. R2010b only.
+if ~isfield(config, 'current') || ~isstruct(config.current) || ...
+        numel(config.current) ~= 1
+    error('pseudo_CT:InvalidProfile', ...
+        'The MLSC current profile has no valid current artifact block.');
+end
+current_fields = {'runner'; 'mcr_root'; 'build_manifest'; ...
+    'resource_manifest'};
+for ii = 1:length(current_fields)
+    value = config.current.(current_fields{ii});
+    if ~ischar(value) || size(value, 1) ~= 1 || ...
+            isempty(strtrim(value)) || any(value == char(0))
+        error('pseudo_CT:InvalidProfile', ...
+            'The MLSC current artifact block is invalid.');
+    end
+end
+if isfield(config, 'legacy')
+    error('pseudo_CT:InvalidProfile', ...
+        'The MLSC current profile must not carry a legacy block.');
+end
+legacy_mlsc_fields = {'runner'; 'mcr_root'; 'defaults_mat'; ...
+    'batch_templates'};
+for ii = 1:length(legacy_mlsc_fields)
+    if isfield(config.mlsc, legacy_mlsc_fields{ii})
+        error('pseudo_CT:InvalidProfile', ...
+            'The MLSC current profile must not carry legacy field %s.', ...
+            legacy_mlsc_fields{ii});
     end
 end
 end

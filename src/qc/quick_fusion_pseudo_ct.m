@@ -3,11 +3,42 @@
 % Function to quickly display the 3 middle planes (Axial, Coronal and
 % Sagital) with the fused view of the MR and Pseudo-CT images;
 
-function composite = quick_fusion_pseudo_ct(pat_folder)
+function composite = quick_fusion_pseudo_ct(pat_folder, colormap_mat)
+%QUICK_FUSION_PSEUDO_CT Fused MR/pseudo-CT validation composite (T003 headless seam).
+%   COMPOSITE = QUICK_FUSION_PSEUDO_CT(PAT_FOLDER) preserves the legacy
+%   default exactly: the QC colormap is the bundled
+%   hot_map_mpitool_1024.mat beside this source, and the rendered composite
+%   is unchanged.
+%   COMPOSITE = QUICK_FUSION_PSEUDO_CT(PAT_FOLDER, COLORMAP_MAT) uses an
+%   explicit headless resource location instead of assuming a loose MAT
+%   beside source. COLORMAP_MAT must be an existing .mat file containing a
+%   non-empty numeric my_hot_map_1024; anything else fails closed.
+%   Empty/missing COLORMAP_MAT selects the legacy default.
+%
+%   Minimum supported MATLAB: R2010b.
 
 pct = 0.5; % Fusion overlay power!
 tool_dir = fileparts(mfilename('fullpath'));
-load(fullfile(tool_dir, 'hot_map_mpitool_1024.mat'));
+if nargin < 2 || isempty(colormap_mat)
+    colormap_path = fullfile(tool_dir, 'hot_map_mpitool_1024.mat');
+else
+    if ~ischar(colormap_mat) || size(colormap_mat, 1) ~= 1 || isempty(strtrim(colormap_mat))
+        error('pseudo_CT:QCColormapInvalid', ...
+            'QC colormap resource must be a single-row path string.');
+    end
+    colormap_path = strtrim(colormap_mat);
+end
+if exist(colormap_path, 'file') ~= 2
+    error('pseudo_CT:QCColormapMissing', ...
+        'QC colormap resource not found: %s', colormap_path);
+end
+loaded_map = load(colormap_path);
+if ~isfield(loaded_map, 'my_hot_map_1024') || ~isnumeric(loaded_map.my_hot_map_1024) || ...
+        isempty(loaded_map.my_hot_map_1024)
+    error('pseudo_CT:QCColormapInvalid', ...
+        'QC colormap resource is invalid (expected numeric my_hot_map_1024): %s', colormap_path);
+end
+my_hot_map_1024 = loaded_map.my_hot_map_1024;
 map = my_hot_map_1024/255;
 composite = 0;
 

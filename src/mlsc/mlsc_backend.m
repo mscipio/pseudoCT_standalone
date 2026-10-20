@@ -27,6 +27,12 @@ function result = mlsc_backend(subject, config, runtime, transport)
 %   run writes and reads only its own unique file.
 %
 %   Minimum supported MATLAB: R2010b.
+%
+%   T004 current gate (T014 authoritative): for MLSC current, unresolved
+%   pending native evidence blocks real execution before any submission.
+%   Contract validation (preflight/generation) allows the T007-pending
+%   marker offline; this gate enforces production proof when a real
+%   submission is requested. No catalog/resolver, legacy untouched.
 
 if nargin < 4 || ~isstruct(transport) || numel(transport) ~= 1
     error('pseudo_CT:MLSCTransportRequired', ...
@@ -48,6 +54,23 @@ end
 % Run the side-effect-free preflight first so the receipt identity is only
 % created for a submission that can reach the existing script generator.
 mlsc_preflight(subject, config, runtime);
+is_current = false;
+try
+    is_current = mlsc_current_validate('is_current', config);
+catch %#ok<CTCH>
+    is_current = false;
+end
+if is_current
+    try
+        mlsc_current_validate('validate_for_execution', config);
+    catch ME
+        if strncmp(ME.identifier, 'pseudo_CT:MLSC', length('pseudo_CT:MLSC'))
+            rethrow(ME);
+        end
+        error('pseudo_CT:MLSCCurrentNativeEvidence', ...
+            'Current production evidence is unresolved; submission blocked.');
+    end
+end
 [receipt_path, correlation_id] = local_submission_identity(subject, runtime);
 runtime.job_name = local_job_name(correlation_id);
 runtime.submission_correlation_id = correlation_id;
