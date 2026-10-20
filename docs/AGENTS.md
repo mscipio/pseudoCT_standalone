@@ -2,7 +2,7 @@
 
 ## Purpose
 
-MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR MPRAGE inputs. Six active profiles: `local-current` (current source MATLAB, local), `local-legacy` (legacy v2.0 compiled Aether backend, direct-local), `mlsc-legacy` (legacy v2.0 compiled Aether backend, MLSC via Slurm), plus specialized `local-mprage-only`, `mlsc-mprage-only`, and `devel`. The bare key `mlsc` is only a deprecated alias for `mlsc-legacy`. Deprecated `launchpad`, `launchpad-mprage-only`, and `local-near-parity-r2010b` live under `src/config/profiles/deprecated/`, are excluded from discovery, and are not supported.
+MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR MPRAGE inputs. Eight active profiles: `local-current` (current source MATLAB, local), `local-legacy` (legacy v2.0 compiled Aether backend, direct-local), `mlsc-legacy` (legacy v2.0 compiled Aether backend, MLSC via Slurm), `mlsc-current` (current source MATLAB, MLSC via Slurm), `launchpad-legacy` (legacy v2.0 compiled Aether backend, remote Launchpad), plus specialized `local-mprage-only`, `mlsc-mprage-only`, and `devel`. The bare key `mlsc` is only a deprecated alias for `mlsc-legacy`. Deprecated `launchpad`, `launchpad-mprage-only`, and `local-near-parity-r2010b` live under `src/config/profiles/deprecated/`, are excluded from discovery, and are not supported.
 
 Implementation (`current` vs `legacy-v2`) and execution (`local` vs `mlsc`)
 are independent profile fields. Three profiles exist now
@@ -15,7 +15,7 @@ disclosure (collapsed on every open) holding the three specialized profiles.
 
 ## Entry Points
 
-- `run_pseudo_CT.m` — primary entrypoint with 6 profiles, named arguments, and GUI integration. Profiles: `local-current` (default), `local-legacy`, `mlsc-legacy`, `local-mprage-only`, `mlsc-mprage-only`, `devel` (`mlsc` resolves to `mlsc-legacy` as a deprecated alias).
+- `run_pseudo_CT.m` — primary entrypoint with 8 profiles, named arguments, and GUI integration. Profiles: `local-current` (default), `local-legacy`, `mlsc-legacy`, `mlsc-current`, `launchpad-legacy`, `local-mprage-only`, `mlsc-mprage-only`, `devel` (`mlsc` resolves to `mlsc-legacy` as a deprecated alias).
 
   Call with no arguments to open the profile selector GUI, then the single-subject GUI.
   Call with named arguments for CLI/script mode:
@@ -61,7 +61,7 @@ disclosure (collapsed on every open) holding the three specialized profiles.
   `ganymed-ssh2-m1.jar` under `ssh2_v2_m1_r5/`. `atlas_based_attenuation_map.m`
   may additionally load `ganymed-ssh2-build250.jar` when the external atlas
   bundle provides it.
-- **Aliasing and recentering (local profiles only)** — the external standalone selected by `config.aliasing_root` (the production profiles use `/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest`) owns both operations. The field is required in all 6 profiles by `pseudo_CT_load_profile.m`; `setup_pseudo_CT_paths.m` validates it in preflight for local profiles only (error id `AliasingRootMissing`), adds it to the MATLAB path with `addpath(..., '-begin')`, and runs `clear correct_aliasing; rehash` after. The GUI exposes independent controls, and the local OR gate calls `correct_aliasing` with independent `AliasCorrection` and `Centering` flags only when either is requested. A successful result with `details.*.performed = false` is reported as a “Not required” no-op. The facade requires MATLAB R2019+; on R2010b it is not called or inspected, the original input is retained, and the run continues with an unavailable diagnostic rather than failing. Deprecated Launchpad profiles skip this validation and import — only aliasing is delegated to the compiled `Pseudo_CT_launchpad` via remote `check_aliasing`, unchanged; no local recentering is performed.
+- **Aliasing and recentering (local profiles only)** — the external standalone selected by `config.aliasing_root` (the production profiles use `/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest`) owns both operations. The field is required in all 8 profiles by `pseudo_CT_load_profile.m`; `setup_pseudo_CT_paths.m` validates it in preflight for local profiles only (error id `AliasingRootMissing`), adds it to the MATLAB path with `addpath(..., '-begin')`, and runs `clear correct_aliasing; rehash` after. The GUI exposes independent controls, and the local OR gate calls `correct_aliasing` with independent `AliasCorrection` and `Centering` flags only when either is requested. A successful result with `details.*.performed = false` is reported as a “Not required” no-op. The facade requires MATLAB R2019+; on R2010b it is not called or inspected, the original input is retained, and the run continues with an unavailable diagnostic rather than failing. Deprecated Launchpad profiles skip this validation and import — only aliasing is delegated to the compiled `Pseudo_CT_launchpad` via remote `check_aliasing`, unchanged; no local recentering is performed.
 
 ## Execution Model
 
@@ -130,4 +130,4 @@ Same input/DICOM output layer, but `batch_pseudo_CT_launchpad.m` delegates core 
 
 ## Versioning
 
-The source version is `2.8.4`, matching the published release: `atlas_based_attenuation_map.m` reads line 1 of `CHANGELOG.md` and falls back to `2.8.4` when that file cannot be read. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.
+The source version is `3.0.0` (release preparation; not yet published, tagged, or deployed): `atlas_based_attenuation_map.m` reads line 1 of `CHANGELOG.md` and falls back to `2.8.4` when that file cannot be read. A `Pseudo_CT_AC_Version.txt` is written to the processing directory with full version history.

@@ -1,4 +1,12 @@
-2.8.4
+3.0.0
+
+## 3.0.0 — Release preparation (unpublished; no tag, build, or deployment yet)
+- MLSC CURRENT support: selectable `mlsc-current` profile (fail-closed before Gate-A), compiled-payload build path with content-bound provenance, and a fail-closed publication validator. Tooling is implemented and synthetically tested; no release-candidate build has been compiled and no package published.
+- Consolidated profiles: eight active profiles (`local-current`, `local-legacy`, `mlsc-legacy`, `mlsc-current`, `launchpad-legacy`, `local-mprage-only`, `mlsc-mprage-only`, `devel`); deprecated profiles stay excluded from discovery and unsupported.
+- `launchpad-legacy` availability: restored as a selectable recommended profile (availability only). Observed final-map states are dataset-specific (three states on the compared datasets); no state is declared correct and no universal parity is claimed.
+- Provenance improvements: content-bound source fingerprints, complete packaged-file SHA-256 inventories, and deployment-copy provenance checked at the exact runtime path.
+- Parity-evidence scope and limits: bounded controlled comparisons only; host CPU/system-math effects were not isolated independently, so results are not universal parity proof — inspect the QC image.
+- No Gate-A PASS, deployment, or certification is claimed: Gate-A execution, publication, and any deployment remain separately human-authorized on a clean checkout at the release tag.
 
 ## 2.8.4 — Published release (2026-08-31)
 - Published release archive is available.
