@@ -37,6 +37,20 @@ function build_mlsc_current(varargin)
 %   into a SEPARATE record file that binds (never rewrites) this
 %   manifest.
 %
+%   Opt-in release-candidate path (exact-source gate, staged under
+%   scratch/release_gate/): BUILD_MLSC_CURRENT('ReleaseTag', TAG,
+%   'ReleaseCommit', COMMIT, 'ExpectedFingerprint', HEX, ...) resolves the
+%   expected release commit (commit==tag enforced), then BEFORE compiling
+%   requires HEAD plus the clean-tree fingerprint to equal that exact
+%   release source (fail closed otherwise), isolates compilation inputs
+%   in a clean detached worktree under scratch/release_gate/
+%   (git worktree; the dirty tree never contaminates the build), and
+%   records release_tag/release_commit/release_tree plus a complete
+%   SHA-256 packaged-files inventory in the manifest (schema v1 fields
+%   retained, additive only). Ordinary builds without release arguments
+%   follow the byte-identical historical path (same entrypoint, same
+%   -I/-a manifest, same defaults).
+%
 %   Minimum supported MATLAB: R2010b (build host is R2026a per T014).
 
 % Parse name-value args (R2010b-safe, no inputParser dependency).
@@ -45,6 +59,10 @@ spm_arg = '';
 atlas_arg = '';
 alias_arg = '';
 mcr_arg = '';
+release_tag = '';
+release_commit = '';
+expected_fp = '';
+out_dir_given = false;
 ii = 1;
 while ii <= numel(varargin)
     if ~ischar(varargin{ii}) || size(varargin{ii}, 1) ~= 1
@@ -61,6 +79,7 @@ while ii <= numel(varargin)
     switch name_here
         case 'outputdir'
             out_dir_arg = strtrim(val_here);
+            out_dir_given = true;
         case 'spmroot'
             spm_arg = strtrim(val_here);
         case 'atlasdir'
@@ -69,6 +88,12 @@ while ii <= numel(varargin)
             alias_arg = strtrim(val_here);
         case 'mcrroot'
             mcr_arg = strtrim(val_here);
+        case 'releasetag'
+            release_tag = strtrim(val_here);
+        case 'releasecommit'
+            release_commit = strtrim(val_here);
+        case 'expectedfingerprint'
+            expected_fp = strtrim(val_here);
         otherwise
             error('pseudo_CT:BuildUsage', 'Unknown build argument %s.', name_here);
     end
@@ -76,6 +101,15 @@ while ii <= numel(varargin)
 end
 
 repo_root = fileparts(fileparts(mfilename('fullpath')));
+
+% Source root for compilation inputs. Ordinary builds compile the working
+% tree in place (historical behavior); the opt-in release path repoints
+% this at an isolated clean worktree (see the release gate below).
+src_root = repo_root;
+release_mode = ~isempty(release_tag) || ~isempty(release_commit) || ~isempty(expected_fp);
+exp_commit = '';
+release_tree_hash = '';
+release_worktree_rel = '';
 
 % Defaults (T014 authoritative inputs; outputs stay under repo dist/).
 dflt_spm = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
@@ -178,16 +212,63 @@ act_root = matlabroot;
 fprintf('BUILD_IDENTITY release=%s version=%s mcr=%s arch=%s root=%s\n', ...
     strtrim(act_release), strtrim(act_version), mat2str(act_mcr), strtrim(act_arch), act_root);
 
+% 1b. Opt-in release-candidate gate (no-op for ordinary local builds).
+%   Resolves the expected release commit (commit==tag), then BEFORE any
+%   compilation requires HEAD plus the clean-tree fingerprint to equal
+%   that exact release source (fail closed), isolates compilation inputs
+%   in a clean detached worktree under scratch/release_gate/, and stages
+%   outputs under scratch/ (never dist/, never /usr/pubsw). The mcc call
+%   site below is unreachable when this gate blocks.
+if release_mode
+    gate_lib = fullfile(repo_root, 'src', 'mlsc');
+    if exist('mlsc_release_gate', 'file') ~= 2
+        addpath(gate_lib);
+    end
+    if exist('mlsc_release_gate', 'file') ~= 2
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Release gate helper unavailable; missing tooling blocks release compilation.');
+    end
+    exp_commit = mlsc_release_gate('resolve_commit', repo_root, release_tag, release_commit);
+    release_tree_hash = mlsc_release_gate('verify_clean_source', repo_root, exp_commit);
+    if ~isempty(expected_fp)
+        clean_fp = local_provenance_fingerprint(repo_root, exp_commit, {}, {});
+        if ~strcmpi(strtrim(expected_fp), clean_fp)
+            error('pseudo_CT:MLSCReleaseGate', ...
+                'Expected fingerprint does not match the clean release source; inexact source blocks compilation.');
+        end
+    end
+    if ~isempty(release_tag)
+        wt_label = release_tag;
+    else
+        wt_label = ['commit-' exp_commit(1:7)];
+    end
+    worktree_path = mlsc_release_gate('ensure_worktree', repo_root, exp_commit, wt_label);
+    src_root = worktree_path;
+    release_worktree_rel = ['scratch/release_gate/worktree-' wt_label];
+    if ~out_dir_given
+        out_dir_arg = fullfile(repo_root, 'scratch', 'release_gate', wt_label);
+    end
+    canonical_out = local_canonical(out_dir_arg);
+    canonical_scratch = local_canonical(fullfile(repo_root, 'scratch'));
+    scratch_prefix = [canonical_scratch filesep];
+    if ~(strcmp(canonical_out, canonical_scratch) || strncmp(canonical_out, scratch_prefix, length(scratch_prefix)))
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Release-candidate outputs must stage under scratch/release_gate/: %s', out_dir_arg);
+    end
+    fprintf('RELEASE_GATE tag=%s commit=%s tree=%s worktree=%s out=%s\n', ...
+        release_tag, exp_commit, release_tree_hash, release_worktree_rel, out_dir_arg);
+end
+
 % 2. Provenance FIRST (deterministic; base HEAD + tracked mods + every
 % untracked source + SHA-256, exclude .nfs). STOP before compile if impossible.
-[git_head, git_status, tracked_mods, untracked_sources] = local_git_provenance(repo_root);
+[git_head, git_status, tracked_mods, untracked_sources] = local_git_provenance(src_root);
 if isempty(git_head)
     error('pseudo_CT:BuildProvenance', 'Source provenance impossible (no HEAD); STOP before compile.');
 end
 fprintf('PROVENANCE head=%s tracked=%d untracked=%d\n', git_head, numel(tracked_mods), numel(untracked_sources));
 
 % 3. Validate dependency roots BEFORE expensive work (fail-closed).
-entrypoint = fullfile(repo_root, 'src', 'mlsc', 'mlsc_current_payload.m');
+entrypoint = fullfile(src_root, 'src', 'mlsc', 'mlsc_current_payload.m');
 if exist(entrypoint, 'file') ~= 2
     error('pseudo_CT:BuildDependency', 'Entrypoint missing: %s', entrypoint);
 end
@@ -204,7 +285,7 @@ end
 if ~isempty(strfind(entrypoint, 'run_pseudo_CT'))
     error('pseudo_CT:BuildDependency', 'Build must compile ONLY mlsc_current_payload, not run_pseudo_CT.');
 end
-vers_dir = fullfile(repo_root, 'vers');
+vers_dir = fullfile(src_root, 'vers');
 vers_files = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'};
 for kk = 1:numel(vers_files)
     if exist(fullfile(vers_dir, vers_files{kk}), 'file') ~= 2
@@ -260,7 +341,7 @@ for kk = 1:numel(fixed_resources)
         error('pseudo_CT:BuildDependency', 'Atlas resource missing: %s', fullfile(atlas_arg, fixed_resources{kk}));
     end
 end
-hotmap_path = fullfile(repo_root, 'src', 'qc', 'hot_map_mpitool_1024.mat');
+hotmap_path = fullfile(src_root, 'src', 'qc', 'hot_map_mpitool_1024.mat');
 if exist(hotmap_path, 'file') ~= 2
     error('pseudo_CT:BuildDependency', 'QC colormap missing: %s', hotmap_path);
 end
@@ -341,14 +422,14 @@ c_spm_eeg = local_canonical(fullfile(spm_arg, 'EEGtemplates'));
 c_spm_seg = local_canonical(fullfile(spm_arg, 'toolbox', 'Seg'));
 c_spm_dartel = local_canonical(fullfile(spm_arg, 'toolbox', 'DARTEL'));
 c_alias = local_canonical(alias_arg);
-c_src = local_canonical(fullfile(repo_root, 'src'));
-c_src_core = local_canonical(fullfile(repo_root, 'src', 'core'));
-c_src_io = local_canonical(fullfile(repo_root, 'src', 'io'));
-c_src_qc = local_canonical(fullfile(repo_root, 'src', 'qc'));
-c_src_mlsc = local_canonical(fullfile(repo_root, 'src', 'mlsc'));
-c_src_config = local_canonical(fullfile(repo_root, 'src', 'config'));
+c_src = local_canonical(fullfile(src_root, 'src'));
+c_src_core = local_canonical(fullfile(src_root, 'src', 'core'));
+c_src_io = local_canonical(fullfile(src_root, 'src', 'io'));
+c_src_qc = local_canonical(fullfile(src_root, 'src', 'qc'));
+c_src_mlsc = local_canonical(fullfile(src_root, 'src', 'mlsc'));
+c_src_config = local_canonical(fullfile(src_root, 'src', 'config'));
 c_cfggen = local_canonical(cfggen_dir);
-c_changelog = local_canonical(fullfile(repo_root, 'CHANGELOG.md'));
+c_changelog = local_canonical(fullfile(src_root, 'CHANGELOG.md'));
 
 % mcc invocation: ONLY mlsc_current_payload (never run_pseudo_CT).
 % -R -nodisplay only (no -singleCompThread, no OMP/MKL forcing per T001/T012).
@@ -473,7 +554,7 @@ end
 build.runner_checksum = lower(strtrim(runner_fp));
 build.source_commit = git_head;
 build.source_provenance_fingerprint = local_provenance_fingerprint( ...
-    repo_root, git_head, tracked_mods, untracked_sources);
+    src_root, git_head, tracked_mods, untracked_sources);
 build.required_outputs = {'att_map.nii'; ...
     'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
 build.source_tracked_mods = tracked_mods;
@@ -513,6 +594,26 @@ build.resource_fingerprint = lower(strtrim(resource_fp));
 build.executable_fingerprint = lower(strtrim(exe_fp));
 build.files = build_files;
 build.checksums = build_checksums;
+% Complete SHA-256 inventory of every packaged file (schema v1 retained,
+% additive only). Covers every file staged under the output root except
+% the self-describing manifest pair mlsc_current_build.mat/.txt (self-hash
+% impossible; the .mat identity is bound later by the Gate-A record).
+% Ordinary local builds carry the same inventory; only the release_* and
+% build_mode values differ.
+local_write_text(fullfile(out_dir_arg, 'mcc_args.txt'), {mcc_options_text});
+[packaged_files, packaged_checksums, packaged_fp] = local_packaged_inventory(out_dir_arg);
+build.packaged_files = packaged_files;
+build.packaged_checksums = packaged_checksums;
+build.packaged_files_fingerprint = packaged_fp;
+if release_mode
+    build.build_mode = 'release-candidate';
+else
+    build.build_mode = 'local';
+end
+build.release_tag = release_tag;
+build.release_commit = exp_commit;
+build.release_tree = release_tree_hash;
+build.release_worktree = release_worktree_rel;
 build.thread_policy = 'no -singleCompThread, no OMP/MKL=1 forcing; evidence-selected multithreading preferred';
 build.compat_note = 'same release required; same update preferred, newer same-release update compatible; never different release or older update';
 build.gate_a_status = 'pending: compilation is NOT Gate-A PASS; execution requires a separately finalized Gate-A record binding this manifest (see runbook)';
@@ -520,7 +621,6 @@ build.provenance_method = 'content-bound: canonical <relpath>\t<SHA256>\n per in
 build_manifest_path = fullfile(out_dir_arg, 'mlsc_current_build.mat');
 save(build_manifest_path, 'build');
 local_write_text(fullfile(out_dir_arg, 'mlsc_current_build.txt'), local_build_text(build));
-local_write_text(fullfile(out_dir_arg, 'mcc_args.txt'), {mcc_options_text});
 
 fprintf('BUILD_SUCCESS out=%s runner=%s exe=%s\n', out_dir_arg, runner_path, exe_path);
 fprintf('RESOURCES %s\n', resources_path);
@@ -730,6 +830,12 @@ lines = {'# MLSC current build manifest (human-readable companion; .mat is autho
     sprintf('runner_contract %s', build.runner_contract); ...
     sprintf('runner_checksum %s', build.runner_checksum); ...
     sprintf('resource_fingerprint %s', build.resource_fingerprint); ...
+    sprintf('build_mode %s', build.build_mode); ...
+    sprintf('release_tag %s', build.release_tag); ...
+    sprintf('release_commit %s', build.release_commit); ...
+    sprintf('release_tree %s', build.release_tree); ...
+    sprintf('release_worktree %s', build.release_worktree); ...
+    sprintf('packaged_files %d sha256=%s', numel(build.packaged_files), build.packaged_files_fingerprint); ...
     sprintf('gate_a_status %s', build.gate_a_status); ...
     };
 end
@@ -763,6 +869,93 @@ for kk = 1:numel(listed)
 end
 files = sort(files);
 checksums = sort(checksums);
+end
+
+function [files, checksums, fp] = local_packaged_inventory(out_dir)
+%LOCAL_PACKAGED_INVENTORY Complete SHA-256 inventory of staged outputs.
+%   Recursive sorted inventory of every regular file under OUT_DIR with
+%   '/'-separated relpaths, excluding the self-describing manifest pair
+%   mlsc_current_build.mat/.txt (self-hash impossible) and environmental
+%   .nfs names. CHECKSUMS parallels FILES as '<rel> bytes=<N>
+%   sha256=<hex>'. FP is the SHA-256 over canonical '<rel>\t<hex>\n'
+%   text sorted by path. Unreadable/unhashable files STOP the build
+%   (fail closed, no fallback). R2010b only.
+if exist(out_dir, 'dir') ~= 7
+    error('pseudo_CT:BuildVerify', 'Packaged inventory root unavailable: %s.', out_dir);
+end
+rels = local_packaged_walk(out_dir, '');
+rels = sort(rels);
+files = {};
+checksums = {};
+canonical = '';
+for kk = 1:numel(rels)
+    rel_here = rels{kk};
+    if ~isempty(strfind(rel_here, '.nfs'))
+        continue;
+    end
+    if strcmp(rel_here, 'mlsc_current_build.mat') || strcmp(rel_here, 'mlsc_current_build.txt')
+        continue;
+    end
+    full_here = fullfile(out_dir, strrep(rel_here, '/', filesep));
+    h = local_sha256(full_here);
+    if ~local_is_valid_sha256(h)
+        error('pseudo_CT:BuildVerify', ...
+            'Packaged file unreadable or unhashable: %s; STOP (no fallback).', rel_here);
+    end
+    info = dir(full_here);
+    if isempty(info)
+        error('pseudo_CT:BuildVerify', 'Packaged file vanished during inventory: %s.', rel_here);
+    end
+    files{end + 1, 1} = rel_here; %#ok<AGROW>
+    checksums{end + 1, 1} = sprintf('%s bytes=%d sha256=%s', rel_here, info(1).bytes, lower(strtrim(h))); %#ok<AGROW>
+    canonical = [canonical rel_here char(9) lower(strtrim(h)) char(10)]; %#ok<AGROW>
+end
+if isempty(files)
+    error('pseudo_CT:BuildVerify', 'Packaged inventory is empty; STOP (no fallback).');
+end
+try
+    digest = java.security.MessageDigest.getInstance('SHA-256');
+    digest.update(uint8(canonical));
+    bytes = typecast(digest.digest(), 'uint8');
+    candidate = lower(reshape(dec2hex(bytes, 2)', 1, []));
+    if local_is_valid_sha256(candidate)
+        fp = candidate;
+        return;
+    end
+catch %#ok<CTCH>
+end
+error('pseudo_CT:BuildVerify', ...
+    'Packaged-files fingerprint unavailable; STOP (no fallback).');
+end
+
+function rels = local_packaged_walk(root_here, prefix)
+rels = {};
+listed = dir(fullfile(root_here, prefix, '*'));
+names = {};
+for kk = 1:numel(listed)
+    nm = listed(kk).name;
+    if strcmp(nm, '.') || strcmp(nm, '..')
+        continue;
+    end
+    names{end + 1, 1} = nm; %#ok<AGROW>
+end
+names = sort(names);
+for kk = 1:numel(names)
+    if isempty(prefix)
+        rel_here = names{kk};
+    else
+        rel_here = [prefix '/' names{kk}]; %#ok<AGROW>
+    end
+    full_here = fullfile(root_here, strrep(rel_here, '/', filesep));
+    if exist(full_here, 'dir') == 7
+        sub = local_packaged_walk(root_here, rel_here);
+        for jj = 1:numel(sub)
+            rels{end + 1, 1} = sub{jj}; %#ok<AGROW>
+        end
+    elseif exist(full_here, 'file') == 2
+        rels{end + 1, 1} = rel_here; %#ok<AGROW>
+    end
+end
 end
 
 function h = local_sha256(path_text)
