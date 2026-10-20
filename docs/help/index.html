@@ -224,7 +224,7 @@
               <tr>
                 <td>Current source MATLAB</td>
                 <td><code>local-current</code> (available now)</td>
-                <td><code>mlsc-current</code> (future, not available)</td>
+                <td><code>mlsc-current</code> (selectable now, fail-closed before Gate-A)</td>
               </tr>
               <tr>
                 <td>Legacy v2.0 compiled (Aether)</td>
@@ -234,13 +234,17 @@
             </tbody>
           </table>
           <p>
-            Three profiles exist now: <code>local-current</code>,
-            <code>local-legacy</code>, and <code>mlsc-legacy</code>.
-            <code>mlsc-current</code> is a reserved future combination that
-            does not exist and cannot be selected. The bare key
+            Eight profiles exist now: <code>local-current</code>,
+            <code>local-legacy</code>, <code>mlsc-legacy</code>,
+            <code>mlsc-current</code>, <code>launchpad-legacy</code>,
+            <code>local-mprage-only</code>, <code>mlsc-mprage-only</code>, and
+            <code>devel</code>.
+            <code>mlsc-current</code> is selectable now (fail-closed before Gate-A).
+            The bare key
             <code>mlsc</code> is only a deprecated alias for
-            <code>mlsc-legacy</code>. Launchpad profiles are deprecated and
-            not supported.
+            <code>mlsc-legacy</code>. Deprecated Launchpad profiles
+            (<code>launchpad</code>, <code>launchpad-mprage-only</code>) remain
+            deprecated and not supported.
           </p>
 
           <div class="profile-card">

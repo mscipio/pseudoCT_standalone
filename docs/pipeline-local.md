@@ -9,7 +9,7 @@ Local execution is one half of the implementation x execution matrix:
 
 |  | Local workstation | MLSC cluster (Slurm) |
 |---|---|---|
-| Current source MATLAB | `local-current` (available now) | `mlsc-current` (future, not available) |
+| Current source MATLAB | `local-current` (available now) | `mlsc-current` (selectable now, fail-closed before Gate-A) |
 | Legacy v2.0 compiled (Aether) | `local-legacy` (available now) | `mlsc-legacy` (available now) |
 
 Both local profiles run fully on the workstation with direct synchronous

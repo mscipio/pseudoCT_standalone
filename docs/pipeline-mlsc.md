@@ -17,12 +17,12 @@ R2010b.
 ## Profile contract
 
 The MLSC column of the implementation x execution matrix
-(see [pipeline-local.md](pipeline-local.md)) is the legacy v2.0 compiled
-implementation (Aether lineage) run on the cluster via Slurm. The bare key
+(see [pipeline-local.md](pipeline-local.md)) covers both the legacy v2.0 compiled
+implementation (Aether lineage) run on the cluster via Slurm and the selectable
+`mlsc-current` profile (current source MATLAB on MLSC, fail-closed before Gate-A;
+see `src/config/profiles/mlsc_current.m`). The bare key
 `mlsc` is only a deprecated alias for `mlsc-legacy` and creates no selector
-row. The `mlsc-current` combination (current source MATLAB on MLSC) is a
-reserved future combination: it does not exist, cannot be selected, and no
-`mlsc_current.m` profile is shipped.
+row.
 
 The profile selector separates the standard remote workflow from the specialized
 MPRAGE-only workflow:

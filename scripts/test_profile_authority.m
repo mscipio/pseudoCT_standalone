@@ -272,15 +272,19 @@ assert(isempty(strfind(launchpad_source, 'pseudo_CT_load_profile')));
 % Active runtime files are independent of repository-only maintainer and
 % compatibility content. Keep this assertion at the source boundary so a
 % future path refactor cannot accidentally make the pipeline depend on an
-% archive-excluded directory.
+% archive-excluded directory. Comments are stripped before the check so
+% prose mentions of maintainer paths do not trip the executable-dependency
+% invariant (e.g. src/mlsc/mlsc_release_gate.m header references to the
+% release tooling).
 runtime_files = [{fullfile(root_dir, 'run_pseudo_CT.m')}; ...
     collect_m_files(fullfile(root_dir, 'src'))];
 for ii = 1:length(runtime_files)
     runtime_source = read_text(runtime_files{ii});
-    assert(isempty(strfind(runtime_source, 'Makefile')));
-    assert(isempty(strfind(runtime_source, 'scripts/')));
-    assert(isempty(strfind(runtime_source, 'docs/')));
-    assert(isempty(strfind(runtime_source, 'deprecated/')));
+    runtime_code = local_strip_matlab_comments(runtime_source);
+    assert(isempty(strfind(runtime_code, 'Makefile')));
+    assert(isempty(strfind(runtime_code, 'scripts/')));
+    assert(isempty(strfind(runtime_code, 'docs/')));
+    assert(isempty(strfind(runtime_code, 'deprecated/')));
 end
 
 % --- Aliasing regression checks (T003) ---
@@ -701,6 +705,49 @@ if fid == -1
 end
 text = fread(fid, inf, '*char')';
 fclose(fid);
+end
+
+function code = local_strip_matlab_comments(source)
+%LOCAL_STRIP_MATLAB_COMMENTS Remove %-to-end-of-line comments (string-aware).
+%   Keeps code and single-quoted string literals so executable references to
+%   maintainer paths still trip the boundary check; drops comment prose.
+%   R2010b-safe char-only.
+code = '';
+lines = regexp(source, '\r\n|\n|\r', 'split');
+for kk = 1:numel(lines)
+    line = lines{kk};
+    out = '';
+    in_str = false;
+    ii = 1;
+    while ii <= length(line)
+        ch = line(ii);
+        if in_str
+            out(end + 1) = ch; %#ok<AGROW>
+            if ch == char(39)
+                if ii < length(line) && line(ii + 1) == char(39)
+                    out(end + 1) = char(39); %#ok<AGROW>
+                    ii = ii + 1;
+                else
+                    in_str = false;
+                end
+            end
+        else
+            if ch == char(39)
+                in_str = true;
+                out(end + 1) = ch; %#ok<AGROW>
+            elseif ch == '%'
+                break;
+            else
+                out(end + 1) = ch; %#ok<AGROW>
+            end
+        end
+        ii = ii + 1;
+    end
+    if kk > 1
+        code = [code char(10)]; %#ok<AGROW>
+    end
+    code = [code out]; %#ok<AGROW>
+end
 end
 
 function restore_path(old_path)

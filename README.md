@@ -71,8 +71,8 @@ pseudoCT_standalone-latest
 
 which points to the current recommended deployment.
 
-The source tree currently identifies itself as **2.8.4**, matching the published release.
-The public `v2.8.4` tag and downloadable release archive are available.
+The source tree currently identifies itself as **3.0.0** (release-candidate readiness; not yet published, tagged, or deployed).
+The public `v2.8.4` tag and downloadable release archive remain the last published release.
 
 For new processing, users should normally use `pseudoCT_standalone-latest`.
 
@@ -92,7 +92,7 @@ Slurm).
 
 |  | Local workstation | MLSC cluster (Slurm) |
 |---|---|---|
-| Current source MATLAB | `local-current` (available now) | `mlsc-current` (future, not available) |
+| Current source MATLAB | `local-current` (available now) | `mlsc-current` (selectable now, fail-closed before Gate-A) |
 | Legacy v2.0 compiled (Aether) | `local-legacy` (available now) | `mlsc-legacy` (available now) |
 
 Availability:
@@ -102,11 +102,11 @@ Availability:
 | `local-current` | current | local | Available now |
 | `local-legacy` | legacy-v2 | local | Available now |
 | `mlsc-legacy` | legacy-v2 | MLSC/Slurm | Available now; see the readiness note below |
-| `mlsc-current` | current | MLSC/Slurm | Reserved future combination; not available, not selectable, not aliased |
+| `mlsc-current` | current | MLSC/Slurm | Selectable now, fail-closed before Gate-A; not aliased |
 
-The profile selector shows exactly three Recommended rows in order:
-`LOCAL - Current`, `LOCAL - Legacy v2.0 (Aether)`, and
-`MLSC - Legacy v2.0 (Aether)`, with WHERE (LOCAL vs MLSC) and WHICH
+The profile selector shows exactly five Recommended rows in order:
+`LOCAL - Current`, `MLSC - Current`, `LOCAL - Legacy v2.0 (Aether)`,
+`MLSC - Legacy v2.0 (Aether)`, and `LAUNCHPAD - Legacy v2.0 (Aether)`, with WHERE (LOCAL vs MLSC vs LAUNCHPAD) and WHICH
 (Current vs Legacy v2.0) visible in each label. `LOCAL - Current` carries a
 dev note: the final version label is set at release prep. The remaining
 profiles (`local-mprage-only`, `mlsc-mprage-only`, `devel`) live under the

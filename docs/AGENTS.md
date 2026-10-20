@@ -5,12 +5,14 @@
 MATLAB/SPM8 pipeline that generates pseudo-CT attenuation maps from Biograph mMR MPRAGE inputs. Eight active profiles: `local-current` (current source MATLAB, local), `local-legacy` (legacy v2.0 compiled Aether backend, direct-local), `mlsc-legacy` (legacy v2.0 compiled Aether backend, MLSC via Slurm), `mlsc-current` (current source MATLAB, MLSC via Slurm), `launchpad-legacy` (legacy v2.0 compiled Aether backend, remote Launchpad), plus specialized `local-mprage-only`, `mlsc-mprage-only`, and `devel`. The bare key `mlsc` is only a deprecated alias for `mlsc-legacy`. Deprecated `launchpad`, `launchpad-mprage-only`, and `local-near-parity-r2010b` live under `src/config/profiles/deprecated/`, are excluded from discovery, and are not supported.
 
 Implementation (`current` vs `legacy-v2`) and execution (`local` vs `mlsc`)
-are independent profile fields. Three profiles exist now
-(`local-current`, `local-legacy`, `mlsc-legacy`); `mlsc-current` is a
-reserved future combination that does not exist and cannot be selected. The
-selector shows exactly three Recommended rows (`LOCAL - Current` with a dev
-note that the final version label is set at release prep, `LOCAL - Legacy
-v2.0 (Aether)`, `MLSC - Legacy v2.0 (Aether)`) and a Specialized / Custom
+are independent profile fields. Eight profiles exist now
+(`local-current`, `local-legacy`, `mlsc-legacy`, `mlsc-current`,
+`launchpad-legacy`, `local-mprage-only`, `mlsc-mprage-only`, `devel`);
+`mlsc-current` is selectable now (fail-closed before Gate-A). The
+selector shows exactly five Recommended rows (`LOCAL - Current` with a dev
+note that the final version label is set at release prep, `MLSC - Current`,
+`LOCAL - Legacy
+v2.0 (Aether)`, `MLSC - Legacy v2.0 (Aether)`, `LAUNCHPAD - Legacy v2.0 (Aether)`) and a Specialized / Custom
 disclosure (collapsed on every open) holding the three specialized profiles.
 
 ## Entry Points
