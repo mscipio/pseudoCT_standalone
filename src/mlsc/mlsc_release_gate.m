@@ -321,7 +321,9 @@ try
     fclose(fid);
     try
         digest = java.security.MessageDigest.getInstance('SHA-256');
-        digest.update(raw);
+        if ~isempty(raw)
+            digest.update(raw);
+        end
         bytes = typecast(digest.digest(), 'uint8');
         candidate = lower(reshape(dec2hex(bytes, 2)', 1, []));
         if local_is_valid_sha256(candidate)
@@ -407,7 +409,9 @@ for kk = 1:numel(keep)
 end
 try
     digest = java.security.MessageDigest.getInstance('SHA-256');
-    digest.update(uint8(canonical));
+    if ~isempty(canonical)
+        digest.update(uint8(canonical));
+    end
     bytes = typecast(digest.digest(), 'uint8');
     candidate = lower(reshape(dec2hex(bytes, 2)', 1, []));
     if local_is_valid_sha256(candidate)
