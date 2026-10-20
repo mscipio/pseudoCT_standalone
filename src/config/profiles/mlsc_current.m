@@ -9,10 +9,11 @@ function config = mlsc_current()
 %   resource_manifest, required_outputs); config.mlsc carries
 %   scheduler/host/shell/FreeSurfer fields only.
 %
-%   Artifact references are operator-supplied paths to the Gate-A artifact
-%   and its immutable manifests (single coherent artifact directory, no
-%   second layout). Gate A has NOT occurred: this profile is
-%   selectable/configurable, but real execution fails closed at preflight
+%   Artifact references resolve relative to the installed pseudoCT
+%   version directory derived from this profile's own location at load
+%   time (single coherent installation layout, no second layout).
+%   Gate A has NOT occurred: this profile is selectable/configurable,
+%   but real execution fails closed at preflight
 %   (missing artifact/manifests, pending native evidence) until the
 %   operator-provisioned artifact is verified. No catalog, no resolver, no
 %   latest/current-label authority, no MCR 7.11 fallback, no
@@ -91,25 +92,42 @@ config.mlsc.memory = '8G';
 config.mlsc.time = '02:00:00';
 
 % Neutral current artifact contract (T004/T014): the referenced immutable
-% artifact plus its machine-readable manifests. All three paths share one
-% operator-supplied artifact directory (no second layout). The resolved
-% shared Runtime path belongs only to transient execution context, never
-% to this profile (no runtime_root field). Pending Gate A the referenced
-% files do not exist and execution fails closed; nothing here fabricates
-% Gate-A evidence or weakens validation.
-% Operator-supplied Gate-A artifact directory (single coherent layout).
-config.current.runner = '/usr/pubsw/packages/mrpet/standalone_apps/pseudoCT_mlsc_current/run_mlsc_current_payload.sh';
+% artifact plus its machine-readable manifests. Defaults resolve relative
+% to the installed pseudoCT version directory derived from this profile's
+% own location at load time: this file lives in
+% <version>/source/src/config/profiles/, so the version directory is four
+% levels up and the staged artifact layout keeps the launcher under
+% <version>/compiled/payload_build/ with the build/resource manifests at
+% <version>/compiled/. There is no absolute deployment pin and no silent
+% fallback: absent bundled files fail closed at missing-file validation.
+% The explicit mlsc_current_artifact_root / mlsc_current_gate_a_record
+% overrides win over these defaults. MCR_ROOT stays pinned below. The
+% resolved shared Runtime path belongs only to transient execution
+% context, never to this profile (no runtime_root field). Pending Gate A
+% the referenced files do not exist and execution fails closed; nothing
+% here fabricates Gate-A evidence or weakens validation.
+% Installation-relative Gate-A artifact directory (staged layout).
+profiles_dir_here = fileparts(mfilename('fullpath'));
+version_dir_here = fileparts(fileparts(fileparts(fileparts(profiles_dir_here))));
+artifact_dir_here = fullfile(version_dir_here, 'compiled');
+% Launcher of the referenced artifact.
+config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
+    'run_mlsc_current_payload.sh');
 % Pinned version-specific MCR_ROOT (never the current symlink).
 config.current.mcr_root = '/usr/pubsw/common/matlab/26.1';
 % Immutable build manifest describing the referenced artifact.
-config.current.build_manifest = '/usr/pubsw/packages/mrpet/standalone_apps/pseudoCT_mlsc_current/mlsc_current_build.mat';
+config.current.build_manifest = fullfile(artifact_dir_here, ...
+    'mlsc_current_build.mat');
 % Resource manifest describing the referenced artifact resources.
-config.current.resource_manifest = '/usr/pubsw/packages/mrpet/standalone_apps/pseudoCT_mlsc_current/mlsc_current_resources.mat';
+config.current.resource_manifest = fullfile(artifact_dir_here, ...
+    'mlsc_current_resources.mat');
 % Required outputs described by the referenced artifact contract.
 config.current.required_outputs = {'att_map.nii'; ...
     'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
 % Gate-A record: separate immutable file binding this exact candidate
 % (minted after a human-authorized Gate-A run; absent until then).
 % Pending now, so execution fails closed at validate_for_execution.
-config.current.gate_a_record = '/usr/pubsw/packages/mrpet/standalone_apps/pseudoCT_mlsc_current/mlsc_current_gate_a.mat';
+% Default path is installation-relative like the manifests above.
+config.current.gate_a_record = fullfile(artifact_dir_here, ...
+    'mlsc_current_gate_a.mat');
 end

@@ -7,6 +7,7 @@
 - Provenance improvements: content-bound source fingerprints, complete packaged-file SHA-256 inventories, and deployment-copy provenance checked at the exact runtime path.
 - Parity-evidence scope and limits: bounded controlled comparisons only; host CPU/system-math effects were not isolated independently, so results are not universal parity proof — inspect the QC image.
 - No Gate-A PASS, deployment, or certification is claimed: Gate-A execution, publication, and any deployment remain separately human-authorized on a clean checkout at the release tag.
+- MLSC CURRENT submitting-side default resolution (profile configuration only; certified-compiled-payload bytes unchanged): the `mlsc-current` profile defaults for runner/build/resource manifests and the Gate-A record resolve relative to the installed pseudoCT version directory derived from the profile location at load time. No absolute `/usr/pubsw/.../pseudoCT_mlsc_current/` fallback remains; absent bundled files fail closed at missing-file validation. Explicit `mlsc_current_artifact_root`/`mlsc_current_gate_a_record` overrides win. MCR pin (`/usr/pubsw/common/matlab/26.1`) untouched.
 
 ## 2.8.4 — Published release (2026-08-31)
 - Published release archive is available.

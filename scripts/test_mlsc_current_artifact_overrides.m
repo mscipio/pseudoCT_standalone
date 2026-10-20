@@ -2,7 +2,8 @@ function test_mlsc_current_artifact_overrides()
 %TEST_MLSC_CURRENT_ARTIFACT_OVERRIDES T009 Option A override checks (A-H).
 %   Focused offline verification for the explicit public run_pseudo_CT
 %   name-value overrides (interpreted orchestration/config only):
-%     (A) no override -> canonical /usr/pubsw default unchanged
+%     (A) no override -> installation-relative default unchanged
+%         (derived from the profile location; no absolute fallback)
 %     (B) artifact root deterministically derives the 3 T007 layout paths
 %     (C) explicit Gate-A record is used (separate directory supported)
 %     (D) wrong/incomplete inputs fail closed (helper shape + validators)
@@ -22,7 +23,12 @@ addpath(fullfile(root_dir, 'src', 'io'), '-begin');
 config_root = fullfile(root_dir, 'src', 'config');
 
 pinned = '/usr/pubsw/common/matlab/26.1';
-default_dir = '/usr/pubsw/packages/mrpet/standalone_apps/pseudoCT_mlsc_current';
+% Installation-relative default artifact root: <version>/compiled, where
+% <version> is four levels above the profiles directory holding the
+% mlsc-current profile (same derivation as the profile itself).
+profiles_dir_here = fullfile(config_root, 'profiles');
+version_dir_here = fileparts(fileparts(fileparts(fileparts(profiles_dir_here))));
+default_dir = fullfile(version_dir_here, 'compiled');
 artifact_root_exact = fullfile(root_dir, 'dist', ...
     'mlsc_current_build_20261009_contentbound');
 gate_a_exact = fullfile(root_dir, 'dist', ...
@@ -32,18 +38,30 @@ assert(exist(gate_a_exact, 'file') == 2, 'Exact Gate-A record missing.');
 
 mlsc_current = pseudo_CT_load_profile('mlsc-current', config_root);
 
-% (A) No override leaves the canonical default untouched.
+% (A) No override leaves the installation-relative default untouched.
 cfg_a = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
     'mlsc-current', '', '');
 assert(isequal(cfg_a, mlsc_current), 'Default config changed without override.');
 assert(strcmp(mlsc_current.current.runner, ...
-    [default_dir '/run_mlsc_current_payload.sh']), 'Default runner drifted.');
+    fullfile(default_dir, 'payload_build', 'run_mlsc_current_payload.sh')), ...
+    'Default runner drifted.');
 assert(strcmp(mlsc_current.current.build_manifest, ...
-    [default_dir '/mlsc_current_build.mat']), 'Default build drifted.');
+    fullfile(default_dir, 'mlsc_current_build.mat')), 'Default build drifted.');
 assert(strcmp(mlsc_current.current.resource_manifest, ...
-    [default_dir '/mlsc_current_resources.mat']), 'Default resources drifted.');
+    fullfile(default_dir, 'mlsc_current_resources.mat')), 'Default resources drifted.');
+assert(strcmp(mlsc_current.current.gate_a_record, ...
+    fullfile(default_dir, 'mlsc_current_gate_a.mat')), 'Default Gate-A record drifted.');
 assert(strcmp(mlsc_current.current.mcr_root, pinned), 'Default MCR drifted.');
 assert(strcmp(mlsc_current_validate('pinned_mcr_root'), pinned));
+default_paths = {mlsc_current.current.runner; ...
+    mlsc_current.current.build_manifest; ...
+    mlsc_current.current.resource_manifest; ...
+    mlsc_current.current.gate_a_record};
+for ii = 1:length(default_paths)
+    assert(isempty(strfind(default_paths{ii}, ...
+        '/usr/pubsw/packages/mrpet/standalone_apps/pseudoCT_mlsc_current')), ...
+        'Absolute deployment fallback leaked into defaults.');
+end
 
 % (B) Artifact root derives exactly the 3 T007 layout paths.
 cfg_b = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...

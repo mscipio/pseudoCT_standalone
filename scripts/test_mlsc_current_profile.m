@@ -176,13 +176,32 @@ catch ME
 end
 assert(label_rejected, 'Display label was accepted as identity.');
 
-% 15) No ambiguity: one coherent artifact directory, no catalog/resolver,
-% no runtime pin, no second layout, no fabricated Gate-A evidence.
-[artifact_dir, ~, ~] = fileparts(mlsc_current.current.runner);
+% 15) No ambiguity: installation-relative staged artifact layout (one
+% coherent artifact directory, launcher nested under payload_build/), no
+% catalog/resolver, no runtime pin, no second layout, no fabricated
+% Gate-A evidence, no absolute deployment fallback.
 [build_dir, ~, ~] = fileparts(mlsc_current.current.build_manifest);
 [resource_dir, ~, ~] = fileparts(mlsc_current.current.resource_manifest);
-assert(strcmp(artifact_dir, build_dir));
-assert(strcmp(artifact_dir, resource_dir));
+assert(strcmp(build_dir, resource_dir));
+expected_runner = fullfile(build_dir, 'payload_build', ...
+    'run_mlsc_current_payload.sh');
+assert(strcmp(mlsc_current.current.runner, expected_runner));
+expected_gate = fullfile(build_dir, 'mlsc_current_gate_a.mat');
+assert(strcmp(mlsc_current.current.gate_a_record, expected_gate));
+% Defaults anchor at the installed version directory derived from the
+% profile location (profiles dir, four levels up), never /usr/pubsw.
+profiles_dir_here = fullfile(config_root, 'profiles');
+version_dir_here = fileparts(fileparts(fileparts(fileparts(profiles_dir_here))));
+assert(strcmp(build_dir, fullfile(version_dir_here, 'compiled')));
+default_paths = {mlsc_current.current.runner; ...
+    mlsc_current.current.build_manifest; ...
+    mlsc_current.current.resource_manifest; ...
+    mlsc_current.current.gate_a_record};
+for ii = 1:length(default_paths)
+    assert(isempty(strfind(default_paths{ii}, ...
+        '/usr/pubsw/packages/mrpet/standalone_apps/pseudoCT_mlsc_current')), ...
+        'Absolute deployment fallback leaked into defaults.');
+end
 assert(~isfield(mlsc_current.current, 'runtime_root'));
 assert(~isfield(mlsc_current, 'catalog'));
 assert(exist(fullfile(root_dir, 'src', 'mlsc', ...
@@ -243,6 +262,8 @@ assert(~isempty(strfind(current_summary, pinned)));
 assert(~isempty(strfind(current_summary, 'pending Gate-A verification')));
 assert(~isempty(strfind(current_summary, ...
     'fails preflight pending artifact')));
+assert(~isempty(strfind(current_summary, build_dir)), ...
+    'Summary hides resolved artifact root.');
 legacy_dir = fullfile(fixture_root, 'legacy-summary');
 mkdir(legacy_dir);
 pseudo_CT_print_profile_summary('mlsc-legacy', mlsc_legacy, ...
@@ -283,12 +304,13 @@ elseif strcmp(kind, 'legacy_field')
          'config.mlsc.runner = ''/fixture/fake-runner.sh'';']);
 elseif strcmp(kind, 'legacy_block')
     source = strrep(source, ...
-        '% Operator-supplied Gate-A artifact directory (single coherent layout).', ...
+        '% Installation-relative Gate-A artifact directory (staged layout).', ...
         ['config.legacy.runner = ''/fixture/fake-runner.sh'';' char(10) ...
-         '% Operator-supplied Gate-A artifact directory (single coherent layout).']);
+         '% Installation-relative Gate-A artifact directory (staged layout).']);
 elseif strcmp(kind, 'empty_runner')
     source = strrep(source, ...
-        'config.current.runner = ''/usr/pubsw/packages/mrpet/standalone_apps/pseudoCT_mlsc_current/run_mlsc_current_payload.sh'';', ...
+        ['config.current.runner = fullfile(artifact_dir_here, ''payload_build'', ...' char(10) ...
+         '    ''run_mlsc_current_payload.sh'');'], ...
         'config.current.runner = '''';');
 end
 local_write(fullfile(test_root, 'profiles', 'mlsc_current.m'), source);
