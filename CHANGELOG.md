@@ -1,6 +1,13 @@
-3.0.0
+3.0.1
 
-## 3.0.0 — Release preparation (unpublished; no tag, build, or deployment yet)
+## 3.0.1 — Corrective release (see [release notes](RELEASE_NOTES_v3.0.1.md))
+
+- Corrects the withdrawn v3.0.0 installation-path validation issue; the compiled scientific backend is unchanged. No production deployment is claimed.
+- Retains eight profiles, including selectable `launchpad-legacy`; current and legacy implementations have different numerical paths, with bounded evidence only.
+- The existing controlled MLSC CURRENT validation carries forward for exact artifacts and one dataset; v3.0.1 added no new scientific run.
+- See [installation requirements](docs/installation.md) and [scientific notes](docs/scientific-notes.md). v2.8.4 remains the last published archive.
+
+## 3.0.0 — WITHDRAWN (historical entry only; do not use)
 - MLSC CURRENT support: selectable `mlsc-current` profile (fail-closed before Gate-A), compiled-payload build path with content-bound provenance, and a fail-closed publication validator. Tooling is implemented and synthetically tested; no release-candidate build has been compiled and no package published.
 - Consolidated profiles: eight active profiles (`local-current`, `local-legacy`, `mlsc-legacy`, `mlsc-current`, `launchpad-legacy`, `local-mprage-only`, `mlsc-mprage-only`, `devel`); deprecated profiles stay excluded from discovery and unsupported.
 - `launchpad-legacy` availability: restored as a selectable recommended profile (availability only). Observed final-map states are dataset-specific (three states on the compared datasets); no state is declared correct and no universal parity is claimed.

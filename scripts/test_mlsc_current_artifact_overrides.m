@@ -153,7 +153,10 @@ cfg_f3 = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
     'mlsc-current', artifact_root_exact, ...
     fullfile(artifact_root_exact, 'mlsc_current_gate_a.mat'));
 local_assert_error(@() mlsc_current_validate('validate_for_execution', cfg_f3));
-% Mismatched root with the exact record (paths bound, not just content).
+% Relocated identical copy binds by content identity (basename plus
+% recomputed SHA-256), not by historical absolute paths: same bytes under
+% a new root plus a Gate-A copy PASS both validators. Corrupted bytes
+% under the same basenames stay blocked.
 copy_root = tempname;
 mkdir(copy_root);
 copy_cleanup = onCleanup(@() local_cleanup(copy_root)); %#ok<NASGU>
@@ -162,8 +165,21 @@ copyfile(expected_resources, fullfile(copy_root, 'mlsc_current_resources.mat'));
 mkdir(fullfile(copy_root, 'payload_build'));
 copyfile(expected_runner, fullfile(copy_root, 'payload_build', ...
     'run_mlsc_current_payload.sh'));
+[copy_dir, ~, ~] = fileparts(expected_runner);
+copyfile(fullfile(copy_dir, 'mlsc_current_payload'), ...
+    fullfile(copy_root, 'payload_build', 'mlsc_current_payload'));
+copyfile(gate_a_exact, fullfile(copy_root, 'mlsc_current_gate_a.mat'));
 cfg_f4 = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
-    'mlsc-current', copy_root, gate_a_exact);
+    'mlsc-current', copy_root, fullfile(copy_root, 'mlsc_current_gate_a.mat'));
+mlsc_current_validate('validate_contract', cfg_f4);
+mlsc_current_validate('validate_for_execution', cfg_f4);
+% Corrupted relocated copy (same basenames, different bytes) stays blocked.
+corrupt_runner = fullfile(copy_root, 'payload_build', ...
+    'run_mlsc_current_payload.sh');
+fid_corrupt = fopen(corrupt_runner, 'a');
+fwrite(fid_corrupt, 'corrupt-relocated');
+fclose(fid_corrupt);
+local_assert_error(@() mlsc_current_validate('validate_contract', cfg_f4));
 local_assert_error(@() mlsc_current_validate('validate_for_execution', cfg_f4));
 
 % (G) Other profiles are unaffected: overrides are rejected clearly.

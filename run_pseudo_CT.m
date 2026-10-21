@@ -22,14 +22,15 @@ function run_pseudo_CT(varargin)
 %                            <root>/mlsc_current_build.mat
 %                            <root>/mlsc_current_resources.mat
 %                          No independent runner/build/resource overrides.
-%                          Omit to use the canonical /usr/pubsw default.
+%                          Omit to use the installation-relative compiled
+%                          artifact defaults, validated by content identity.
 %                          Only mlsc-current may consume this option.
 %     'mlsc_current_gate_a_record'
 %                        - Absolute MAT path to the structured Gate-A record.
 %                          When artifact_root is supplied and this is omitted,
 %                          it defaults to <root>/mlsc_current_gate_a.mat.
-%                          The validated record currently lives in a separate
-%                          directory, so pass its explicit absolute path.
+%                          The packaged installation includes the validated
+%                          record; explicit paths are for intentional overrides.
 %                          Only mlsc-current may consume this option.
 %
 %   The artifact overrides only select which exact paths populate

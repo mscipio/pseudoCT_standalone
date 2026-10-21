@@ -56,7 +56,8 @@ function varargout = mlsc_current_validate(action, varargin)
 %
 %   Build manifest (.mat, scalar struct BUILD):
 %     schema 'pseudo-CT.mlsc-current-build/v1', manifest_version 1,
-%     runner (full path as built, must equal config.current.runner),
+%     runner (historic build path; relocated installs bind by basename
+%     plus recomputed SHA-256, provenance preserved separately),
 %     mcr_root (pinned), release (R-prefixed), update_minimum,
 %     mcr_version [major minor], arch, generation, runner_checksum
 %     (SHA-256), source_commit (base HEAD),
@@ -74,7 +75,9 @@ function varargout = mlsc_current_validate(action, varargin)
 %     source_commit plus source_provenance_fingerprint, pinned mcr_root,
 %     release/version/update_minimum/update_actual/mcr_version/arch/
 %     generation, runner plus runner_checksum, build_exe plus
-%     build_exe_checksum, build_manifest plus build_manifest_checksum,
+%     build_exe_checksum (relocated executable is the sibling of the
+%     current runner sharing the historic exe basename, bound by hash),
+%     build_manifest plus build_manifest_checksum,
 %     resource_manifest plus resource_manifest_checksum, native_names/
 %     native_paths/native_checksums/native_results, launcher_result,
 %     runtime_lib_result, prepare_result, compute_result, overall_result.
@@ -519,9 +522,14 @@ if ~ischar(record.generation) || size(record.generation, 1) ~= 1 || ...
         'Gate-A record generation is incompatible.');
 end
 % File bindings: every identity recomputed from disk (SHA-256 mandatory).
+% Relocatable install: runner/build/resource/exe bind by content identity
+% (basename plus recomputed SHA-256), not by historical absolute paths.
+% Provenance attribution (source commit/fingerprint) is preserved and
+% compared exactly; only the directory prefix may differ after relocation.
 if ~ischar(record.runner) || size(record.runner, 1) ~= 1 || ...
-        ~strcmp(strtrim(record.runner), strtrim(current.runner)) || ...
-        ~strcmp(strtrim(record.runner), strtrim(build.runner))
+        isempty(strtrim(record.runner)) || ...
+        ~local_same_basename(strtrim(record.runner), strtrim(current.runner)) || ...
+        ~local_same_basename(strtrim(record.runner), strtrim(build.runner))
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Gate-A record runner does not match the current artifact.');
 end
@@ -547,7 +555,12 @@ if ~local_is_valid_sha256(record.build_exe_checksum)
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Gate-A record executable checksum must be SHA-256.');
 end
-exe_actual = local_fingerprint(strtrim(record.build_exe));
+% Relocated executable: co-located with the current runner under the same
+% payload_build/ directory (installed layout), bound by content hash. The
+% historical absolute build path stays in the record for provenance but is
+% not required to exist after relocation.
+exe_here = local_relocated_exe(strtrim(current.runner), strtrim(record.build_exe));
+exe_actual = local_fingerprint(exe_here);
 if isempty(exe_actual) || ...
         ~strcmp(lower(strtrim(record.build_exe_checksum)), ...
         lower(strtrim(exe_actual)))
@@ -555,7 +568,8 @@ if isempty(exe_actual) || ...
         'Gate-A record executable identity does not match the file.');
 end
 if ~ischar(record.build_manifest) || size(record.build_manifest, 1) ~= 1 || ...
-        ~strcmp(strtrim(record.build_manifest), ...
+        isempty(strtrim(record.build_manifest)) || ...
+        ~local_same_basename(strtrim(record.build_manifest), ...
         strtrim(current.build_manifest))
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Gate-A record build manifest does not match the artifact.');
@@ -573,7 +587,8 @@ if isempty(build_actual) || ...
 end
 if ~ischar(record.resource_manifest) || ...
         size(record.resource_manifest, 1) ~= 1 || ...
-        ~strcmp(strtrim(record.resource_manifest), ...
+        isempty(strtrim(record.resource_manifest)) || ...
+        ~local_same_basename(strtrim(record.resource_manifest), ...
         strtrim(current.resource_manifest))
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Gate-A record resource manifest does not match the artifact.');
@@ -674,6 +689,71 @@ function value = local_strip_sep(value)
 value = strtrim(value);
 while length(value) > 1 && (value(end) == '/' || value(end) == char(92))
     value(end) = '';
+end
+end
+
+function same = local_same_basename(path_a, path_b)
+%LOCAL_SAME_BASENAME Basename identity for relocatable installs (R2010b).
+%   Compares only the file name plus extension so the same content under a
+%   new absolute directory prefix still binds; content itself is proven by
+%   the recomputed SHA-256 at each call site. Both inputs must be absolute
+%   paths (no bare basenames or relative paths); empty names never match.
+same = false;
+try
+    if ~ischar(path_a) || size(path_a, 1) ~= 1 || ...
+            ~ischar(path_b) || size(path_b, 1) ~= 1
+        return;
+    end
+    trimmed_a = strtrim(path_a);
+    trimmed_b = strtrim(path_b);
+    if isempty(trimmed_a) || isempty(trimmed_b)
+        return;
+    end
+    if trimmed_a(1) ~= '/' || trimmed_b(1) ~= '/'
+        return;
+    end
+    [~, base_a, ext_a] = fileparts(trimmed_a);
+    [~, base_b, ext_b] = fileparts(trimmed_b);
+    name_a = [base_a ext_a];
+    name_b = [base_b ext_b];
+    if isempty(strtrim(name_a)) || isempty(strtrim(name_b))
+        return;
+    end
+    same = strcmp(name_a, name_b);
+catch %#ok<CTCH>
+    same = false;
+end
+end
+
+function exe_path = local_relocated_exe(current_runner, record_exe)
+%LOCAL_RELOCATED_EXE Sibling executable for relocatable installs (R2010b).
+%   The installed layout keeps mlsc_current_payload alongside its launcher
+%   under payload_build/. Returns fullfile(runner_dir, historic_basename)
+%   so relocated copies bind by content hash; the historic absolute path is
+%   provenance only and need not exist after relocation. Both inputs must be
+%   absolute; relative exe paths never resolve.
+exe_path = '';
+try
+    trimmed_runner = strtrim(current_runner);
+    trimmed_exe = strtrim(record_exe);
+    if isempty(trimmed_runner) || isempty(trimmed_exe)
+        return;
+    end
+    if trimmed_runner(1) ~= '/' || trimmed_exe(1) ~= '/'
+        return;
+    end
+    [~, exe_base, exe_ext] = fileparts(trimmed_exe);
+    exe_name = [exe_base exe_ext];
+    if isempty(strtrim(exe_name))
+        return;
+    end
+    [runner_dir, ~, ~] = fileparts(trimmed_runner);
+    if isempty(strtrim(runner_dir))
+        return;
+    end
+    exe_path = fullfile(runner_dir, exe_name);
+catch %#ok<CTCH>
+    exe_path = '';
 end
 end
 
@@ -812,8 +892,11 @@ if ~ischar(build.runner) || size(build.runner, 1) ~= 1 || ...
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Build manifest runner is invalid.');
 end
-if ~strcmp(local_strip_sep(strtrim(build.runner)), ...
-        local_strip_sep(strtrim(current.runner)))
+% Relocatable installed distribution: bind by content identity (basename
+% plus the recomputed SHA-256 checked below), not by the historical
+% absolute build path. Provenance (source commit/fingerprint) is preserved
+% and compared exactly elsewhere; only the directory prefix may differ.
+if ~local_same_basename(strtrim(build.runner), strtrim(current.runner))
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Build manifest runner does not match the current artifact.');
 end

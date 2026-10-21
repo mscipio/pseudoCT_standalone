@@ -12,10 +12,9 @@ function config = mlsc_current()
 %   Artifact references resolve relative to the installed pseudoCT
 %   version directory derived from this profile's own location at load
 %   time (single coherent installation layout, no second layout).
-%   Gate A has NOT occurred: this profile is selectable/configurable,
-%   but real execution fails closed at preflight
-%   (missing artifact/manifests, pending native evidence) until the
-%   operator-provisioned artifact is verified. No catalog, no resolver, no
+%   The v3.0.1 distribution includes the previously finalized Gate-A record
+%   with its unchanged certified artifact. Source-only checkouts without the
+%   packaged artifacts/evidence fail closed at preflight. No catalog, no resolver, no
 %   latest/current-label authority, no MCR 7.11 fallback, no
 %   submitting-MATLAB substitute. No config.legacy and no legacy payload
 %   fields inside config.mlsc.
