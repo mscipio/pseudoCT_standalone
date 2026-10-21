@@ -2,7 +2,7 @@
 
 For full history see `CHANGELOG.md`. Technical detail: `docs/installation.md`, `docs/scientific-notes.md`, `docs/scientific-notes.md`.
 
-> v3.0.0 was withdrawn for an absolute-path MLSC validation problem. v3.0.1 corrected validation but was withdrawn because its source/ wrapper broke the established installation layout. v3.0.2 resolves both issues while retaining the complete v3 feature set; the compiled scientific executable is unchanged. No production deployment is claimed; v2.8.4 remains the last published release.
+> v3.0.0 was withdrawn for an absolute-path MLSC validation problem. v3.0.1 corrected validation but was withdrawn because its source/ wrapper broke the established installation layout. v3.0.2 resolves both issues while retaining the complete v3 feature set; the compiled scientific executable is unchanged. No production deployment is claimed; v3.0.2 is the current published release.
 
 ## What is new
 
@@ -35,7 +35,7 @@ Different numerical paths; bounded comparisons only, no universal equivalence. A
 Numbered version directories with a `pseudoCT_standalone-latest` link. Add the version root (containing `run_pseudo_CT.m`, `src/`, `docs/`, and `compiled/`) to MATLAB path. MLSC CURRENT files resolve under `<version>/compiled/` at load time. Missing bundled files fail closed instead of silently using another location. Explicit artifact overrides remain for testing.
 
 ### 6. Portability correction (why v3.0.0 was withdrawn)
-The v3.0.0 build/certification validation required absolute installed paths, so a relocated install failed validation even where install-relative defaults were available. v3.0.1 corrected validation to content identity for relocated identical artifacts. v3.0.2 fixes the incompatible source wrapper and restores the established flat installation root; defaults resolve inside that version directory. These are submitting-side/layout corrections only; the compiled backend is unchanged.
+The v3.0.0 build/certification validation required absolute installed paths, so a relocated install failed validation even where install-relative defaults were available. v3.0.1 corrected validation to content identity for relocated identical artifacts. v3.0.2 fixes the incompatible source wrapper and restores the established flat installation root; defaults resolve inside that version directory. The compiled backend is unchanged. The republished v3.0.2 archive also contains the current local CURRENT source, in which the local facade delegates preparation and computation to the shared `pseudo_CT_current_prepare`/`pseudo_CT_current_compute` helpers.
 
 ### 7. Workflow improvements since v2.8.4
 Input (DICOM first-file or NIfTI, UMAP auto-discovery, cancel-safe selection), submission (dialog/batch/list, transient runtime credentials, runtime account handling), processing (local direct and remote paths with verified copy-back before finalization; keep MATLAB open), validation (resource checks first, missing/corrupt/foreign rejection, non-empty attenuation map required), logging (per-subject log, profile summary, version record), failure handling (retain intermediates, restart from beginning).
@@ -55,5 +55,7 @@ Corrected researcher guidance, complete help workflow, and linked technical vali
 ## Tested in this release
 Existing controlled validation (MLSC job 10492486; strict Gate-A PASS and strict prepublication PASS on the exact backend bytes) carries forward unchanged. This release performed no new scientific, submission, or production run.
 
+This v3.0.2 archive was rebuilt from the complete current development source: the local CURRENT path is a thin facade over the shared preparation and computation helpers, and the corresponding CLI/progress regression test is included in the package. No additional validation is claimed for the refactored local facade; the unchanged compiled MLSC CURRENT executable retains its existing scientific validation.
+
 ## History and support
-v3.0.2 is the current documented source. v3.0.0 was withdrawn for the MLSC validation issue; v3.0.1 was withdrawn for its incompatible source wrapper. v2.8.4 remains the last published archive. For failed or suspicious runs, keep the run log, profile summary, QC image, and software version.
+v3.0.2 is the current published release. v3.0.0 was withdrawn for the MLSC validation issue; v3.0.1 was withdrawn for its incompatible source wrapper. v2.8.4 was the last published archive before v3.0.2. For failed or suspicious runs, keep the run log, profile summary, QC image, and software version.

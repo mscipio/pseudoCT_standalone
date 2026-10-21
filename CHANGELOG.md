@@ -1,9 +1,11 @@
 3.0.2
 
-## 3.0.2 — Flat-layout corrective release (see [release notes](RELEASE_NOTES_v3.0.2.md))
+## 3.0.2 — Flat-layout corrective release, published 2026-10-21 (see [release notes](RELEASE_NOTES_v3.0.2.md))
 
 - Resolves the v3.0.0 MLSC validation issue and v3.0.1 source-wrapper incompatibility while retaining the complete v3 feature set; compiled scientific executable unchanged.
 - See [installation requirements](docs/installation.md) and [scientific notes](docs/scientific-notes.md). No production deployment is claimed.
+- Corrected source packaging: the published archive contains the complete current development source. The local CURRENT path (`src/core/atlas_based_attenuation_map.m`) is a thin facade that delegates preparation to `src/core/pseudo_CT_current_prepare.m` and computation to `src/core/pseudo_CT_current_compute.m`; the shared helpers and the MLSC CURRENT backend are unchanged.
+- The corresponding CLI/progress regression test (`scripts/test_cli_progress_output.m`) is included and updated for the shared-boundary contract. The compiled scientific executable is unchanged (SHA-256 `6649a6ae91fd49f41b71d948a7c05012a8b8ac7c044edd05b4d53352f8cd518d`); no new scientific, submission, or production run was performed.
 
 ## 3.0.1 — WITHDRAWN (historical body retained; see [v3.0.2 release notes](RELEASE_NOTES_v3.0.2.md))
 

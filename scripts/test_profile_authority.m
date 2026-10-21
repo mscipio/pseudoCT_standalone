@@ -347,13 +347,15 @@ for ii = 1:length(legacy_entrypoints)
     assert(exist(legacy_entrypoints{ii}, 'file') ~= 2);
 end
 
-% Shared boundary (pre-facade): the local path still performs aliasing
-% correction directly in the facade; the new prepare helper owns the same
-% contract for the mlsc-current path. No facade delegation yet (out of scope).
+% Shared boundary: the local path delegates the aliasing/recentering seam to
+% the shared prepare helper and the computation to the shared compute helper;
+% the facade itself performs no direct aliasing call.
 prepare_check = read_text(fullfile(root_dir, 'src', 'core', ...
     'pseudo_CT_current_prepare.m'));
 assert(~isempty(strfind(prepare_check, 'result = correct_aliasing(')));
-assert(~isempty(strfind(atlas_source, 'result = correct_aliasing(')));
+assert(~isempty(strfind(atlas_source, 'pseudo_CT_current_prepare(')));
+assert(~isempty(strfind(atlas_source, 'pseudo_CT_current_compute(')));
+assert(isempty(strfind(atlas_source, 'result = correct_aliasing(')));
 assert(isempty(strfind(entry_source, 'correct_aliasing(')));
 assert(~isempty(strfind(entry_source, '''check_aliasing''')));
 assert(~isempty(strfind(launchpad_source, 'check_aliasing')));
