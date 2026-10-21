@@ -1,6 +1,11 @@
-3.0.1
+3.0.2
 
-## 3.0.1 — Corrective release (see [release notes](RELEASE_NOTES_v3.0.1.md))
+## 3.0.2 — Flat-layout corrective release (see [release notes](RELEASE_NOTES_v3.0.2.md))
+
+- Resolves the v3.0.0 MLSC validation issue and v3.0.1 source-wrapper incompatibility while retaining the complete v3 feature set; compiled scientific executable unchanged.
+- See [installation requirements](docs/installation.md) and [scientific notes](docs/scientific-notes.md). No production deployment is claimed.
+
+## 3.0.1 — WITHDRAWN (historical body retained; see [v3.0.2 release notes](RELEASE_NOTES_v3.0.2.md))
 
 - Corrects the withdrawn v3.0.0 installation-path validation issue; the compiled scientific backend is unchanged. No production deployment is claimed.
 - Retains eight profiles, including selectable `launchpad-legacy`; current and legacy implementations have different numerical paths, with bounded evidence only.

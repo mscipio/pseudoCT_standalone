@@ -24,10 +24,10 @@ config_root = fullfile(root_dir, 'src', 'config');
 
 pinned = '/usr/pubsw/common/matlab/26.1';
 % Installation-relative default artifact root: <version>/compiled, where
-% <version> is four levels above the profiles directory holding the
+% <version> is three levels above the profiles directory holding the
 % mlsc-current profile (same derivation as the profile itself).
 profiles_dir_here = fullfile(config_root, 'profiles');
-version_dir_here = fileparts(fileparts(fileparts(fileparts(profiles_dir_here))));
+version_dir_here = fileparts(fileparts(fileparts(profiles_dir_here)));
 default_dir = fullfile(version_dir_here, 'compiled');
 artifact_root_exact = fullfile(root_dir, 'dist', ...
     'mlsc_current_build_20261009_contentbound');

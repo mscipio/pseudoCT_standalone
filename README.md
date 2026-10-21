@@ -6,12 +6,12 @@ For Martinos users, use the centrally deployed version and the [PseudoCT User Gu
 
 ## Quick start (Martinos)
 
-Use the deployed version under `/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/`. Add the recommended deployment root to MATLAB's path, or the `source/` subdirectory of a numbered installed version:
+Use the deployed version under `/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/`. Add the installation root to MATLAB's path:
 
 ```matlab
 addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-latest')
 % Numbered installed version:
-% addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-<version>/source')
+% addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-3.0.2')
 run_pseudo_CT
 ```
 
@@ -21,4 +21,4 @@ Select **LOCAL - Current** for routine processing. The full instructions cover i
 
 There are five recommended profiles (`local-current`, `mlsc-current`, `local-legacy`, `mlsc-legacy`, `launchpad-legacy`) and three specialized profiles (`local-mprage-only`, `mlsc-mprage-only`, `devel`). The standard workflow uses MPRAGE + UMAP; MPRAGE-only profiles are for specialized workflows. See [Installation](docs/installation.md) for profile availability and requirements.
 
-The source version is **3.0.1**. v3.0.0 is withdrawn; v2.8.4 remains the last published archive. See [release notes](RELEASE_NOTES_v3.0.1.md) and [release history](CHANGELOG.md). Always inspect generated QC before using an attenuation map.
+The source version is **3.0.2**. v3.0.0 and v3.0.1 are withdrawn; v2.8.4 remains the last published archive. See [release notes](RELEASE_NOTES_v3.0.2.md) and [release history](CHANGELOG.md). Always inspect generated QC before using an attenuation map.

@@ -94,7 +94,7 @@ config.mlsc.time = '02:00:00';
 % artifact plus its machine-readable manifests. Defaults resolve relative
 % to the installed pseudoCT version directory derived from this profile's
 % own location at load time: this file lives in
-% <version>/source/src/config/profiles/, so the version directory is four
+% <version>/src/config/profiles/, so the version directory is three
 % levels up and the staged artifact layout keeps the launcher under
 % <version>/compiled/payload_build/ with the build/resource manifests at
 % <version>/compiled/. There is no absolute deployment pin and no silent
@@ -105,9 +105,9 @@ config.mlsc.time = '02:00:00';
 % context, never to this profile (no runtime_root field). Pending Gate A
 % the referenced files do not exist and execution fails closed; nothing
 % here fabricates Gate-A evidence or weakens validation.
-% Installation-relative Gate-A artifact directory (staged layout).
+% Installation-relative Gate-A artifact directory (flat version layout).
 profiles_dir_here = fileparts(mfilename('fullpath'));
-version_dir_here = fileparts(fileparts(fileparts(fileparts(profiles_dir_here))));
+version_dir_here = fileparts(fileparts(fileparts(profiles_dir_here)));
 artifact_dir_here = fullfile(version_dir_here, 'compiled');
 % Launcher of the referenced artifact.
 config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...

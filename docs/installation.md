@@ -2,11 +2,11 @@
 
 ## Martinos deployment
 
-Martinos users should use the centrally provisioned installation at `/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/`. Add the `pseudoCT_standalone-latest` deployment directory to MATLAB's path; for a numbered installed version, add its bundled `source/` directory. Run `run_pseudo_CT` from a convenient working directory. Keep MATLAB open during processing and, for remote jobs, monitoring and finalization. See the [PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/) for input layout, step-by-step use, outputs, and QC.
+Martinos users should use the centrally provisioned installation at `/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/`. Add the installation root (`pseudoCT_standalone-latest` or a numbered version directory) to MATLAB's path. Run `run_pseudo_CT` from a convenient working directory. Keep MATLAB open during processing and, for remote jobs, monitoring and finalization. See the [PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/) for input layout, step-by-step use, outputs, and QC.
 
 ```matlab
 addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-latest')
-% or: addpath('/path/to/pseudoCT_standalone-<version>/source')
+% or: addpath('/path/to/pseudoCT_standalone-3.0.2')
 run_pseudo_CT
 ```
 
