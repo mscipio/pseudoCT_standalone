@@ -310,7 +310,8 @@ function validate_current(current, mlsc, profile_name)
 %VALIDATE_CURRENT Fail-closed neutral current artifact contract (T005/T014).
 %   Requires the current-specific fields runner/mcr_root/build_manifest/
 %   resource_manifest/required_outputs, the exact pinned version-specific
-%   MCR_ROOT (never the current symlink), and scheduler-only config.mlsc
+    %   MATLAB R2010b installation root containing MCR 7.14 (never the
+    %   current symlink), and scheduler-only config.mlsc
 %   (legacy payload fields runner/mcr_root/defaults_mat/batch_templates
 %   are rejected so no fake legacy contract satisfies current validation).
 %   The optional gate_a_record string (separate Gate-A record file) is
@@ -331,7 +332,7 @@ for ii = 1:length(string_fields)
             field_name, profile_name);
     end
 end
-pinned = '/usr/pubsw/common/matlab/26.1';
+pinned = '/usr/pubsw/common/matlab/7.11';
 if ~strcmp(strip_sep(current.mcr_root), pinned)
     error('pseudo_CT:InvalidProfile', ...
         'config.current.mcr_root must be the pinned %s in profile %s.', ...

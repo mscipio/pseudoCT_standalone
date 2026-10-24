@@ -41,10 +41,11 @@ config.io_policy.gui = 'mMR';
 % Compatibility baseline: empty identifies the standard full-workflow profile.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'LOCAL - Legacy v2.0 (Aether)';
-config.presentation.description = 'Run the full MPRAGE + UMAP workflow locally using the legacy v2.0 compiled backend (Aether).';
-config.presentation.group = 'recommended';
-config.presentation.recommended = true;
+config.presentation.display_name = 'Aether - Local';
+config.presentation.description = ...
+    'Run the original v2 pipeline on this computer for comparison with older studies.';
+config.presentation.group = 'specialized';
+config.presentation.recommended = false;
 config.presentation.order = 20;
 
 % FreeSurfer environment used by the isolated local normalization.

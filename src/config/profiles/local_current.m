@@ -43,10 +43,11 @@ config.io_policy.gui = 'mMR';
 % a profile name requires all non-policy settings to match that baseline.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'LOCAL - Current';
-config.presentation.description = 'Run the full MPRAGE + UMAP workflow locally using the current MATLAB source.';
+config.presentation.display_name = 'Local MATLAB - This Computer';
+config.presentation.description = ...
+    'Run the pseudoCT pipeline on this computer using a chosen MATLAB version. Results may vary.';
 config.presentation.group = 'recommended';
-config.presentation.recommended = true;
+config.presentation.recommended = false;
 config.presentation.order = 10;
 
 % FreeSurfer environment command.

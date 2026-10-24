@@ -1,4 +1,4 @@
-function test_mlsc_release_gate()
+function test_mlsc_release_gate(mode)
 %TEST_MLSC_RELEASE_GATE Bounded release-gate tests (T001 seam + T002 validator).
 %   Offline only: synthetic manifests/packages under
 %   scratch/release_gate/validator_fixtures/ (ignored), read-only git
@@ -24,6 +24,14 @@ function test_mlsc_release_gate()
 root_dir = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(root_dir, 'src', 'mlsc'), '-begin');
 addpath(fullfile(root_dir, 'scripts'), '-begin');
+if nargin > 0
+    if ~ischar(mode) || size(mode, 1) ~= 1 || ...
+            ~strcmp(mode, 'v310_exception')
+        error('pseudo_CT:MLSCReleaseGate', 'Unknown focused release-gate test mode.');
+    end
+    local_test_v310_exception(root_dir);
+    return;
+end
 
 gate_root = fullfile(root_dir, 'scratch', 'release_gate');
 if exist(gate_root, 'dir') ~= 7
@@ -468,6 +476,101 @@ P = struct('pkg', pkg, 'buildmat', buildmat, 'resmat', resmat, ...
     'deploy_buildmat', fullfile(deploy, 'mlsc_current_build.mat'), ...
     'deploy_resmat', fullfile(deploy, 'mlsc_current_resources.mat'), ...
     'record', record, 'deploy', deploy, 'src_fp', src_fp);
+end
+
+function local_test_v310_exception(root_dir)
+gate_root = fullfile(root_dir, 'scratch', 'release_gate');
+if exist(gate_root, 'dir') ~= 7
+    [ok_gate, msg_gate] = mkdir(gate_root);
+    assert(ok_gate, 'Cannot create gate staging dir: %s.', msg_gate);
+end
+run_root = fullfile(gate_root, 'validator_v310_exception');
+assert(exist(run_root, 'dir') ~= 7, ...
+    'Focused fixture directory already exists; preserving existing scratch data.');
+mkdir(run_root);
+cleanup_root = onCleanup(@() local_cleanup(run_root)); %#ok<NASGU>
+[s_head, o_head] = system(sprintf('git -C "%s" --no-pager rev-parse HEAD 2>&1', root_dir));
+commit = lower(strtrim(o_head));
+assert(s_head == 0 && length(commit) == 40, 'Release-source commit fixture is unavailable.');
+tree = mlsc_release_gate('release_tree', root_dir, commit);
+
+% These fixtures copy the actual retained package and never execute the
+% scientific binary. They prove only the validator's artifact-byte checks.
+package = local_copy_compiled_package(root_dir, run_root, 'exact');
+[accepted, is_exception] = validate_mlsc_release('prepublication', ...
+    'PackageDir', package, ...
+    'BuildManifest', fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), ...
+    'ReleaseCommit', commit, 'RepoRoot', root_dir);
+assert(accepted && is_exception, 'Exact R2010b artifact was not accepted by its pinned exception.');
+fprintf('GATE-V310-EXACT PASS: exact retained artifact accepted with separate BuildManifest and without Gate-A.\n');
+
+% Supplying the anchored MAT separately must not bless a mismatched copy in
+% the staged package; the package's own build manifest is part of the pin.
+mismatched_manifest = local_copy_compiled_package(root_dir, run_root, ...
+    'mismatched-build-manifest');
+fid = fopen(fullfile(mismatched_manifest, 'mlsc_current_build.mat'), 'a');
+assert(fid ~= -1, 'Could not tamper with the isolated build-manifest copy.');
+fwrite(fid, '# tampered');
+fclose(fid);
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', mismatched_manifest, ...
+    'BuildManifest', fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), ...
+    'ReleaseCommit', commit, 'RepoRoot', root_dir), 'packaged build manifest');
+fprintf('GATE-V310-BUILD-MANIFEST PASS: external anchored MAT cannot bless modified packaged MAT.\n');
+
+missing_manifest = local_copy_compiled_package(root_dir, run_root, ...
+    'missing-build-manifest');
+delete(fullfile(missing_manifest, 'mlsc_current_build.mat'));
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', missing_manifest, ...
+    'BuildManifest', fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), ...
+    'ReleaseCommit', commit, 'RepoRoot', root_dir), 'packaged build manifest');
+fprintf('GATE-V310-MISSING-BUILD-MANIFEST PASS: external anchored MAT cannot replace packaged MAT.\n');
+
+tampered = local_copy_compiled_package(root_dir, run_root, 'tampered');
+fid = fopen(fullfile(tampered, 'payload_build', 'mlsc_current_payload'), 'a');
+assert(fid ~= -1, 'Could not tamper with the isolated scratch copy.');
+fwrite(fid, '# tampered');
+fclose(fid);
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', tampered, 'ReleaseCommit', commit, 'RepoRoot', root_dir), 'executable');
+fprintf('GATE-V310-TAMPER PASS: modified executable bytes rejected.\n');
+
+missing = local_copy_compiled_package(root_dir, run_root, 'missing');
+delete(fullfile(missing, 'payload_build', 'mccExcludedFiles.log'));
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', missing, 'ReleaseCommit', commit, 'RepoRoot', root_dir), ...
+    'mccExcludedFiles.log is missing');
+fprintf('GATE-V310-MISSING PASS: missing inventoried payload rejected.\n');
+
+% Reuse the established R2026a fixture to prove the normal path still
+% reaches its strict runtime gate instead of entering the exception. The
+% currently pinned host MCR is R2010b, so this R2026a control is expected to
+% block there. Its toy executable is never run or scientific-binary proof.
+pinned = mlsc_current_validate('pinned_mcr_root');
+strict = local_make_valid_package(run_root, 'normal-strict', commit, '', tree, pinned);
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', strict.pkg, 'ReleaseCommit', commit, ...
+    'GateARecord', strict.record, 'RepoRoot', root_dir), ...
+    'Build release is incompatible');
+fprintf('GATE-V310-STRICT PASS: R2026a candidate did not enter the exception and remained runtime-gated.\n');
+end
+
+function package = local_copy_compiled_package(root_dir, run_root, case_name)
+case_root = fullfile(run_root, case_name);
+mkdir(case_root);
+package = fullfile(case_root, 'package');
+mkdir(package);
+source = fullfile(root_dir, 'compiled');
+entries = dir(source);
+for kk = 1:numel(entries)
+    name = entries(kk).name;
+    if strcmp(name, '.') || strcmp(name, '..')
+        continue;
+    end
+    [ok_copy, msg_copy] = copyfile(fullfile(source, name), fullfile(package, name));
+    assert(ok_copy, 'Could not copy retained package into scratch: %s.', msg_copy);
+end
 end
 
 function mapped = local_deploy_rel(rel_here)

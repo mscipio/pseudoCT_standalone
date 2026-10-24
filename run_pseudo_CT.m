@@ -15,6 +15,12 @@ function run_pseudo_CT(varargin)
 %     'correct_aliasing' - 0 or 1 to override the profile's
 %                          anti-aliasing default. Omit to use the profile
 %                          default.
+%     'cleanup_on_success' - 0 or 1 (or logical) to override the profile's
+%                          cleanup_on_success default at runtime. Omit to
+%                          keep the profile default. Explicit 0 retains the
+%                          temporary working directory and retrievable
+%                          intermediates for comparison; explicit 1 removes
+%                          them on success. Never changes any profile file.
 %     'mlsc_current_artifact_root'
 %                        - Absolute directory supplying the operator-selected
 %                          mlsc-current artifact (T007 build layout):
@@ -95,6 +101,10 @@ mlsc_host_key_provider = [];
 % keep the canonical /usr/pubsw profile paths unchanged.
 mlsc_current_artifact_root = '';
 mlsc_current_gate_a_record = '';
+% Optional runtime-only retention override (comparison use only). Empty
+% keeps the profile default; an explicit 0/1 (or logical) overrides
+% config.cleanup_on_success after the profile load without editing it.
+cleanup_on_success_arg = [];
 
 %% === 1. Handle deployed mode (before any argument parsing) ===
 if isdeployed
@@ -117,6 +127,12 @@ else
     p.addParamValue('subjects', '', @(x) ischar(x) || iscell(x));
     p.addParamValue('correct_aliasing', [], ...
         @(x) isempty(x) || (isnumeric(x) && isscalar(x) && ismember(x, [0 1])));
+    % Optional runtime retention override for profile comparison. Omitted
+    % keeps the profile default; an explicit 0/1 (or scalar logical)
+    % overrides config.cleanup_on_success after the profile load.
+    p.addParamValue('cleanup_on_success', [], ...
+        @(x) isempty(x) || (islogical(x) && isscalar(x)) || ...
+        (isnumeric(x) && isscalar(x) && ismember(x, [0 1])));
     % Optional, out-of-band MLSC trusted host-key material/provider.  Accepts a
     % character known_hosts record or a zero-argument function handle returning
     % one; it is never read from a profile and never logged.  Empty (default)
@@ -137,6 +153,7 @@ else
     mlsc_host_key_provider = p.Results.mlsc_host_key_provider;
     mlsc_current_artifact_root = p.Results.mlsc_current_artifact_root;
     mlsc_current_gate_a_record = p.Results.mlsc_current_gate_a_record;
+    cleanup_on_success_arg = p.Results.cleanup_on_success;
 end
 
 %% === Validate profile name against available profile files ===
@@ -171,6 +188,15 @@ config = pseudo_CT_load_profile(profile_name, fullfile(pathp, 'src', 'config'));
 % /usr/pubsw profile unchanged; only mlsc-current may consume overrides.
 config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, ...
     mlsc_current_artifact_root, mlsc_current_gate_a_record);
+% Runtime retention override (comparison use only): omitted keeps the
+% profile default; an explicit 0/1 (or logical) overrides
+% config.cleanup_on_success without changing any profile file. The
+% existing downstream gates (local-current, shared remote finalizer,
+% local-legacy, Launchpad keep_tmp derivation) already read
+% config.cleanup_on_success, so no other change is needed.
+if ~isempty(cleanup_on_success_arg)
+    config.cleanup_on_success = logical(cleanup_on_success_arg);
+end
 if ~isempty(config.required_matlab_release) && ...
         ~strcmp(version('-release'), config.required_matlab_release)
     % Legacy output: warning(['Profile ''%s'' requires MATLAB R%s; running R%s. ', ...
@@ -244,7 +270,19 @@ run_context = struct('log_files', {all_log_files}, 'scope', 'run');
 mlsc_context = struct('log_files', {all_log_files}, 'scope', 'mlsc');
 pseudo_CT_output('INFO', run_context, 'Profile: %s; mode: %s; MATLAB: %s.', ...
     profile_name, config.mode, version);
+% Preserve summaries for skipped subjects as well as jobs, then refresh each
+% processable subject's file with that job's effective requested options.
 pseudo_CT_print_profile_summary(profile_name, config, processing_dirs, run_context);
+if ~isempty(jobs)
+    for ii = 1:length(jobs)
+        requested_options = struct( ...
+            'correct_aliasing', jobs(ii).correct_aliasing, ...
+            'recenter_before_normalization', ...
+            jobs(ii).recenter_before_normalization);
+        pseudo_CT_print_profile_summary(profile_name, config, ...
+            jobs(ii).processing_dir, run_context, requested_options);
+    end
+end
 if isempty(jobs)
     pseudo_CT_output('WARN', run_context, ...
         ['Run completed: requested %d, started 0, succeeded 0, failed 0, ', ...
@@ -370,7 +408,7 @@ switch config.mode
             % credentials over the Ganymed password path and still reaches
             % account discovery and the Slurm lifecycle below; a supplied
             % provider selects strict pinned host-key verification first.
-            transport = local_create_mlsc_transport(config, USERNAME, ...
+            transport = mlsc_credentials_transport(config, USERNAME, ...
                 PASSWORD, mlsc_host_key_provider);
             transport_cleanup = onCleanup(@() local_cleanup_mlsc_transport(transport));
             clear USERNAME PASSWORD
@@ -477,6 +515,11 @@ switch config.mode
                             end
                             lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
                                 false, false, failure_detail);
+                            if local_mlsc_summary_evidence_ready(lifecycle)
+                                pseudo_CT_print_profile_summary(profile_name, ...
+                                    config, jobs(ii).processing_dir, context, ...
+                                    local_job_summary_options(jobs(ii)), lifecycle);
+                            end
                             pseudo_CT_output('ERROR', context, ...
                                 'Subject failed before local finalization: %s', failure_detail);
                             num_failed = num_failed + 1;
@@ -495,6 +538,11 @@ switch config.mode
                         lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
                             true, logical(finalization_success), ...
                             local_finalization_detail(finalization_success));
+                        if local_mlsc_summary_evidence_ready(lifecycle)
+                            pseudo_CT_print_profile_summary(profile_name, ...
+                                config, jobs(ii).processing_dir, context, ...
+                                local_job_summary_options(jobs(ii)), lifecycle);
+                        end
                         if lifecycle.finalization_evidence_save_failed
                             pseudo_CT_output('ERROR', context, ...
                                 'MLSC finalization evidence could not be saved.');
@@ -510,6 +558,11 @@ switch config.mode
                             lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
                                 true, false, ...
                                 'Local MLSC finalization raised an error.');
+                            if local_mlsc_summary_evidence_ready(lifecycle)
+                                pseudo_CT_print_profile_summary(profile_name, ...
+                                    config, jobs(ii).processing_dir, context, ...
+                                    local_job_summary_options(jobs(ii)), lifecycle);
+                            end
                         end
                         pseudo_CT_output('ERROR', context, ...
                             'Subject failed: %s (elapsed %s).', ME.message, ...
@@ -883,217 +936,8 @@ pseudo_CT_output('ERROR', failure_context, 'Subject failed (elapsed %s).', ...
 end
 
 
-function transport = local_create_mlsc_transport(config, username, password, ...
-        host_key_provider)
-%LOCAL_CREATE_MLSC_TRANSPORT Build the credential-free callback surface.
-%   Credentials remain in this runtime closure only.  The optional
-%   HOST_KEY_PROVIDER selects the host-key trust model.  When it is empty
-%   (the normal MLSC workflow), VERIFY uses the bundled Ganymed password
-%   authentication path with an empty verifier, exactly like the Launchpad
-%   login model: no known_hosts/fingerprint input and no authentication
-%   block, after which account discovery and the Slurm lifecycle proceed
-%   normally.  When an explicitly supplied, independently trusted MLSC
-%   known_hosts record (character text or a zero-argument provider handle,
-%   never a profile field or logged value) is given, VERIFY resolves it
-%   into an in-memory Ganymed KnownHosts database and a strict
-%   ServerHostKeyVerifier, and Connection.connect(verifier) runs before
-%   authentication; missing, malformed, unsupported, new, changed, or
-%   mismatched host keys then fail closed before authentication, account
-%   discovery, or submission, and only a key reported as HOSTKEY_IS_OK is
-%   accepted.  No host-key material is ever persisted or logged.
-
-connection = [];
-host_key_verifier = [];
-verified = false;
-if nargin < 4
-    host_key_provider = [];
-end
-strict_host_key_trust = ~isempty(host_key_provider);
-transport = struct('verify', @local_verify, ...
-    'query_accounts', @local_query_accounts, ...
-    'submit_script', @local_submit_script, ...
-    'query_squeue', @local_query_squeue, ...
-    'query_sacct', @local_query_sacct, ...
-    'query_squeue_by_name', @local_query_squeue_by_name, ...
-    'query_sacct_by_name', @local_query_sacct_by_name, ...
-    'cancel_job', @local_cancel_job, ...
-    'cleanup', @local_cleanup);
-
-    function accepted = local_verify()
-        accepted = false; %#ok<NASGU>
-        % Idempotent: an authenticated connection from an earlier verify
-        % (run_pseudo_CT and mlsc_backend both call verify) is reused rather
-        % than re-opened, so no duplicate socket is ever created.
-        if verified && ~isempty(connection) && ...
-                isfield(connection, 'authenticated') && ...
-                connection.authenticated == 1
-            accepted = true;
-            return;
-        end
-        verified = false;
-        if strict_host_key_trust
-            % Resolve the trusted material and bind a strict verifier BEFORE
-            % any connection; a missing/malformed/unsupported source fails
-            % closed here.
-            verifier = [];
-            try
-                verifier = mlsc_host_key_trust( ...
-                    config.mlsc.host, 22, host_key_provider);
-            catch ME
-                error('pseudo_CT:MLSCTransportRejected', ...
-                    ['The supplied MLSC host-key provider could not ', ...
-                     'establish strict pinned host-key trust; no ', ...
-                     'connection, authentication, account query, or ', ...
-                     'submission was attempted. (%s)'], ME.message);
-            end
-            if isempty(verifier)
-                error('pseudo_CT:MLSCTransportRejected', ...
-                    ['The supplied MLSC host-key provider requires a ', ...
-                     'non-null strict host-key verifier; no connection or ', ...
-                     'submission was attempted.']);
-            end
-            host_key_verifier = verifier;
-        end
-        % Provider-free: host_key_verifier stays empty and ssh2_main uses its
-        % existing password-authentication connect branch, matching the
-        % Launchpad operational model without any host-key input.
-        % Open the connection: ssh2_main runs Connection.connect (strictly
-        % through the verifier when one was resolved) before
-        % authenticateWithPassword, so a rejected host key aborts the
-        % handshake before any credential use.
-        try
-            connection = local_open_verified_connection();
-        catch ME
-            connection = [];
-            host_key_verifier = [];
-            if strict_host_key_trust
-                error('pseudo_CT:MLSCTransportRejected', ...
-                    ['Strict MLSC host-key verification or password ', ...
-                     'authentication failed before account discovery; no ', ...
-                     'account query or submission was attempted. (%s)'], ...
-                    ME.message);
-            end
-            error('pseudo_CT:MLSCTransportRejected', ...
-                ['MLSC password authentication failed; no account query or ', ...
-                 'submission was attempted. (%s)'], ME.message);
-        end
-        verified = true;
-        accepted = true;
-    end
-
-    function response = local_query_accounts()
-        local_require_verified();
-        response = local_remote_command('sshare -U -u $USER');
-    end
-
-    function response = local_submit_script(command)
-        local_require_verified();
-        response = local_remote_command(command);
-    end
-
-    function response = local_query_squeue(job_id)
-        local_require_verified();
-        response = local_remote_command(['squeue --noheader --jobs=' ...
-            local_job_id_text(job_id) ' --format=%T']);
-    end
-
-    function response = local_query_sacct(job_id)
-        local_require_verified();
-        response = local_remote_command(['sacct --allocations --noheader ', ...
-            '--parsable2 --jobs=' local_job_id_text(job_id) ...
-            ' --format=JobIDRaw,State,ExitCode,Start,End,Elapsed']);
-    end
-
-    function response = local_query_squeue_by_name(job_name)
-        local_require_verified();
-        response = local_remote_command(['squeue --noheader --user="$USER" ', ...
-            '--name=' local_job_name_text(job_name) ' --format=%A']);
-    end
-
-    function response = local_query_sacct_by_name(job_name)
-        local_require_verified();
-        response = local_remote_command(['sacct --allocations --noheader ', ...
-            '--parsable2 --user="$USER" --name=' local_job_name_text(job_name) ...
-            ' --format=JobIDRaw,State,ExitCode,Start,End,Elapsed']);
-    end
-
-    function response = local_cancel_job(job_id)
-        local_require_verified();
-        response = local_remote_command(['scancel -- ' local_job_id_text(job_id)]);
-    end
-
-    function response = local_remote_command(command)
-        if isempty(connection)
-            connection = local_open_verified_connection();
-        end
-        [connection, response] = ssh2_command(connection, command, 0);
-    end
-
-    function verified_connection = local_open_verified_connection()
-        % Build a connection struct that carries the verifier selected for
-        % this runtime: the non-null strict verifier when a host-key provider
-        % was supplied, or empty for the provider-free Launchpad-style
-        % password-authentication workflow, whose empty verifier routes
-        % ssh2_main to its existing connect()/authenticateWithPassword
-        % branch.  A supplied provider must never reach the empty-verifier
-        % branch: the null verifier is rejected here.
-        if strict_host_key_trust && isempty(host_key_verifier)
-            error('pseudo_CT:MLSCTransportRejected', ...
-                ['MLSC requires a non-null strict host-key verifier before any ', ...
-                 'secure connection; no connection or submission was attempted.']);
-        end
-        verified_connection = ssh2_config(config.mlsc.host, username, password, 22);
-        verified_connection.server_host_key_verifier = host_key_verifier;
-        % Connect + authenticate now (empty command), then reuse the
-        % authenticated connection for subsequent commands.
-        verified_connection = ssh2(verified_connection);
-        if ~(isfield(verified_connection, 'authenticated') && ...
-                verified_connection.authenticated == 1)
-            error('pseudo_CT:MLSCTransportRejected', ...
-                ['MLSC authentication did not complete on the secure ', ...
-                 'connection; no account query or submission was attempted.']);
-        end
-    end
-
-    function local_require_verified()
-        if ~verified
-            error('pseudo_CT:MLSCTransportRejected', ...
-                'MLSC transport was not verified.');
-        end
-    end
-
-    function text = local_job_id_text(job_id)
-        if ~isnumeric(job_id) || ~isscalar(job_id) || ~isfinite(job_id) || ...
-                job_id ~= floor(job_id) || job_id < 1
-            error('pseudo_CT:MLSCJobId', ...
-                'A positive numeric Slurm job ID is required.');
-        end
-        text = num2str(job_id, '%.0f');
-    end
-
-    function text = local_job_name_text(job_name)
-        if ~ischar(job_name) || isempty(job_name) || length(job_name) > 128 || ...
-                isempty(regexp(job_name, '^[A-Za-z0-9_.-]+$', 'once'))
-            error('pseudo_CT:MLSCJobName', ...
-                'A safe MLSC correlation job name is required.');
-        end
-        text = job_name;
-    end
-
-    function local_cleanup()
-        if ~isempty(connection)
-            try
-                ssh2_close(connection);
-            catch
-            end
-        end
-        connection = [];
-        username = '';
-        password = '';
-        host_key_verifier = [];
-        verified = false;
-    end
-end
+% MLSC transport construction lives in src/mlsc/mlsc_credentials_transport.m
+% (shared with the sixth comparison command; extracted verbatim, same behavior).
 
 
 function local_cleanup_mlsc_transport(transport)
@@ -1268,4 +1112,23 @@ end
 error('run_pseudo_CT:DeployedProfileRequired', ...
     ['Deployed defaults MAT does not declare profile_name, profile, ', ...
      'or execution_profile. Silent local-current fallback is disabled.']);
+end
+
+function options = local_job_summary_options(job)
+options = struct();
+if isfield(job, 'correct_aliasing')
+    options.correct_aliasing = job.correct_aliasing;
+end
+if isfield(job, 'recenter_before_normalization')
+    options.recenter_before_normalization = ...
+        job.recenter_before_normalization;
+end
+end
+
+function ready = local_mlsc_summary_evidence_ready(lifecycle)
+ready = isstruct(lifecycle) && numel(lifecycle) == 1 && ...
+    isfield(lifecycle, 'terminal') && isequal(lifecycle.terminal, true) && ...
+    isfield(lifecycle, 'evidence') && isstruct(lifecycle.evidence) && ...
+    isfield(lifecycle, 'finalization_evidence_save_failed') && ...
+    isequal(lifecycle.finalization_evidence_save_failed, false);
 end

@@ -31,74 +31,36 @@ function mlsc_current_payload(phase, job_manifest_path, resource_manifest_path)
 %   (needs_normalization vs '_normalized.nii' presence) must be consistent.
 %   Compute verifies the normalized output exists before running science.
 %
-%   Resource authority (T003): the resource manifest identifies the expected
-%   current atlas list plus required resource versions/fingerprints, and the
-%   payload compares those identities against disk before either phase
-%   enters science (prepare or compute); any mismatch fails closed. The
-%   manifest locates the current Batch_atlas tree via atlas_dir (must match
-%   the job atlas_dir) and declares atlas_list (expected *Atlas*.nii
-%   basenames), resource_names/resource_fingerprints (expected identities
-%   for ch2.nii, all three batch MATs -- new_segment_batch.mat,
+%   Resource authority (T003, simplified T009): the resource manifest
+%   identifies the expected current atlas list plus the required resource
+%   names, and the payload verifies those files exist on disk before either
+%   phase enters science (prepare or compute); any missing file fails
+%   closed. The manifest locates the current Batch_atlas tree via atlas_dir
+%   (must match the job atlas_dir) and declares atlas_list (expected
+%   *Atlas*.nii basenames) and resource_names (expected basenames for
+%   ch2.nii, all three batch MATs -- new_segment_batch.mat,
 %   dartel_existing_template_batch.mat, create_inverse_warped_batch.mat --
-%   Template_1..6.nii, and every listed atlas, as bytes/datenum
-%   fingerprints), tpm_fingerprint (expected SPM8 toolbox/Seg/TPM.nii
-%   identity, verified via spm('Dir') when SPM is discoverable; otherwise
-%   the headless SPM gate fails closed before science), qc_fingerprint
-%   (expected bundled hot_map_mpitool_1024.mat identity), and the native
-%   evidence contract below. The same physical Batch_atlas directory is
-%   allowed, but neither a legacy runner/defaults MAT nor the deployed
-%   atlas-local TPM.nii is authoritative: the headless path always uses the
-%   explicit SPM toolbox TPM.nii, independent of isdeployed. Evidence files
-%   record the verified actual fingerprints.
+%   Template_1..6.nii, and every listed atlas). No bundled bytes/datenum
+%   fingerprint equality is enforced anywhere (T009 removed the atlas,
+%   fixed-resource, TPM, and QC fingerprint gates after job 10505082 failed
+%   on an extracted-TPM fingerprint mismatch). The same physical
+%   Batch_atlas directory is allowed, but neither a legacy runner/defaults
+%   MAT nor the deployed atlas-local TPM.nii is authoritative: the headless
+%   path always uses the explicit SPM toolbox TPM.nii, independent of
+%   isdeployed. Evidence files record the actual on-disk identities
+%   (informational only, never gates).
 %
-%   Payload-boundary dependency classes (T003 bounded audit from
-%   pseudo_CT_current_prepare + pseudo_CT_current_compute, including the
-%   one-hop transitives move_image_2_MNI/head_mask_mprage/reduce_bone_segment/
-%   quick_fusion_pseudo_ct/toverlay2/pca-resolver actually executed on the
-%   payload path; dead/commented/conditional-not-taken branches excluded):
-%     A MATLAB/toolbox m-files (toolbox authority, which() must resolve
-%       under toolbox/images or toolbox/stats; shadowed/wrong-root fails):
-%       nlinfit (Statistics, move_image_2_MNI hist fit), imfill/bwlabel/
-%       bwlabeln/imdilate/imerode/imclose (Image Processing, move/mask/
-%       compute/reduce paths).
-%     B SPM/current MATLAB m-files (SPM/repo/vers/aliasing authority,
-%       which() must resolve under the intended root; shadowed/wrong-root
-%       fails): spm/spm_jobman/cfg_util (cfg_util must resolve under
-%       spmDir/matlabbatch, enforcing main-matlabbatch precedence, no WFU
-%       shadowing), spm_vol/spm_read_vols/spm_write_vol/spm_smooth/
-%       spm_reslice/spm_get_defaults/spm_run_coreg_estwrite (prepare direct,
-%       estwrite via evalc string)/spm_run_coreg_estimate (move_image_2_MNI
-%       via evalc string)/spm_matrix/spm_dartel_template/tbx_cfg_dartel,
-%       vers overrides spm_vol_nifti/spm_preproc_write8 (must resolve exactly
-%       to vers/, never the SPM original), repo helpers move_image_2_MNI/
-%       head_mask_mprage/CT_2_att_map/reduce_bone_segment/
-%       quick_fusion_pseudo_ct/toverlay2/spm_reslice_david/
-%       pseudo_CT_pca_resolver/pseudo_ct_princomp_legacy/pseudo_CT_output/
-%       pseudo_CT_write_version_log (must resolve under src/), and the
-%       external correct_aliasing facade plus its bundled transitives (must
-%       resolve under a correct_aliasing standalone tree, never under
-%       repo src or SPM).
-%     C native/MEX (SPM Dir authority + manifest evidence, fail-closed):
-%       spm_sample_vol/spm_bsplinc/spm_bsplins/spm_slice_vol/spm_conv_vol
-%       (.mexa64 under spmDir; slice/conv reachable via vers
-%       spm_preproc_write8 decimate/reslice generating rc* consumed by
-%       compute).
-%       File-exists/which/.mexa64/ELF/mcc-inclusion never proves loadability.
-%       Each entry ties relative path + bytes/datenum fingerprint +
-%       platform/arch (glnxa64) + MEX type + validation provenance/status in
-%       the resource manifest. Missing/wrong-identity/incompatible-arch/
-%       missing-evidence fails closed. The manifest validation status is
-%       explicitly the pending marker below: production validated-load
-%       evidence belongs to T007/Gate A and comes later; this gate never
-%       claims validated loadability and never invents validated markers.
-%     D external resources already owned by manifest/handoff (atlas list,
-%       ch2/batches/Templates/TPM/QC, handoff fields): validated by
-%       local_validate_atlas_resources + handoff checks, never duplicated in
-%       the code inventory. Excluded from the code gate by design (dead
-%       savenifti/spm_create_vol_david branches with write_vol=0, commented
-%       imfill/savenifti, interactive-only spm_select, base MATLAB
-%       builtins, optional pca with repo_legacy fallback, imgaussian
-%       alternative filter, spm_dicom_convert outside the NIfTI payload).
+%   Payload dependencies (T003 bounded audit, gates removed T009): the
+%   science path executes pseudo_CT_current_prepare +
+%   pseudo_CT_current_compute plus the one-hop transitives
+%   move_image_2_MNI/head_mask_mprage/reduce_bone_segment/
+%   quick_fusion_pseudo_ct/toverlay2/pca-resolver. T009 removed the
+%   exhaustive which()/root/MEX inventory gates (toolbox-root, SPM-root,
+%   vers-exact, src-root, aliasing-root, and native identity/arch/pending
+%   checks): missing operations now fail naturally through normal MATLAB
+%   error propagation when called, with no pre-science inventory pass.
+%   Atlas/batch/TPM/QC files are covered only by the existence checks in
+%   local_validate_atlas_resources, never by a code inventory.
 %
 %   This payload always runs the explicitly opt-in headless path
 %   (default-off for existing local callers): bundled SPM initialization
@@ -120,21 +82,11 @@ function mlsc_current_payload(phase, job_manifest_path, resource_manifest_path)
 %     schema = 'pseudo-CT.mlsc-current-resources/v1',
 %     manifest_version = 1, atlas_dir (must match job atlas_dir),
 %     atlas_list (cell vector of expected *Atlas*.nii basenames),
-%     resource_names/resource_fingerprints (parallel cell vectors covering
-%     ch2.nii, the three batch MATs, Template_1..6.nii, and every atlas in
-%     atlas_list, each fingerprint a bytes/datenum identity string),
-%     tpm_fingerprint/qc_fingerprint (expected bundled SPM toolbox TPM.nii
-%     and hot_map_mpitool_1024.mat identities),
-%     native_names/native_fingerprints/native_types (parallel cell vectors
-%     covering exactly spm_sample_vol.mexa64, spm_bsplinc.mexa64,
-%     spm_bsplins.mexa64, spm_slice_vol.mexa64, spm_conv_vol.mexa64 as
-%     SPM-Dir-relative paths, bytes/datenum fingerprints, and 'MEX' types;
-%     slice/conv reachable via vers spm_preproc_write8 decimate/reslice
-%     generating rc* consumed by compute), native_platform/native_arch (both
-%     'glnxa64'), native_validation (must equal the explicit pending marker
-%     't007-gate-a-pending: existence-only; production loadability evidence
-%     comes later'). Actual disk identities must equal the declared
-%     expectations before either phase enters science; no legacy
+%     resource_names (cell vector covering ch2.nii, the three batch MATs,
+%     Template_1..6.nii, and every atlas in atlas_list). Extra
+%     gate-era fields (resource_fingerprints, tpm_fingerprint,
+%     qc_fingerprint, native_*) are ignored when present. Every listed
+%     file must exist before either phase enters science; no legacy
 %     runner/defaults MAT, catalog, or resolver fields exist here.
 %   Both manifests must be scalar (1x1) structs; anything else fails
 %   closed before science.
@@ -185,7 +137,6 @@ if ~strcmp(local_strip_sep(job.atlas_dir), local_strip_sep(resources.atlas_dir))
 end
 atlas_dir = job.atlas_dir;
 local_validate_atlas_resources(atlas_dir, resources);
-local_validate_code_native_inventory(resources);
 
 % Effective science config assembled from validated manifests only. No
 % profile file is loaded here so the deployed payload never depends on
@@ -445,48 +396,18 @@ end
 if ~isfield(resources, 'resource_names')
     error('pseudo_CT:MLSCPayloadManifest', 'Resource manifest is missing resource_names.');
 end
-if ~isfield(resources, 'resource_fingerprints')
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource manifest is missing resource_fingerprints.');
-end
-if ~isfield(resources, 'tpm_fingerprint')
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource manifest is missing tpm_fingerprint.');
-end
-if ~isfield(resources, 'qc_fingerprint')
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource manifest is missing qc_fingerprint.');
-end
-if ~isfield(resources, 'native_names')
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource manifest is missing native_names.');
-end
-if ~isfield(resources, 'native_fingerprints')
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource manifest is missing native_fingerprints.');
-end
-if ~isfield(resources, 'native_types')
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource manifest is missing native_types.');
-end
-if ~isfield(resources, 'native_platform')
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource manifest is missing native_platform.');
-end
-if ~isfield(resources, 'native_arch')
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource manifest is missing native_arch.');
-end
-if ~isfield(resources, 'native_validation')
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource manifest is missing native_validation.');
-end
 local_require_atlas_list(resources.atlas_list);
-local_require_resource_maps(resources.resource_names, resources.resource_fingerprints, ...
-    resources.atlas_list);
-local_require_fingerprint_string(resources.tpm_fingerprint, 'tpm_fingerprint');
-local_require_fingerprint_string(resources.qc_fingerprint, 'qc_fingerprint');
-local_require_native_manifest(resources);
+local_require_resource_names(resources.resource_names, resources.atlas_list);
 end
 
 function local_validate_atlas_resources(atlas_dir, resources)
-% T003 resource authority: compare manifest-declared expected identities
-% against disk before either phase enters science; any mismatch fails
-% closed. Covers the expected atlas list, ch2.nii, all three batch MATs,
-% Template_1..6.nii, plus the bundled SPM8 toolbox/Seg/TPM.nii and the
-% bundled hot_map_mpitool_1024.mat. The same physical Batch_atlas directory
-% is allowed, but no legacy runner/defaults MAT is consulted here and the
+% T003 resource authority (existence-only since T009): verify
+% manifest-declared expected files exist on disk before either phase enters
+% science; any missing file fails closed. Covers the expected atlas list,
+% ch2.nii, all three batch MATs, Template_1..6.nii, plus the bundled SPM8
+% toolbox/Seg/TPM.nii (when SPM is discoverable) and the bundled
+% hot_map_mpitool_1024.mat. No content-identity comparison is performed.
+% The same physical Batch_atlas directory is allowed, but no legacy runner/defaults MAT is consulted here and the
 % deployed atlas-local TPM.nii is never authoritative (the headless path
 % always uses the explicit SPM toolbox TPM.nii, independent of isdeployed).
 fixed_here = local_fixed_resource_names();
@@ -525,18 +446,15 @@ for ii = 1:length(expected_sorted)
     end
 end
 names_here = resources.resource_names(:);
-fps_here = resources.resource_fingerprints(:);
 for ii = 1:length(names_here)
-    actual_fp = local_fingerprint(fullfile(atlas_dir, names_here{ii}));
-    if ~strcmp(actual_fp, strtrim(fps_here{ii}))
+    if exist(fullfile(atlas_dir, strtrim(names_here{ii})), 'file') ~= 2
         error('pseudo_CT:MLSCPayloadResourceMismatch', ...
-            'Resource mismatch: %s', fullfile(atlas_dir, names_here{ii}));
+            'Atlas resource missing: %s', fullfile(atlas_dir, strtrim(names_here{ii})));
     end
 end
 % Bundled SPM8 tissue priors: authoritative only via the SPM toolbox tree,
-% never via an atlas-local TPM.nii. When SPM is discoverable the identity
-% must match now (fail closed before expensive work); otherwise the
-% headless/code inventory gate fails closed before any science.
+% never via an atlas-local TPM.nii. When SPM is discoverable the file must
+% exist (fail closed before expensive work); no identity comparison.
 if exist('spm', 'file') == 2
     tpm_path = '';
     try
@@ -551,289 +469,16 @@ if exist('spm', 'file') == 2
         error('pseudo_CT:MLSCPayloadResourceMismatch', ...
             'SPM resource missing: %s', tpm_path);
     end
-    if ~strcmp(local_fingerprint(tpm_path), strtrim(resources.tpm_fingerprint))
-        error('pseudo_CT:MLSCPayloadResourceMismatch', ...
-            'Resource mismatch: %s', tpm_path);
-    end
 end
-% Bundled QC colormap for quick_fusion headless output.
+% Bundled QC colormap for quick_fusion headless output: must exist.
 hot_map_path = fullfile(fileparts(fileparts(mfilename('fullpath'))), ...
     'qc', 'hot_map_mpitool_1024.mat');
 if exist(hot_map_path, 'file') ~= 2
     error('pseudo_CT:MLSCPayloadResourceMismatch', ...
         'QC resource missing: %s', hot_map_path);
 end
-if ~strcmp(local_fingerprint(hot_map_path), strtrim(resources.qc_fingerprint))
-    error('pseudo_CT:MLSCPayloadResourceMismatch', ...
-        'Resource mismatch: %s', hot_map_path);
-end
 end
 
-function local_validate_code_native_inventory(resources)
-% Payload-boundary bundled code/native inventory (T003).
-% Bounded audit roots: pseudo_CT_current_prepare + pseudo_CT_current_compute
-% plus the one-hop transitives actually executed on the payload path
-% (move_image_2_MNI, head_mask_mprage, reduce_bone_segment,
-% quick_fusion_pseudo_ct/toverlay2/spm_reslice_david, pca-resolver chain).
-% Runs before either shared helper is entered; any failure raises before
-% science with no side effects (no handoff/evidence written by the caller,
-% which validates first). Categories:
-%   A toolbox m-files (toolbox authority), B SPM/repo/vers/aliasing m-files
-%   (intended-root authority, shadowed/wrong-root rejected), C natives
-%   (SPM-Dir files + manifest evidence, existence never claims loadability;
-%   production validated-load evidence belongs to T007/Gate A and comes
-%   later), D resources already owned by manifest/handoff (not duplicated
-%   here). No catalog, no resolver, no orchestration, no MCR_ROOT change.
-if ~isstruct(resources) || numel(resources) ~= 1
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Native inventory requires the scalar resource manifest.');
-end
-repo_root_here = fileparts(fileparts(fileparts(mfilename('fullpath'))));
-src_dir_here = fullfile(repo_root_here, 'src');
-vers_dir_here = fullfile(repo_root_here, 'vers');
-spm_dir_here = '';
-try
-    if exist('spm', 'file') == 2
-        spm_dir_here = spm('Dir');
-    end
-catch
-    spm_dir_here = '';
-end
-if isempty(spm_dir_here) || ~ischar(spm_dir_here)
-    error('pseudo_CT:MLSCPayloadDependency', 'Bundled code/native dependency missing: spm (SPM Dir undiscoverable).');
-end
-spm_batch_dir_here = fullfile(spm_dir_here, 'matlabbatch');
-% Class A: toolbox authority (which() under toolbox/images or toolbox/stats).
-toolbox_images_here = {'imfill'; 'bwlabel'; 'bwlabeln'; 'imdilate'; 'imerode'; 'imclose'};
-for ii = 1:length(toolbox_images_here)
-    local_require_toolbox_root(toolbox_images_here{ii}, 'toolbox/images');
-end
-local_require_toolbox_root('nlinfit', 'toolbox/stats');
-% Class B/SPM: SPM-Dir authority (cfg_util additionally requires the main
-% matlabbatch tree, rejecting WFU shadowing per setup_pseudo_CT_paths).
-spm_plain_here = {'spm'; 'spm_jobman'; 'spm_vol'; 'spm_read_vols'; ...
-    'spm_write_vol'; 'spm_smooth'; 'spm_reslice'; 'spm_get_defaults'; ...
-    'spm_run_coreg_estwrite'; 'spm_run_coreg_estimate'; 'spm_matrix'; ...
-    'spm_dartel_template'; 'tbx_cfg_dartel'};
-for ii = 1:length(spm_plain_here)
-    local_require_spm_root(spm_plain_here{ii}, spm_dir_here);
-end
-local_require_spm_root('cfg_util', spm_batch_dir_here);
-% Class B/vers: exact vers authority (never the SPM original).
-vers_here = {'spm_vol_nifti'; 'spm_preproc_write8'};
-for ii = 1:length(vers_here)
-    local_require_exact_file(vers_here{ii}, fullfile(vers_dir_here, [vers_here{ii} '.m']));
-end
-% Class B/repo: src authority for bundled current helpers.
-repo_here = {'move_image_2_MNI'; 'head_mask_mprage'; 'CT_2_att_map'; ...
-    'reduce_bone_segment'; 'quick_fusion_pseudo_ct'; 'toverlay2'; ...
-    'spm_reslice_david'; 'pseudo_CT_pca_resolver'; ...
-    'pseudo_ct_princomp_legacy'; 'pseudo_CT_output'; ...
-    'pseudo_CT_write_version_log'};
-for ii = 1:length(repo_here)
-    local_require_src_root(repo_here{ii}, src_dir_here);
-end
-% Class B/aliasing: external standalone authority (never repo src or SPM).
-local_require_aliasing_root('correct_aliasing', src_dir_here, spm_dir_here);
-% Class C: native evidence + identity against SPM Dir (fail-closed; existence
-% is not loadability; validated-load proof comes in T007/Gate A).
-local_validate_native_inventory(resources, spm_dir_here);
-end
-
-function local_require_toolbox_root(name_here, toolbox_fragment)
-if exist(name_here, 'file') == 0 && exist(name_here, 'builtin') == 0
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency missing: %s', name_here);
-end
-resolved_here = which(name_here);
-if isempty(resolved_here) || isempty(strfind(resolved_here, toolbox_fragment))
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency wrong root: %s (resolved %s)', name_here, resolved_here);
-end
-end
-
-function local_require_spm_root(name_here, expected_root_here)
-if exist(name_here, 'file') == 0 && exist(name_here, 'builtin') == 0
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency missing: %s', name_here);
-end
-resolved_here = which(name_here);
-if isempty(resolved_here) || isempty(strfind(resolved_here, local_strip_sep(expected_root_here)))
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency wrong root: %s (resolved %s)', name_here, resolved_here);
-end
-end
-
-function local_require_exact_file(name_here, expected_path_here)
-if exist(name_here, 'file') == 0
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency missing: %s', name_here);
-end
-resolved_here = which(name_here);
-if isempty(resolved_here) || ~strcmp(resolved_here, expected_path_here)
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency wrong root: %s (resolved %s)', name_here, resolved_here);
-end
-end
-
-function local_require_src_root(name_here, src_dir_here)
-if exist(name_here, 'file') == 0
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency missing: %s', name_here);
-end
-resolved_here = which(name_here);
-if isempty(resolved_here) || isempty(strfind(resolved_here, local_strip_sep(src_dir_here)))
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency wrong root: %s (resolved %s)', name_here, resolved_here);
-end
-end
-
-function local_require_aliasing_root(name_here, src_dir_here, spm_dir_here)
-if exist(name_here, 'file') == 0
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency missing: %s', name_here);
-end
-resolved_here = which(name_here);
-if isempty(resolved_here) || isempty(strfind(resolved_here, 'correct_aliasing'))
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency wrong root: %s (resolved %s)', name_here, resolved_here);
-end
-if ~isempty(strfind(resolved_here, local_strip_sep(src_dir_here)))
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency wrong root: %s (resolved %s)', name_here, resolved_here);
-end
-if ~isempty(strfind(resolved_here, local_strip_sep(spm_dir_here)))
-    error('pseudo_CT:MLSCPayloadDependency', ...
-        'Bundled code/native dependency wrong root: %s (resolved %s)', name_here, resolved_here);
-end
-end
-
-function local_require_native_manifest(resources)
-% Manifest-side shape checks for the C native contract (identity evidence
-% lives in the manifest; file/identity/arch checks run in
-% local_validate_native_inventory before either helper). The validation
-% status must be exactly the T007-pending marker: production
-% validated-load evidence comes later and is never claimed or invented here.
-if ~iscell(resources.native_names) || ~iscell(resources.native_fingerprints) || ...
-        ~iscell(resources.native_types)
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native names/fingerprints/types must be cell vectors.');
-end
-if ~ischar(resources.native_platform) || size(resources.native_platform, 1) ~= 1 || ...
-        isempty(strtrim(resources.native_platform))
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native_platform must be a non-empty string.');
-end
-if ~ischar(resources.native_arch) || size(resources.native_arch, 1) ~= 1 || ...
-        isempty(strtrim(resources.native_arch))
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native_arch must be a non-empty string.');
-end
-if ~ischar(resources.native_validation) || size(resources.native_validation, 1) ~= 1 || ...
-        isempty(strtrim(resources.native_validation))
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native_validation must be a non-empty string.');
-end
-if numel(resources.native_names) ~= numel(resources.native_fingerprints) || ...
-        numel(resources.native_names) ~= numel(resources.native_types)
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native names/fingerprints/types length mismatch.');
-end
-if isempty(resources.native_names)
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native inventory must be non-empty.');
-end
-[m_names_here, n_names_here] = size(resources.native_names);
-[m_fps_here, n_fps_here] = size(resources.native_fingerprints);
-[m_types_here, n_types_here] = size(resources.native_types);
-if ~((m_names_here >= 1 && n_names_here == 1) || (m_names_here == 1 && n_names_here >= 1))
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native_names must be a cell vector.');
-end
-if ~((m_fps_here >= 1 && n_fps_here == 1) || (m_fps_here == 1 && n_fps_here >= 1))
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native_fingerprints must be a cell vector.');
-end
-if ~((m_types_here >= 1 && n_types_here == 1) || (m_types_here == 1 && n_types_here >= 1))
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native_types must be a cell vector.');
-end
-expected_natives_here = {'spm_bsplinc.mexa64'; 'spm_bsplins.mexa64'; 'spm_conv_vol.mexa64'; 'spm_sample_vol.mexa64'; 'spm_slice_vol.mexa64'};
-actual_sorted_here = sort(resources.native_names(:));
-expected_sorted_here = sort(expected_natives_here);
-if length(actual_sorted_here) ~= length(expected_sorted_here)
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native inventory must cover exactly the required MEX set.');
-end
-for ii = 1:length(expected_sorted_here)
-    if ~strcmp(actual_sorted_here{ii}, expected_sorted_here{ii})
-        error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native inventory must cover exactly the required MEX set.');
-    end
-end
-for ii = 1:numel(resources.native_names)
-    entry_here = resources.native_names{ii};
-    if ~ischar(entry_here) || size(entry_here, 1) ~= 1 || isempty(strtrim(entry_here))
-        error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native names must be non-empty strings.');
-    end
-    trimmed_here = strtrim(entry_here);
-    if ~isempty(strfind(trimmed_here, '..')) || ~isempty(strfind(trimmed_here, '/')) || ...
-            ~isempty(strfind(trimmed_here, char(92)))
-        error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native name is not a controlled basename: %s', trimmed_here);
-    end
-    if length(trimmed_here) < 8 || ~strcmp(trimmed_here(end-6:end), '.mexa64')
-        error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native names must reference .mexa64 files: %s', trimmed_here);
-    end
-    local_require_fingerprint_string(resources.native_fingerprints{ii}, 'native_fingerprints');
-    type_here = resources.native_types{ii};
-    if ~ischar(type_here) || size(type_here, 1) ~= 1 || ~strcmp(strtrim(type_here), 'MEX')
-        error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native types must be MEX: %s', trimmed_here);
-    end
-end
-if ~strcmp(strtrim(resources.native_platform), 'glnxa64')
-    error('pseudo_CT:MLSCPayloadNativeMismatch', 'Resource native_platform is incompatible: %s', strtrim(resources.native_platform));
-end
-if ~strcmp(strtrim(resources.native_arch), 'glnxa64')
-    error('pseudo_CT:MLSCPayloadNativeMismatch', 'Resource native_arch is incompatible: %s', strtrim(resources.native_arch));
-end
-if ~strcmp(strtrim(resources.native_validation), local_native_pending_marker())
-    error('pseudo_CT:MLSCPayloadNativeEvidence', 'Resource native_validation is invalid (expected T007-pending marker).');
-end
-end
-
-function marker = local_native_pending_marker()
-marker = 't007-gate-a-pending: existence-only; production loadability evidence comes later';
-end
-
-function local_validate_native_inventory(resources, spm_dir_here)
-% Class C disk/identity checks (fail-closed; existence is not loadability).
-% Each manifest entry resolves to fullfile(spmDir, relative .mexa64 path);
-% the which() logical name must resolve to exactly that authoritative file
-% (directory-boundary-aware canonical equality, not substring): a
-% higher-priority shadow or subdirectory alternate never matches even when
-% it contains the SPM Dir as a substring. The bytes/datenum fingerprint of
-% the authoritative file must match, so the declared identity is bound to
-% the resolved executable, and the manifest platform/arch must equal the
-% host arch. Missing/wrong-identity/incompatible-arch/missing-evidence all
-% fail before either helper. Validated-load proof is explicitly deferred to
-% T007/Gate A.
-names_here = resources.native_names(:);
-fps_here = resources.native_fingerprints(:);
-for ii = 1:length(names_here)
-    rel_here = strtrim(names_here{ii});
-    full_here = fullfile(spm_dir_here, rel_here);
-    if exist(full_here, 'file') == 0
-        error('pseudo_CT:MLSCPayloadNativeMismatch', 'Native dependency missing: %s', full_here);
-    end
-    [~, logical_here, ~] = fileparts(rel_here);
-    resolved_here = which(logical_here);
-    if isempty(resolved_here) || ...
-            ~strcmp(local_canonical_path(resolved_here), local_canonical_path(full_here))
-        error('pseudo_CT:MLSCPayloadNativeMismatch', 'Native dependency wrong root: %s (resolved %s)', logical_here, resolved_here);
-    end
-    if ~strcmp(local_fingerprint(full_here), strtrim(fps_here{ii}))
-        error('pseudo_CT:MLSCPayloadNativeMismatch', 'Native mismatch: %s', full_here);
-    end
-end
-host_arch_here = '';
-try
-    host_arch_here = computer('arch');
-catch
-    host_arch_here = '';
-end
-if isempty(host_arch_here) || ~strcmp(host_arch_here, strtrim(resources.native_arch)) || ...
-        ~strcmp(host_arch_here, strtrim(resources.native_platform))
-    error('pseudo_CT:MLSCPayloadNativeMismatch', 'Native architecture mismatch (host %s vs manifest %s/%s).', host_arch_here, strtrim(resources.native_platform), strtrim(resources.native_arch));
-end
-end
 
 function fixed = local_fixed_resource_names()
 fixed = {'ch2.nii'; 'new_segment_batch.mat'; ...
@@ -876,20 +521,13 @@ for ii = 1:numel(atlas_list)
 end
 end
 
-function local_require_resource_maps(names_in, fps_in, atlas_list)
-if ~iscell(names_in) || ~iscell(fps_in) || isempty(names_in) || isempty(fps_in)
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource names/fingerprints must be non-empty cell vectors.');
+function local_require_resource_names(names_in, atlas_list)
+if ~iscell(names_in) || isempty(names_in)
+    error('pseudo_CT:MLSCPayloadManifest', 'Resource names must be a non-empty cell vector.');
 end
 [m_names, n_names] = size(names_in);
-[m_fps, n_fps] = size(fps_in);
 if ~((m_names >= 1 && n_names == 1) || (m_names == 1 && n_names >= 1))
     error('pseudo_CT:MLSCPayloadManifest', 'Resource names must be a cell vector.');
-end
-if ~((m_fps >= 1 && n_fps == 1) || (m_fps == 1 && n_fps >= 1))
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource fingerprints must be a cell vector.');
-end
-if numel(names_in) ~= numel(fps_in)
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource names/fingerprints length mismatch.');
 end
 for ii = 1:numel(names_in)
     entry = names_in{ii};
@@ -905,7 +543,6 @@ for ii = 1:numel(names_in)
     if length(trimmed) < 5 || (~strcmp(lowered(end-3:end), '.nii') && ~strcmp(lowered(end-3:end), '.mat'))
         error('pseudo_CT:MLSCPayloadManifest', 'Resource names must reference .nii/.mat files: %s', trimmed);
     end
-    local_require_fingerprint_string(fps_in{ii}, 'resource_fingerprints');
 end
 for ii = 1:numel(names_in)
     for jj = ii + 1:numel(names_in)
@@ -927,16 +564,6 @@ for ii = 1:numel(atlas_list)
 end
 if numel(names_in) ~= length(fixed_here) + numel(atlas_list)
     error('pseudo_CT:MLSCPayloadManifest', 'Resource names must cover exactly the fixed resources plus atlas_list.');
-end
-end
-
-function local_require_fingerprint_string(fp_in, label)
-if ~ischar(fp_in) || size(fp_in, 1) ~= 1 || isempty(strtrim(fp_in))
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource %s must be a non-empty fingerprint string.', label);
-end
-trimmed = strtrim(fp_in);
-if isempty(strfind(trimmed, 'bytes=')) || isempty(strfind(trimmed, 'datenum='))
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource %s has an invalid fingerprint identity.', label);
 end
 end
 

@@ -1,5 +1,5 @@
 function config = mlsc_legacy()
-%MLSC_LEGACY Recommended remote/cluster profile using the legacy v2.0 compiled implementation.
+%MLSC_LEGACY Historical MLSC profile using the legacy v2.0 compiled implementation.
 
 % Select the local processing path or the remote MLSC path.
 config.mode = 'mlsc';
@@ -39,10 +39,11 @@ config.io_policy.gui = 'mMR';
 % Compatibility baseline: empty identifies the standard MLSC profile.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'MLSC - Legacy v2.0 (Aether)';
-config.presentation.description = 'Run the full MPRAGE + UMAP workflow on the MLSC cluster using the legacy v2.0 compiled backend (Aether).';
-config.presentation.group = 'recommended';
-config.presentation.recommended = true;
+config.presentation.display_name = 'Aether - MLSC';
+config.presentation.description = ...
+    'Run the original v2 pipeline on MLSC for comparison with older studies.';
+config.presentation.group = 'specialized';
+config.presentation.recommended = false;
 config.presentation.order = 30;
 
 % FreeSurfer environment used inside the remote batch shell.

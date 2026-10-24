@@ -1,11 +1,12 @@
 function config = mlsc_current()
-%MLSC_CURRENT Recommended remote/cluster profile using the current implementation.
+%MLSC_CURRENT MLSC profile for the current-lineage R2010b compiled payload.
 %   T005 canonical cell (T014 authoritative): mode='mlsc',
 %   implementation='current'. Current science settings match local_current
 %   (alias=1, recenter='Yes', zero_background='No', bone=true, fwhm=0,
 %   PCA callable_pca then repo_legacy, standard mMR/UMAP/NIfTI-and-DICOM
 %   policy). config.current carries the neutral pinned artifact contract
-%   (runner, pinned MCR_ROOT /usr/pubsw/common/matlab/26.1, build_manifest,
+%   (runner, pinned MATLAB installation root /usr/pubsw/common/matlab/7.11,
+%   required MCR release 7.14, build_manifest,
 %   resource_manifest, required_outputs); config.mlsc carries
 %   scheduler/host/shell/FreeSurfer fields only.
 %
@@ -15,7 +16,7 @@ function config = mlsc_current()
 %   The v3.0.1 distribution includes the previously finalized Gate-A record
 %   with its unchanged certified artifact. Source-only checkouts without the
 %   packaged artifacts/evidence fail closed at preflight. No catalog, no resolver, no
-%   latest/current-label authority, no MCR 7.11 fallback, no
+%   latest/current-label authority, no MCR 7.11 release fallback, no
 %   submitting-MATLAB substitute. No config.legacy and no legacy payload
 %   fields inside config.mlsc.
 
@@ -57,9 +58,10 @@ config.io_policy.gui = 'mMR';
 % Compatibility baseline: empty identifies the standard MLSC profile.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'MLSC - Current';
-config.presentation.description = 'Run the full MPRAGE + UMAP workflow on the MLSC cluster using the current MATLAB source.';
-config.presentation.group = 'recommended';
+config.presentation.display_name = 'MLSC - Current (R2010b compiled)';
+config.presentation.description = ...
+    'Run the pseudoCT pipeline on MLSC using a compiled MATLAB R2010b backend.';
+config.presentation.group = 'specialized';
 config.presentation.recommended = true;
 config.presentation.order = 15;
 
@@ -100,7 +102,8 @@ config.mlsc.time = '02:00:00';
 % <version>/compiled/. There is no absolute deployment pin and no silent
 % fallback: absent bundled files fail closed at missing-file validation.
 % The explicit mlsc_current_artifact_root / mlsc_current_gate_a_record
-% overrides win over these defaults. MCR_ROOT stays pinned below. The
+% overrides win over these defaults. MATLAB_ROOT stays pinned below while
+% the required bundled MCR release remains separately pinned at 7.14. The
 % resolved shared Runtime path belongs only to transient execution
 % context, never to this profile (no runtime_root field). Pending Gate A
 % the referenced files do not exist and execution fails closed; nothing
@@ -112,8 +115,8 @@ artifact_dir_here = fullfile(version_dir_here, 'compiled');
 % Launcher of the referenced artifact.
 config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
     'run_mlsc_current_payload.sh');
-% Pinned version-specific MCR_ROOT (never the current symlink).
-config.current.mcr_root = '/usr/pubsw/common/matlab/26.1';
+% MATLAB R2010b/compiler installation root (never infer MCR from this path).
+config.current.mcr_root = '/usr/pubsw/common/matlab/7.11';
 % Immutable build manifest describing the referenced artifact.
 config.current.build_manifest = fullfile(artifact_dir_here, ...
     'mlsc_current_build.mat');

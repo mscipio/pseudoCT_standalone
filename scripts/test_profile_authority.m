@@ -52,7 +52,10 @@ end
 
 [ordered_profiles, default_index] = pseudo_CT_prepare_profile_choices(profiles);
 assert(length(ordered_profiles) == length(profiles));
-assert(strcmp(ordered_profiles(default_index).name, 'local-current'));
+assert(strcmp(ordered_profiles(default_index).name, 'mlsc-current'));
+mlsc_current = configs{local_config_index(names, 'mlsc-current')};
+assert(strcmp(mlsc_current.presentation.group, 'specialized'));
+assert(mlsc_current.presentation.recommended);
 ordered_group_rank = 1 + strcmp({ordered_profiles.group}, 'specialized');
 for ii = 2:length(ordered_profiles)
     assert(ordered_group_rank(ii) >= ordered_group_rank(ii - 1));
@@ -62,8 +65,9 @@ for ii = 2:length(ordered_profiles)
 end
 without_local = profiles(~strcmp({profiles.name}, 'local-current'));
 [without_local, fallback_index] = pseudo_CT_prepare_profile_choices(without_local);
+assert(strcmp(without_local(fallback_index).name, 'mlsc-current'));
 assert(without_local(fallback_index).recommended);
-assert(strcmp(without_local(fallback_index).group, 'recommended'));
+assert(strcmp(without_local(fallback_index).group, 'specialized'));
 assert(~strcmp(ordered_profiles(1).display_name, ordered_profiles(1).name));
 local = configs{local_config_index(names, 'local-current')};
 local_mprage = configs{local_config_index(names, 'local-mprage-only')};
@@ -83,27 +87,27 @@ assert(strcmp(mlsc.io_policy.reference, 'umap-required'));
 assert(strcmp(mlsc.io_policy.output, 'nifti-and-dicom'));
 assert(strcmp(mlsc.io_policy.gui, 'mMR'));
 assert(strcmp(mlsc.compatibility_profile, ''));
-assert(strcmp(mlsc.presentation.group, 'recommended'));
-assert(mlsc.presentation.recommended);
+assert(strcmp(mlsc.presentation.group, 'specialized'));
+assert(~mlsc.presentation.recommended);
 assert(~isempty(strfind(lower(mlsc.presentation.display_name), 'mlsc')));
-% T013 narrow correction: active MLSC wording uses legacy-compiled-backend
-% and cluster phrasing (no runtime change).
-assert(~isempty(strfind(lower(mlsc.presentation.display_name), 'legacy')));
-assert(~isempty(strfind(lower(mlsc.presentation.description), 'cluster')));
-% Presentation update: launchpad-legacy moves to recommended last (order 80
-% unchanged). Identity/mode/implementation untouched; default stays
-% local-current via the explicit lookup in pseudo_CT_prepare_profile_choices
-% (verified at the ordering asserts above), never first-recommended fallback.
+assert(strcmp(mlsc.presentation.display_name, 'Aether - MLSC'));
+assert(strcmp(mlsc.presentation.description, ...
+    ['Run the original v2 pipeline on MLSC for comparison with older ' ...
+    'studies.']));
+% Historical legacy entries are selectable from the collapsed Legacy
+% Processing section. Identity/mode/implementation stay canonical;
+% mlsc-current remains the explicit default.
 launchpad_legacy = configs{local_config_index(names, 'launchpad-legacy')};
 assert(strcmp(launchpad_legacy.mode, 'launchpad'));
 assert(strcmp(launchpad_legacy.implementation, 'legacy-v2'));
 assert(strcmp(launchpad_legacy.presentation.display_name, ...
-    'LAUNCHPAD - Legacy v2.0 (Aether)'));
+    'Launchpad - Legacy (Aether)'));
 assert(strcmp(launchpad_legacy.presentation.description, ...
-    'Remote pseudoCT processing using Aether v2.0.'));
+    ['Run the original v2 pipeline on Launchpad for comparison with older ' ...
+    'studies.']));
 assert(isempty(strfind(launchpad_legacy.presentation.description, char(10))));
-assert(strcmp(launchpad_legacy.presentation.group, 'recommended'));
-assert(launchpad_legacy.presentation.recommended);
+assert(strcmp(launchpad_legacy.presentation.group, 'specialized'));
+assert(~launchpad_legacy.presentation.recommended);
 assert(~strcmp(ordered_profiles(default_index).name, 'launchpad-legacy'));
 assert(strcmp(mlsc_mprage.io_policy.reference, 'none'));
 assert(strcmp(mlsc_mprage.io_policy.output, 'nifti-only'));
@@ -480,15 +484,16 @@ assert(~isfield(local_current_cfg, 'current'));
 assert(~isfield(local_legacy_cfg, 'current'));
 assert(~isfield(mlsc_legacy_cfg, 'current'));
 
-% --- T014 pinned-MCR authority (fail-closed pre-Gate-A) ---
-% T014 is authoritative over stale T004 catalog/resolver wording: the only
-% accepted MCR_ROOT is the pinned version-specific tree (never the current
-% symlink), bound by SHA-256 runner identity plus build/resource manifests
-% carrying the T007-pending native marker. Loader, setup, and validator
-% own disjoint pieces of one contract; execution stays fail-closed.
-t014_pinned = '/usr/pubsw/common/matlab/26.1';
+% --- T014 pinned-MCR authority (R2010b current-profile contract) ---
+% The profile pins the MATLAB R2010b installation root; the expected deployed
+% Runtime identity is separately represented as MCR 7.14. Runner and
+% manifests bind the current artifact contract.
+t014_pinned = '/usr/pubsw/common/matlab/7.11';
 assert(strcmp(mlsc_current_cfg.current.mcr_root, t014_pinned));
 assert(strcmp(mlsc_current_validate('pinned_mcr_root'), t014_pinned));
+t014_actual = mlsc_current_validate('expected_actual');
+assert(strcmp(t014_actual.release, 'R2010b'));
+assert(isequal(t014_actual.mcr_version, [7 14]));
 assert(isfield(mlsc_current_cfg.current, 'build_manifest'));
 assert(isfield(mlsc_current_cfg.current, 'resource_manifest'));
 assert(isfield(mlsc_current_cfg.current, 'required_outputs'));
@@ -497,14 +502,11 @@ assert(ismember('Fusion_MR_Pseudo_CT_validation.tiff', ...
     mlsc_current_cfg.current.required_outputs));
 assert(ismember('Pseudo_CT_AC_Version.txt', ...
     mlsc_current_cfg.current.required_outputs));
-t014_profile = read_text(fullfile(profile_dir, 'mlsc_current.m'));
-assert(~isempty(strfind(t014_profile, 'Gate A has NOT occurred')));
-assert(~isempty(strfind(t014_profile, 'never the current symlink')));
 t014_loader = read_text(fullfile(root_dir, 'src', 'config', ...
     'pseudo_CT_load_profile.m'));
 assert(~isempty(strfind(t014_loader, ...
     'function validate_current(current, mlsc, profile_name)')));
-assert(~isempty(strfind(t014_loader, '/usr/pubsw/common/matlab/26.1')));
+assert(~isempty(strfind(t014_loader, '/usr/pubsw/common/matlab/7.11')));
 assert(~isempty(strfind(t014_loader, ...
     'config.current.mcr_root must be the pinned')));
 t014_setup = read_text(fullfile(root_dir, 'src', 'config', ...
@@ -513,29 +515,13 @@ assert(~isempty(strfind(t014_setup, 'local_validate_current_setup(config)')));
 assert(~isempty(strfind(t014_setup, 'must not carry a legacy block')));
 t014_validate = read_text(fullfile(root_dir, 'src', 'mlsc', ...
     'mlsc_current_validate.m'));
-assert(~isempty(strfind(t014_validate, '/usr/pubsw/common/matlab/26.1')));
+assert(~isempty(strfind(t014_validate, '/usr/pubsw/common/matlab/7.11')));
 assert(~isempty(strfind(t014_validate, 'runner_checksum')));
 assert(~isempty(strfind(t014_validate, 'SHA-256')));
-assert(~isempty(strfind(t014_validate, ...
-    't007-gate-a-pending: existence-only; production loadability evidence comes later')));
-% Fail-closed pre-Gate-A on the real (artifact-absent) profile: contract
-% and execution validation both reject without simulating success.
-t014_contract_failed = false;
-try
-    mlsc_current_validate('validate_contract', mlsc_current_cfg);
-catch ME
-    t014_contract_failed = strncmp(ME.identifier, 'pseudo_CT:MLSC', ...
-        length('pseudo_CT:MLSC'));
-end
-assert(t014_contract_failed);
-t014_exec_failed = false;
-try
-    mlsc_current_validate('validate_for_execution', mlsc_current_cfg);
-catch ME
-    t014_exec_failed = strncmp(ME.identifier, 'pseudo_CT:MLSC', ...
-        length('pseudo_CT:MLSC'));
-end
-assert(t014_exec_failed);
+% The pinned R2010b profile and its referenced artifacts pass both validation
+% stages; active execution validation does not require a Gate-A record.
+assert(mlsc_current_validate('validate_contract', mlsc_current_cfg));
+assert(mlsc_current_validate('validate_for_execution', mlsc_current_cfg));
 t014_preflight = read_text(fullfile(root_dir, 'src', 'mlsc', ...
     'mlsc_preflight.m'));
 assert(~isempty(strfind(t014_preflight, ...

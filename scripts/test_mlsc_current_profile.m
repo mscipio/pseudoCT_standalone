@@ -10,12 +10,12 @@ function test_mlsc_current_profile()
 %     6) mlsc-mprage-only stays legacy
 %     7) local-mprage-only keeps its existing intent
 %     8) default remains local-current
-%     9) selector shows exactly five recommended rows + three specialized
-%        (launchpad-legacy joins recommended, order 80)
+%     9) routine selector defaults to Local MATLAB and exposes historical
+%        Aether choices while keeping the gated MLSC-current candidate hidden
 %    10) deprecated profiles stay out of the primary selector
-%    11) mlsc-current pins /usr/pubsw/common/matlab/26.1 (never .../current)
+%    11) mlsc-current pins MATLAB R2010b root 7.11 with MCR 7.14
 %    12) current-specific fields with no legacy leak (namespaces separate)
-%    13) fail-closed pending Gate A (selectable, real execution blocked)
+%    13) fail-closed pending Gate A (maintainer-loadable, not routine-selectable)
 %    14) legacy invocation unchanged
 %    15) no ambiguity (single coherent artifact layout, no catalog/resolver)
 %
@@ -93,24 +93,25 @@ assert(strcmp(local_mprage.io_policy.output, 'nifti-only'));
 assert(strcmp(local_mprage.io_policy.gui, 'mprage-only'));
 assert(strcmp(local_mprage.compatibility_profile, 'local-current'));
 
-% 8) Default stays local-current (never MLSC).
-[ordered, default_index] = pseudo_CT_prepare_profile_choices(profiles);
+% 8-9) Routine selector defaults local-current; MLSC Current stays
+% maintainer-loadable but is not a routine option.
+[ordered, default_index] = pseudo_CT_prepare_routine_profile_choices(config_root);
 assert(strcmp(ordered(default_index).name, 'local-current'));
-
-% 9) Selector shows exactly five recommended rows (launchpad-legacy joins
-% recommended last, order 80 unchanged); specialized shrinks 4 -> 3.
-% Default stays local-current via explicit lookup (never first-recommended).
+assert(ismember('mlsc-current', names));
+assert(~ismember('mlsc-current', {ordered.name}));
 recommended = ordered(strcmp({ordered.group}, 'recommended'));
 specialized = ordered(strcmp({ordered.group}, 'specialized'));
-assert(length(recommended) == 5);
-assert(length(specialized) == 3);
-assert(isequal({recommended.name}, {'local-current'; 'mlsc-current'; ...
-    'local-legacy'; 'mlsc-legacy'; 'launchpad-legacy'}'));
-assert(isequal({specialized.name}, {'local-mprage-only'; ...
-    'mlsc-mprage-only'; 'devel'}'));
-assert(isequal({recommended.display_name}, {'LOCAL - Current'; ...
-    'MLSC - Current'; 'LOCAL - Legacy v2.0 (Aether)'; ...
-    'MLSC - Legacy v2.0 (Aether)'; 'LAUNCHPAD - Legacy v2.0 (Aether)'}'));
+assert(length(recommended) == 1);
+assert(length(specialized) == 6);
+assert(strcmp(recommended(1).name, 'local-current'));
+assert(isequal(sort({specialized.name}), sort({'local-legacy', ...
+    'mlsc-legacy', 'launchpad-legacy', 'local-mprage-only', ...
+    'mlsc-mprage-only', 'devel'})));
+assert(strcmp(recommended(1).display_name, 'Local MATLAB - This Computer'));
+assert(strcmp(local_legacy.presentation.display_name, 'Aether - Local'));
+assert(strcmp(mlsc_legacy.presentation.display_name, 'Aether - MLSC'));
+assert(strcmp(mlsc_current.presentation.group, 'specialized'));
+assert(~mlsc_current.presentation.recommended);
 assert(isempty(strfind(mlsc_current.presentation.display_name, 'v3')));
 assert(isempty(strfind(lower(mlsc_current.presentation.display_name), ...
     'pseudoct3')));
@@ -126,10 +127,13 @@ assert(strcmp(mlsc_current.io_policy.reference, 'umap-required'));
 assert(strcmp(mlsc_current.io_policy.output, 'nifti-and-dicom'));
 assert(strcmp(mlsc_current.io_policy.gui, 'mMR'));
 
-% 11) Pinned MCR_ROOT is version-specific 26.1, never the current symlink.
-pinned = '/usr/pubsw/common/matlab/26.1';
+% 11) Pin the R2010b installation root; deployed MCR identity is 7.14.
+pinned = '/usr/pubsw/common/matlab/7.11';
 assert(strcmp(mlsc_current.current.mcr_root, pinned));
 assert(strcmp(mlsc_current_validate('pinned_mcr_root'), pinned));
+actual = mlsc_current_validate('expected_actual');
+assert(strcmp(actual.release, 'R2010b'));
+assert(isequal(actual.mcr_version, [7 14]));
 
 % 12) Current-specific fields with no legacy leak; namespaces separate.
 assert(isfield(mlsc_current, 'current'));
@@ -210,7 +214,7 @@ profile_source = local_read(fullfile(profile_dir, 'mlsc_current.m'));
 profile_code = local_code_only(profile_source);
 assert(isempty(strfind(profile_code, 'catalog')));
 assert(isempty(strfind(profile_code, 'mlsc_resolve')));
-assert(isempty(strfind(profile_code, '7.11')));
+assert(~isempty(strfind(profile_code, '7.11')));
 assert(isempty(strfind(profile_code, 't007-gate-a-validated')));
 assert(isempty(strfind(profile_code, '/common/matlab/current')));
 assert(isempty(strfind(profile_code, 'config.legacy')));
@@ -218,6 +222,7 @@ assert(isempty(strfind(profile_code, 'runtime_root')));
 current_lines = local_config_current_lines(profile_code);
 assert(isempty(strfind(current_lines, 'latest')));
 assert(isempty(strfind(current_lines, '/current')));
+assert(isempty(strfind(current_lines, '26.1')));
 
 % 13) Fail-closed pending Gate A: selectable/configurable, execution blocked.
 fixture_root = tempname;
@@ -277,8 +282,9 @@ assert(isempty(strfind(legacy_summary, 'MLSC Current Artifact')));
 legacy_check = local_legacy_invocation(root_dir);
 
 fprintf(['MLSC current profile tests passed: 2x2 identity, mlsc alias, ', ...
-    'default local-current, five recommended, deprecated excluded, pinned ', ...
-    '26.1, current-only contract, fail-closed Gate A, legacy unchanged, ', ...
+    'default local-current, Aether history options, gated current hidden, ', ...
+    'deprecated excluded, pinned R2010b root 7.11 / MCR 7.14, ', ...
+    'current-only contract, fail-closed Gate A, legacy unchanged, ', ...
     'single layout. Legacy check: %s\n'], legacy_check);
 end
 
@@ -295,7 +301,7 @@ source = strrep(source, 'function config = mlsc_current()', ...
     'function config = mlsc_current()');
 if strcmp(kind, 'mcr_root')
     source = strrep(source, ...
-        'config.current.mcr_root = ''/usr/pubsw/common/matlab/26.1'';', ...
+        'config.current.mcr_root = ''/usr/pubsw/common/matlab/7.11'';', ...
         ['config.current.mcr_root = ''' value ''';']);
 elseif strcmp(kind, 'legacy_field')
     source = strrep(source, ...

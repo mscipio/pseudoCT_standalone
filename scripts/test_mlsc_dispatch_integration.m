@@ -5,8 +5,14 @@ function test_mlsc_dispatch_integration()
 
 root_dir = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(root_dir, 'src', 'mlsc'), '-begin');
+addpath(fullfile(root_dir, 'src', 'io'), '-begin');
+addpath(fullfile(root_dir, 'src', 'config', 'profiles'), '-begin');
 
-test_root = tempname;
+scratch_root = fullfile(root_dir, 'scratch');
+if exist(scratch_root, 'dir') ~= 7
+    mkdir(scratch_root);
+end
+test_root = tempname(scratch_root);
 mkdir(test_root);
 cleanup = onCleanup(@() local_cleanup(test_root)); %#ok<NASGU>
 shared_temp = fullfile(test_root, 'shared subject temp');
@@ -91,6 +97,33 @@ assert(strcmp(persisted.snapshot.finalization_status, 'succeeded'));
 assert(persisted.snapshot.finalization.succeeded);
 assert(exist(fullfile(durable_success, 'pseudoCT_mlsc_31415.out'), 'file') == 2);
 assert(exist(fullfile(durable_success, 'pseudoCT_mlsc_31415.err'), 'file') == 2);
+summary_config = mlsc_legacy();
+summary_options = struct('correct_aliasing', false, ...
+    'recenter_before_normalization', true);
+pseudo_CT_print_profile_summary('mlsc', summary_config, durable_success, ...
+    struct('scope', 'test'), summary_options, result);
+summary_text = fileread(fullfile(durable_success, ...
+    'pseudo_CT_profile_summary.txt'));
+assert(~isempty(strfind(summary_text, ...
+    'Requested aliasing correction: No')));
+assert(~isempty(strfind(summary_text, ...
+    'Confirmed aliasing correction: Not confirmed')));
+assert(~isempty(strfind(summary_text, 'Requested recentering: Yes')));
+assert(~isempty(strfind(summary_text, ...
+    'Confirmed recentering: Not confirmed')));
+assert(~isempty(strfind(summary_text, 'Canonical profile ID: mlsc')));
+assert(~isempty(strfind(summary_text, ...
+    'Configured host: mlsc.nmr.mgh.harvard.edu')));
+assert(~isempty(strfind(summary_text, ...
+    'Current-run MLSC scheduler state: completed')));
+assert(~isempty(strfind(summary_text, ...
+    'Current-run local finalization: succeeded')));
+assert(~isempty(strfind(summary_text, ...
+    'Executor hostname: Not confirmed')));
+assert(~isempty(strfind(summary_text, ...
+    'Executor CPU: Not confirmed')));
+assert(~isempty(strfind(summary_text, ...
+    'Executor runtime/build: Not confirmed')));
 
 % A scheduler failure receives terminal evidence and durable logs too, while
 % local finalization is explicitly recorded as not attempted.
@@ -120,6 +153,14 @@ assert(~isempty(strfind(entry_source, ...
 assert(~isempty(strfind(entry_source, ...
     '''log_archive_dir'', jobs(ii).processing_dir')));
 assert(~isempty(strfind(entry_source, 'mlsc_record_finalization')));
+% The helper/lifecycle checks above do not execute the user-facing entrypoint.
+% Protect its pre-dispatch summary and current-run finalization refresh wiring.
+assert(~isempty(strfind(entry_source, ...
+    'pseudo_CT_print_profile_summary(profile_name, config, processing_dirs, run_context)')));
+assert(~isempty(strfind(entry_source, ...
+    'local_mlsc_summary_evidence_ready(lifecycle)')));
+assert(~isempty(strfind(entry_source, ...
+    'local_job_summary_options(jobs(ii)), lifecycle')));
 
 % T006: all 12 user-facing MLSC event classes with the explicit 1-8
 % mapping, retained stages 5-8, secret-free output, and untouched

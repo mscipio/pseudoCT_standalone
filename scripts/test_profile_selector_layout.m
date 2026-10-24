@@ -1,9 +1,9 @@
 function test_profile_selector_layout()
 %TEST_PROFILE_SELECTOR_LAYOUT Verify count-aware selector geometry.
-%   Covers the disclosure states headlessly: collapsed (3, 0) is the
-%   every-open default and expanded (3, 3) reveals only the specialized
-%   set. Inspection checks cover the ASCII disclosure control, the
-%   Specialized / Custom title, and hidden-selection retention.
+%   Covers the disclosure states headlessly: collapsed is the every-open
+%   default and expanded reveals the historical / other profile set.
+%   Inspection checks cover the ASCII disclosure control and hidden-selection
+%   retention.
 
 scripts_dir = fileparts(mfilename('fullpath'));
 root_dir = fileparts(scripts_dir);
@@ -12,86 +12,99 @@ old_path = path();
 addpath(src_path, '-begin');
 cleanup = onCleanup(@() path(old_path));
 
-layout = pseudo_CT_profile_selector_layout(2, 4, 1200);
-assert(~layout.scroll_needed);
-assert(layout.dialog_height == layout.preferred_dialog_height);
-assert(layout.row_height == 58);
-assert(layout.recommended_panel_height == ...
-    layout.panel_header_height + layout.panel_padding + 2 * layout.row_height);
-assert(layout.specialized_panel_height == ...
-    layout.panel_header_height + layout.panel_padding + 4 * layout.row_height);
-assert(layout.recommended_panel_position(2) > ...
-    layout.specialized_panel_position(2));
-
-capped = pseudo_CT_profile_selector_layout(2, 20, 600);
-assert(capped.scroll_needed);
-assert(capped.dialog_height == floor(0.90 * 600));
-assert(capped.dialog_height <= 600);
-assert(capped.maximum_scroll == ...
-    capped.content_height - capped.viewport_height);
-assert(capped.row_height == layout.row_height);
-assert(capped.content_width < capped.viewport_width);
-
-recommended_only = pseudo_CT_profile_selector_layout(3, 0, 800);
-assert(recommended_only.specialized_panel_height == 0);
-assert(recommended_only.content_height == ...
-    recommended_only.recommended_panel_height);
-assert(recommended_only.recommended_panel_position(2) == 0);
-
-collapsed = pseudo_CT_profile_selector_layout(3, 0, 800);
-expanded = pseudo_CT_profile_selector_layout(3, 3, 800);
-assert(collapsed.specialized_panel_height == 0);
-assert(collapsed.content_height == collapsed.recommended_panel_height);
-assert(collapsed.recommended_panel_position(2) == 0);
+collapsed = pseudo_CT_profile_selector_layout(1, 2, 3, false, false, 1200);
+custom_open = pseudo_CT_profile_selector_layout(1, 2, 3, true, false, 1200);
+historical_open = pseudo_CT_profile_selector_layout(1, 2, 3, false, true, 1200);
+both_open = pseudo_CT_profile_selector_layout(1, 2, 3, true, true, 1200);
 assert(~collapsed.scroll_needed);
-assert(expanded.recommended_panel_height == collapsed.recommended_panel_height);
-assert(expanded.specialized_panel_height == ...
-    expanded.panel_header_height + expanded.panel_padding + 3 * expanded.row_height);
-assert(expanded.content_height == expanded.recommended_panel_height + ...
-    expanded.group_gap + expanded.specialized_panel_height);
-assert(expanded.recommended_panel_position(2) > ...
-    expanded.specialized_panel_position(2));
-assert(expanded.dialog_height > collapsed.dialog_height);
-assert(expanded.row_height == collapsed.row_height);
-assert(expanded.dialog_height == expanded.preferred_dialog_height);
-assert(expanded.viewport_height > 0);
-assert(expanded.content_width == expanded.viewport_width);
-assert(collapsed.dialog_height > 0 && collapsed.viewport_height > 0);
+assert(collapsed.dialog_height == collapsed.preferred_dialog_height);
+assert(collapsed.row_height == 54);
+assert(collapsed.custom_panel_height == 0);
+assert(collapsed.historical_panel_height == 0);
+assert(collapsed.standard_panel_height == ...
+    collapsed.panel_header_height + collapsed.panel_padding + collapsed.row_height);
+assert(collapsed.content_height == ...
+    collapsed.group_gap + 2 * collapsed.disclosure_height);
+assert(collapsed.standard_panel_position(2) == ...
+    collapsed.bottom_height + collapsed.viewport_height + collapsed.group_gap);
+assert(collapsed.standard_panel_position(2) + ...
+    collapsed.standard_panel_height == ...
+    collapsed.dialog_height - collapsed.top_height);
+assert(collapsed.standard_panel_position(2) > ...
+    collapsed.custom_disclosure_position(2));
+assert(collapsed.custom_disclosure_position(2) > ...
+    collapsed.historical_disclosure_position(2));
+assert(custom_open.custom_panel_height == ...
+    custom_open.panel_padding + 2 * custom_open.row_height);
+assert(custom_open.historical_panel_height == 0);
+assert(custom_open.standard_panel_position(2) > ...
+    custom_open.custom_disclosure_position(2));
+assert(historical_open.custom_panel_height == 0);
+assert(historical_open.historical_panel_height == ...
+    historical_open.panel_padding + 3 * historical_open.row_height);
+assert(both_open.custom_panel_height > 0 && both_open.historical_panel_height > 0);
+assert(both_open.dialog_height > custom_open.dialog_height);
+assert(both_open.dialog_height > historical_open.dialog_height);
+assert(both_open.content_width == both_open.viewport_width);
 
-collapsed_small = pseudo_CT_profile_selector_layout(3, 0, 600);
-expanded_small = pseudo_CT_profile_selector_layout(3, 3, 600);
+collapsed_small = pseudo_CT_profile_selector_layout(1, 2, 3, false, false, 600);
+both_open_small = pseudo_CT_profile_selector_layout(1, 2, 3, true, true, 600);
 assert(~collapsed_small.scroll_needed);
-assert(expanded_small.scroll_needed);
-assert(expanded_small.dialog_height == floor(0.90 * 600));
-assert(expanded_small.maximum_scroll == ...
-    expanded_small.content_height - expanded_small.viewport_height);
-assert(expanded_small.content_width < expanded_small.viewport_width);
-assert(expanded_small.row_height == collapsed_small.row_height);
+assert(both_open_small.scroll_needed);
+assert(both_open_small.dialog_height == floor(0.90 * 600));
+assert(both_open_small.maximum_scroll == ...
+    both_open_small.content_height - both_open_small.viewport_height);
+assert(both_open_small.content_width < both_open_small.viewport_width);
+assert(both_open_small.row_height == collapsed_small.row_height);
+assert(both_open_small.bottom_height >= 60);
+assert(both_open_small.bottom_height + both_open_small.viewport_height <= ...
+    both_open_small.dialog_height);
+
+custom_selected_small = pseudo_CT_profile_selector_layout(1, 2, 3, ...
+    true, true, 600, 2, 2, NaN);
+historical_selected_small = pseudo_CT_profile_selector_layout(1, 2, 3, ...
+    true, true, 600, 3, 2, NaN);
+custom_center = custom_selected_small.custom_panel_position(2) + ...
+    custom_selected_small.custom_panel_height - ...
+    2 * custom_selected_small.row_height + 40;
+historical_center = historical_selected_small.historical_panel_position(2) + ...
+    historical_selected_small.historical_panel_height - ...
+    2 * historical_selected_small.row_height + 40;
+assert(custom_selected_small.scroll_value <= custom_center);
+assert(custom_center <= custom_selected_small.scroll_value + ...
+    custom_selected_small.viewport_height);
+assert(historical_selected_small.scroll_value <= historical_center);
+assert(historical_center <= historical_selected_small.scroll_value + ...
+    historical_selected_small.viewport_height);
+preserved_scroll = pseudo_CT_profile_selector_layout(1, 2, 3, ...
+    true, true, 600, 1, 1, 20);
+assert(preserved_scroll.scroll_value == 20);
 
 config_root = fullfile(root_dir, 'src', 'config');
-profiles = pseudo_CT_list_profiles(config_root);
-[ordered, default_index] = pseudo_CT_prepare_profile_choices(profiles);
-assert(strcmp(ordered(default_index).name, 'local-current'));
-recommended_names = {ordered(strcmp({ordered.group}, 'recommended')).name};
+all_profiles = pseudo_CT_list_profiles(config_root);
+all_names = {all_profiles.name};
+assert(ismember('mlsc-current', all_names)); % Active canonical selector ID.
+assert(ismember('devel', all_names)); % Definition remains for explicit developer paths.
+assert(ismember('launchpad-legacy', all_names));
+assert(~ismember('launchpad', all_names));
+assert(~ismember('launchpad-mprage-only', all_names));
+[ordered, default_index] = ...
+    pseudo_CT_prepare_routine_profile_choices(config_root);
+assert(strcmp(ordered(default_index).name, 'mlsc-current'));
+expected_routine_names = {'local-current', 'mlsc-current', ...
+    'local-mprage-only', 'mlsc-mprage-only', 'local-legacy', ...
+    'mlsc-legacy', 'launchpad-legacy'};
+assert(isequal(sort({ordered.name}), sort(expected_routine_names)));
+assert(~ismember('devel', {ordered.name}));
+recommended_group_names = ...
+    {ordered(strcmp({ordered.group}, 'recommended')).name};
 specialized_names = {ordered(strcmp({ordered.group}, 'specialized')).name};
-% T005 narrow update: four recommended (adds MLSC Current second); specialized was three.
-% Launchpad restoration: specialized grows 3 -> 4 with launchpad-legacy (order 80).
-% Presentation update: launchpad-legacy moves to recommended last (order 80
-% unchanged); recommended grows 4 -> 5, specialized shrinks 4 -> 3.
-% Default stays local-current (explicit lookup, never first-recommended).
-assert(isequal(recommended_names(:)', ...
-    {'local-current', 'mlsc-current', 'local-legacy', 'mlsc-legacy', ...
-    'launchpad-legacy'}));
-assert(isequal(specialized_names(:)', ...
-    {'local-mprage-only', 'mlsc-mprage-only', 'devel'}));
-assert(length(recommended_names) == 5);
-assert(length(specialized_names) == 3);
-recommended_display = {ordered(1).display_name; ordered(2).display_name; ...
-    ordered(3).display_name; ordered(4).display_name; ...
-    ordered(5).display_name};
-assert(isequal(recommended_display, {'LOCAL - Current'; 'MLSC - Current'; ...
-    'LOCAL - Legacy v2.0 (Aether)'; 'MLSC - Legacy v2.0 (Aether)'; ...
-    'LAUNCHPAD - Legacy v2.0 (Aether)'}));
+assert(isequal(recommended_group_names, {'local-current'}));
+assert(isequal(sort(specialized_names), sort({'local-legacy', ...
+    'mlsc-current', 'mlsc-legacy', 'launchpad-legacy', ...
+    'local-mprage-only', 'mlsc-mprage-only'})));
+assert(length(recommended_group_names) == 1);
+assert(length(specialized_names) == 6);
 local_current_config = pseudo_CT_load_profile('local-current', config_root);
 mlsc_current_config = pseudo_CT_load_profile('mlsc-current', config_root);
 local_legacy_config = pseudo_CT_load_profile('local-legacy', config_root);
@@ -101,19 +114,19 @@ mlsc_mprage_config = pseudo_CT_load_profile('mlsc-mprage-only', config_root);
 launchpad_legacy_config = pseudo_CT_load_profile('launchpad-legacy', config_root);
 devel_config = pseudo_CT_load_profile('devel', config_root);
 assert(~isempty(strfind(local_current_config.presentation.display_name, ...
-    'LOCAL')));
+    'Local MATLAB - This Computer')));
 assert(strcmp(local_current_config.presentation.description, ...
-    ['Run the full MPRAGE + UMAP workflow locally ' ...
-    'using the current MATLAB source.']));
+    ['Run the pseudoCT pipeline on this computer using a chosen MATLAB ' ...
+    'version. Results may vary.']));
 assert(strcmp(local_legacy_config.presentation.description, ...
-    ['Run the full MPRAGE + UMAP workflow locally ' ...
-    'using the legacy v2.0 compiled backend (Aether).']));
+    ['Run the original v2 pipeline on this computer for comparison with ' ...
+    'older studies.']));
 assert(strcmp(mlsc_current_config.presentation.description, ...
-    ['Run the full MPRAGE + UMAP workflow on the MLSC cluster ' ...
-    'using the current MATLAB source.']));
+    ['Run the pseudoCT pipeline on MLSC using a compiled MATLAB R2010b ' ...
+    'backend.']));
 assert(strcmp(mlsc_legacy_config.presentation.description, ...
-    ['Run the full MPRAGE + UMAP workflow on the MLSC cluster ' ...
-    'using the legacy v2.0 compiled backend (Aether).']));
+    ['Run the original v2 pipeline on MLSC for comparison with older ' ...
+    'studies.']));
 assert(isempty(strfind(local_current_config.presentation.description, char(10))));
 assert(isempty(strfind(mlsc_current_config.presentation.description, char(10))));
 assert(isempty(strfind(local_legacy_config.presentation.description, char(10))));
@@ -121,16 +134,44 @@ assert(isempty(strfind(mlsc_legacy_config.presentation.description, char(10))));
 assert(isempty(strfind(launchpad_legacy_config.presentation.description, char(10))));
 assert(strcmp(local_mprage_config.presentation.display_name, ...
     'Local MPRAGE Only'));
+assert(strcmp(local_mprage_config.presentation.description, ...
+    ['Generate a NIfTI-only pseudoCT from MPRAGE alone on this computer. ' ...
+    'No UMAP required.']));
 assert(strcmp(mlsc_mprage_config.presentation.display_name, ...
     'MLSC MPRAGE Only'));
+assert(strcmp(mlsc_mprage_config.presentation.description, ...
+    ['Generate a NIfTI-only pseudoCT from MPRAGE alone on MLSC. ' ...
+    'No UMAP required.']));
 assert(strcmp(launchpad_legacy_config.presentation.display_name, ...
-    'LAUNCHPAD - Legacy v2.0 (Aether)'));
+    'Launchpad - Legacy (Aether)'));
 assert(strcmp(launchpad_legacy_config.presentation.description, ...
-    'Remote pseudoCT processing using Aether v2.0.'));
-assert(strcmp(launchpad_legacy_config.presentation.group, 'recommended'));
-assert(launchpad_legacy_config.presentation.recommended);
+    ['Run the original v2 pipeline on Launchpad for comparison with older ' ...
+    'studies.']));
+assert(strcmp(launchpad_legacy_config.presentation.group, 'specialized'));
+assert(~launchpad_legacy_config.presentation.recommended);
+assert(strcmp(local_legacy_config.presentation.display_name, 'Aether - Local'));
+assert(strcmp(mlsc_legacy_config.presentation.display_name, 'Aether - MLSC'));
+assert(strcmp(mlsc_current_config.presentation.group, 'specialized'));
+assert(mlsc_current_config.presentation.recommended);
 assert(strcmp(devel_config.presentation.display_name, ...
     'Development Current MATLAB'));
+dash = char(8212);
+assert(strcmp(pseudo_CT_profile_selector_label('local-current'), ...
+    ['PseudoCT v3 ' dash ' Local']));
+assert(strcmp(pseudo_CT_profile_selector_label('mlsc-current'), ...
+    ['PseudoCT v3 ' dash ' MLSC']));
+assert(strcmp(pseudo_CT_profile_selector_label('local-mprage-only'), ...
+    ['MPRAGE-only ' dash ' Local']));
+assert(strcmp(pseudo_CT_profile_selector_label('mlsc-mprage-only'), ...
+    ['MPRAGE-only ' dash ' MLSC']));
+assert(strcmp(pseudo_CT_profile_selector_label('local-legacy'), ...
+    ['PseudoCT v2 (Aether) ' dash ' Local']));
+assert(strcmp(pseudo_CT_profile_selector_label('mlsc-legacy'), ...
+    ['PseudoCT v2 (Aether) ' dash ' MLSC']));
+assert(strcmp(pseudo_CT_profile_selector_label('launchpad-legacy'), ...
+    ['PseudoCT v2 (Aether) ' dash ' Launchpad']));
+assert(strcmp(pseudo_CT_profile_selector_label('devel', 'Developer'), ...
+    'Developer'));
 assert(isempty(strfind(local_mprage_config.presentation.display_name, ...
     '[CUSTOM]')));
 assert(isempty(strfind(mlsc_mprage_config.presentation.display_name, ...
@@ -154,14 +195,47 @@ assert(~ismember('local-near-parity-r2010b', {ordered.name}));
 
 selector_source = local_read(fullfile(root_dir, 'src', 'ui', ...
     'pseudo_CT_profile_selector.m'));
-assert(~isempty(strfind(selector_source, 'Specialized / Custom')));
-assert(isempty(strfind(selector_source, 'Specialized / Development')));
-assert(~isempty(strfind(selector_source, 'expanded = false')));
-assert(~isempty(strfind(selector_source, 'profiles(selected_index).display_name')));
+assert(~isempty(strfind(selector_source, ...
+    'Choose a workflow below, then select Run Selected.')));
+assert(~isempty(strfind(selector_source, 'char(8212)')));
+assert(isempty(strfind(selector_source, 'T001 is blocked')));
+assert(isempty(strfind(selector_source, 'artifact contract exists')));
+assert(~isempty(strfind(selector_source, 'Standard Processing')));
+assert(~isempty(strfind(selector_source, 'MPRAGE-only Processing')));
+assert(~isempty(strfind(selector_source, 'Legacy Processing')));
+assert(~isempty(strfind(selector_source, 'MPRAGE + UMAP required')));
+assert(~isempty(strfind(selector_source, 'NIfTI and DICOM output')));
+assert(~isempty(strfind(selector_source, 'No UMAP required')));
+assert(~isempty(strfind(selector_source, 'NIfTI output only')));
+assert(~isempty(strfind(selector_source, 'Previous software version')));
+assert(~isempty(strfind(selector_source, 'MATLAB R2010b host required')));
+assert(~isempty(strfind(selector_source, 'Historical compatibility')));
+assert(~isempty(strfind(selector_source, 'standard_processing_subtitle')));
+assert(~isempty(strfind(selector_source, ...
+    'standard_subtitle = uicontrol(''Parent'', standard_panel')));
+assert(~isempty(strfind(selector_source, ...
+    'custom_subtitle = uicontrol(''Parent'', content_panel')));
+assert(~isempty(strfind(selector_source, ...
+    'historical_subtitle = uicontrol(''Parent'', content_panel')));
+assert(length(strfind(selector_source, 'char(183)')) == 4);
+assert(isempty(strfind(selector_source, ...
+    'set(standard_subtitle, ''Visible'', ''off''')));
+assert(isempty(strfind(selector_source, ...
+    'set(custom_subtitle, ''Visible'', ''off''')));
+assert(isempty(strfind(selector_source, ...
+    'set(historical_subtitle, ''Visible'', ''off''')));
+assert(isempty(strfind(selector_source, 'Development')));
+assert(~isempty(strfind(selector_source, 'custom_expanded = false')));
+assert(~isempty(strfind(selector_source, 'historical_expanded = false')));
+assert(~isempty(strfind(selector_source, 'profiles(selected_index).name')));
 layout_source = local_read(fullfile(root_dir, 'src', 'ui', ...
     'pseudo_CT_profile_selector_layout.m'));
 prepare_source = local_read(fullfile(root_dir, 'src', 'ui', ...
     'pseudo_CT_prepare_profile_choices.m'));
+routine_choices_source = local_read(fullfile(root_dir, 'src', 'ui', ...
+    'pseudo_CT_prepare_routine_profile_choices.m'));
+label_source = local_read(fullfile(root_dir, 'src', 'ui', ...
+    'pseudo_CT_profile_selector_label.m'));
 assert(isempty(strfind(layout_source, 'strjoin(')));
 assert(isempty(strfind(layout_source, 'addParameter')));
 assert(isempty(strfind(layout_source, 'string(')));
@@ -170,23 +244,39 @@ assert(isempty(strfind(prepare_source, 'addParameter')));
 assert(isempty(strfind(prepare_source, 'string(')));
 assert(isempty(strfind(selector_source, 'addParameter')));
 assert(isempty(strfind(selector_source, 'string(')));
+assert(isempty(strfind(label_source, 'strjoin(')));
+assert(isempty(strfind(label_source, 'addParameter')));
+assert(isempty(strfind(label_source, 'string(')));
+assert(all(double(label_source) < 128));
 assert(~isempty(strfind(selector_source, '[+]')));
 assert(~isempty(strfind(selector_source, '[-]')));
-assert(isempty(strfind(selector_source, '[Recommended]')));
-assert(isempty(strfind(selector_source, 'Profile labels describe the workflow')));
 assert(~isempty(strfind(selector_source, '''Cancel''')));
 assert(~isempty(strfind(selector_source, 'Run Selected')));
-assert(~isempty(strfind(selector_source, 'Selected (hidden)')));
+assert(~isempty(strfind(selector_source, 'Selected:')));
 assert(~isempty(strfind(selector_source, '''Visible'', ''off''')));
 assert(~isempty(strfind(selector_source, '''Visible'', ''on''')));
-assert(~isempty(strfind(selector_source, 'expanded = ~expanded')));
+assert(~isempty(strfind(selector_source, 'custom_expanded = ~custom_expanded')));
 assert(~isempty(strfind(selector_source, ...
-    'pseudo_CT_profile_selector_layout(recommended_count,')));
+    'historical_expanded = ~historical_expanded')));
 assert(~isempty(strfind(selector_source, ...
-    'strcmp(profiles(selected_index).group')));
+    'pseudo_CT_profile_selector_layout(standard_count,')));
 assert(~isempty(strfind(selector_source, '''Style'', ''radiobutton''')));
+assert(~isempty(strfind(selector_source, '''FontSize'', 8')));
+assert(~isempty(strfind(selector_source, ...
+    '[42 row_bottom + 6 row_layout.content_width - 54 20]')));
+assert(~isempty(strfind(selector_source, ...
+    'current_layout.content_width - 54 20')));
+assert(collapsed.row_height >= 30 + 20);
+assert(30 >= 6 + 20);
 assert(~isempty(strfind(selector_source, 'pseudo_CT_profile_selector_layout')));
+assert(~isempty(strfind(selector_source, 'previous_scroll = get(slider_handle')));
+assert(~isempty(strfind(selector_source, '''Value'', layout.scroll_value')));
 assert(~isempty(strfind(selector_source, '''Style'', ''slider''')));
+assert(~isempty(strfind(prepare_source, ...
+    'strcmp({profiles.name}, ''mlsc-current'')')));
+assert(~isempty(strfind(routine_choices_source, ...
+    'strcmp({profiles.name}, ''devel'')')));
+assert(~isempty(strfind(selector_source, 'Recommended')));
 assert(~isempty(strfind(selector_source, 'profiles(selected_index).name')));
 assert(isempty(strfind(selector_source, 'listdlg')));
 assert(isempty(strfind(selector_source, 'strjoin')));
@@ -197,7 +287,7 @@ assert(isempty(strfind(selector_source, '''Style'', ''popupmenu''')));
 assert(all(double(selector_source) < 128));
 
 fprintf('Profile selector layout tests passed: readable rows, screen cap, and scrolling fallback.\n');
-fprintf('Selector disclosure tests passed: collapsed default, expand contents, hidden-selection retention, valid layouts both states.\n');
+fprintf('Selector disclosure tests passed: standard default, independent collapsed sections, hidden-selection retention, and scrolling.\n');
 end
 
 function text = local_read(file_path)

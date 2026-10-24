@@ -11,14 +11,14 @@ Use the deployed version under `/usr/pubsw/packages/mrpet/standalone_apps/Pseudo
 ```matlab
 addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-latest')
 % Numbered installed version:
-% addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-3.0.2')
+% addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-3.1.0')
 run_pseudo_CT
 ```
 
-Select **LOCAL - Current** for routine processing. The full instructions cover inputs, batch processing, output review, and remote profiles. MATLAB must remain open through processing and remote monitoring/finalization.
+Select **PseudoCT v3 — MLSC** (the recommended default) for routine processing. **PseudoCT v3 — Local** remains available; it uses the MATLAB version you choose, and results may vary. The full instructions cover inputs, batch processing, output review, and remote profiles. MATLAB must remain open through processing and remote monitoring/finalization.
 
 ## Profiles and release
 
-There are five recommended profiles (`local-current`, `mlsc-current`, `local-legacy`, `mlsc-legacy`, `launchpad-legacy`) and three specialized profiles (`local-mprage-only`, `mlsc-mprage-only`, `devel`). The standard workflow uses MPRAGE + UMAP; MPRAGE-only profiles are for specialized workflows. See [Installation](docs/installation.md) for profile availability and requirements.
+Standard Processing offers **PseudoCT v3 — MLSC** (`mlsc-current`, recommended default) and **PseudoCT v3 — Local** (`local-current`). MPRAGE-only Processing and Legacy Processing remain available as separate choices. Center Standard fails closed on missing or invalid runtime/artifact requirements; it does not silently fall back to Local or a historical profile. See [Installation](docs/installation.md) for profile labels, descriptions, availability, and requirements.
 
-The source version is **3.0.2**, which is the current published release. v3.0.0 and v3.0.1 are withdrawn; v2.8.4 was the last published archive before v3.0.2. The published archive contains the current local CURRENT implementation, in which the local facade delegates preparation and computation to the shared `pseudo_CT_current_prepare`/`pseudo_CT_current_compute` helpers. See [release notes](RELEASE_NOTES_v3.0.2.md) and [release history](CHANGELOG.md). Always inspect generated QC before using an attenuation map.
+The source version metadata is **3.1.0**. The v3.0.2 published archive and its history are preserved in the [release history](CHANGELOG.md); v3.0.0 and v3.0.1 remain withdrawn. Setting source version metadata does not itself assert publication or deployment. Always inspect generated QC before using an attenuation map.

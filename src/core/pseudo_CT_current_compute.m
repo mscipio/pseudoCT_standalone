@@ -5,16 +5,6 @@ function [Pf] = pseudo_CT_current_compute(P_in, dir_batch_templates_in, config, 
 %   post-normalization order exactly: MNI/PCA/masking/segmentation/bone/
 %   DARTEL/inverse warp/reslice/attenuation/QC.
 %
-%   Headless is explicitly opt-in and default-off: headless is true only
-%   when config.headless or output_context.headless explicitly opts in.
-%   Existing callers without either field observe unchanged behavior.
-%   On the headless path this helper uses bundled SPM initialization and
-%   in-process noninteractive batch execution (cfg_util('run', batch))
-%   for all three SPM batches, with explicit current SPM toolbox/Seg/
-%   TPM.nii resources independent of isdeployed. The initialized cfg_util
-%   batch call is allowed; GUI/prompt fallback, CreateIntWin/openfig, and
-%   deployed external spm8 executable branches are forbidden on that path.
-%
 %   Preserves original P_orig affine semantics (P_orig = verified input at
 %   entry), current thresholds, float32 output, 0.096 gap-fill, bone and
 %   zero-background switches, and array TIFF/version output. config.fwhm
@@ -26,7 +16,7 @@ function [Pf] = pseudo_CT_current_compute(P_in, dir_batch_templates_in, config, 
 %     config: selected profile config struct.
 %     output_context_in: logging context struct (optional).
 %     fh_in: interactive figure handle from prepare (optional, [] when
-%       headless).
+%       optional).
 %
 %   Output:
 %     Pf: char matrix of warped atlas outputs plus att_map.nii, or ''
@@ -43,17 +33,15 @@ if nargin < 4 || isempty(output_context_in) || ~isstruct(output_context_in)
     output_context_in = struct();
 end
 output_context = output_context_in;
+headless = (isfield(config, 'headless') && isequal(config.headless, true)) || ...
+    (isfield(output_context, 'headless') && ...
+    isequal(output_context.headless, true));
 if nargin < 5
     fh_in = [];
 end
 fh = fh_in;
 P = P_in;
 dir_batch_templates = dir_batch_templates_in;
-
-headless = local_headless_enabled(config, output_context);
-if headless
-    local_ensure_spm_headless();
-end
 
 code_version = local_resolve_code_version();
 
@@ -85,6 +73,7 @@ P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), ...
 % Decompose the first image (reference to warp everthing into this image)
 % into its fileparts:
 [paths, fns, exts] = fileparts(deblank(P(1, :)));
+if isempty(paths); paths = pwd; end
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -127,42 +116,59 @@ for ii = 2:nf
 end
 % Let's include the right path to the template TPM.nii files:
 for ii = 1:6
-    if headless
-        % Explicit current SPM toolbox resource, independent of isdeployed.
-        matlabbatch{1}.spm.tools.preproc8.tissue(ii).tpm = {strcat(fullfile(spm('Dir'), 'toolbox', 'Seg', 'TPM.nii,'), num2str(ii))};
+    if isdeployed
+        matlabbatch{1}.spm.tools.preproc8.tissue(ii).tpm = {strcat(fullfile(dir_batch_templates, 'TPM.nii,'), num2str(ii))};
     else
-        if isdeployed
-            matlabbatch{1}.spm.tools.preproc8.tissue(ii).tpm = {strcat(fullfile(dir_batch_templates, 'TPM.nii,'), num2str(ii))};
-        else
-            matlabbatch{1}.spm.tools.preproc8.tissue(ii).tpm = {strcat(fullfile(spm('Dir'), 'toolbox', 'Seg', 'TPM.nii,'), num2str(ii))};
-        end
+        matlabbatch{1}.spm.tools.preproc8.tissue(ii).tpm = {strcat(fullfile(spm('Dir'), 'toolbox', 'Seg', 'TPM.nii,'), num2str(ii))};
     end
 end
-% Let's save it into a new batch file to run it:
 fns_seg_batch = strcat(paths, filesep, 'new_segment_', date, '_batch.mat');
-save(fns_seg_batch, 'matlabbatch');
+fprintf('New Segment batch save diagnostics:\n');
+fprintf('  filename: %s (class %s, size %s)\n', fns_seg_batch, ...
+    class(fns_seg_batch), mat2str(size(fns_seg_batch)));
+fprintf('  paths: %s; date: %s; pwd: %s\n', paths, date, pwd);
+dest_dir = fileparts(fns_seg_batch);
+fprintf('  destination directory: %s (exists: %d)\n', dest_dir, ...
+    exist(dest_dir, 'dir') == 7);
+fprintf('  matlabbatch: class %s, size %s, ndims %d\n', ...
+    class(matlabbatch), mat2str(size(matlabbatch)), ndims(matlabbatch));
+if iscell(matlabbatch) && ~isempty(matlabbatch) && isstruct(matlabbatch{1})
+    batch_fields = fieldnames(matlabbatch{1});
+    fprintf('  top-level batch fields:');
+    for field_index = 1:min(length(batch_fields), 20)
+        fprintf(' %s', batch_fields{field_index});
+    end
+    if length(batch_fields) > 20
+        fprintf(' ...');
+    end
+    fprintf('\n');
+end
+try
+    save(fns_seg_batch, 'matlabbatch');
+catch ME
+    fprintf(2, 'New Segment batch save failed: %s: %s\n', ...
+        ME.identifier, ME.message);
+    for stack_index = 1:length(ME.stack)
+        fprintf(2, '  at %s (%s:%d)\n', ME.stack(stack_index).name, ...
+            ME.stack(stack_index).file, ME.stack(stack_index).line);
+    end
+    rethrow(ME);
+end
 clear matlabbatch;
-% Run the New Segment batch just created!:
-if headless
-    % In-process noninteractive batch execution; deployed external spm8
-    % branches are forbidden on this path.
+if headless || ~isdeployed
     evalc('cfg_util(''run'', fns_seg_batch);');
 else
-    if ~isdeployed
-        evalc('cfg_util(''run'', fns_seg_batch);');
+    if ispc
+        exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8.exe'));
+    elseif ismac
+        exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8.app/Contents/MacOS/spm8'));
+    elseif isunix
+        exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8'));
     else
-        if ispc
-            exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8.exe'));
-        elseif ismac
-            exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8.app/Contents/MacOS/spm8'));
-        elseif isunix
-            exe_cmd = strcat('!', fullfile(config.spm_root, 'spm8'));
-        else
-            error('pseudo_CT:UnsupportedPlatform', 'The current platform is unsupported.');
-        end
-        cmd = [exe_cmd ' run ' fns_seg_batch];
-        eval([cmd]);
+        error('pseudo_CT:UnsupportedPlatform', 'The current platform is unsupported.');
     end
+    cmd = [exe_cmd ' run ' fns_seg_batch];
+    eval([cmd]);
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -198,20 +204,14 @@ for ii = 1:6
     tmp_aux = strcat('Template_', num2str(ii), '.nii');
     matlabbatch{1}.spm.tools.dartel.warp1.settings.param(ii).template = {fullfile(dir_batch_templates, tmp_aux)};
 end
-% Save it into a new batch file to run it:
 fns_dartel_exist_template_batch = strcat(paths, filesep, 'dartel_existing_template_', date, '_batch.mat');
 save(fns_dartel_exist_template_batch, 'matlabbatch');
 clear matlabbatch;
-% Run the Dartel Existing Template batch just created!:
-if headless
+if headless || ~isdeployed
     evalc('cfg_util(''run'', fns_dartel_exist_template_batch);');
 else
-    if ~isdeployed
-        evalc('cfg_util(''run'', fns_dartel_exist_template_batch);');
-    else
-        cmd = [exe_cmd ' run ' fns_dartel_exist_template_batch];
-        eval([cmd]);
-    end
+    cmd = [exe_cmd ' run ' fns_dartel_exist_template_batch];
+    eval([cmd]);
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -226,19 +226,13 @@ matlabbatch{1}.spm.tools.dartel.crt_iwarped.flowfields = {strcat(paths, filesep,
 for ii = 1:length(list_atlas)
     matlabbatch{1}.spm.tools.dartel.crt_iwarped.images{ii} = fullfile(dir_batch_templates, list_atlas(ii).name);
 end
-% Save it into a new batch file to run it:
 fns_create_inverse_warped_batch = strcat(paths, filesep, 'create_inverse_warped_', date, '_batch.mat');
 save(fns_create_inverse_warped_batch, 'matlabbatch');
-% Run the Create Inverse Warped batch just created!:
-if headless
+if headless || ~isdeployed
     evalc('cfg_util(''run'', fns_create_inverse_warped_batch);');
 else
-    if ~isdeployed
-        evalc('cfg_util(''run'', fns_create_inverse_warped_batch);');
-    else
-        cmd = [exe_cmd ' run ' fns_create_inverse_warped_batch];
-        eval([cmd]);
-    end
+    cmd = [exe_cmd ' run ' fns_create_inverse_warped_batch];
+    eval([cmd]);
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -355,15 +349,12 @@ Pf(num_atlas+1, 1:length(fn_att_map)) = fn_att_map;
 composite = quick_fusion_pseudo_ct(paths, local_qc_colormap_resource());
 imwrite(composite, fullfile(paths, 'Fusion_MR_Pseudo_CT_validation.tiff'), 'Resolution', 300);
 
-if ~headless
-    try
-        if ~isempty(fh)
-            close(fh);
-        end
-    catch
+try
+    if ~isempty(fh)
+        close(fh);
     end
+catch
 end
-% Headless path keeps no figure handle open by construction.
 
 % Write Pseudo_CT_AC_Version.txt with changelog content
 status = pseudo_CT_write_version_log(code_version, paths, stage_context);
@@ -376,65 +367,6 @@ pseudo_CT_output('SUCCESS', stage_context, ...
 
 
 return
-end
-
-function value = local_headless_enabled(config, output_context)
-value = false;
-candidates = {};
-if isstruct(config) && isfield(config, 'headless')
-    candidates{end + 1} = config.headless; %#ok<AGROW>
-end
-if isstruct(output_context) && isfield(output_context, 'headless')
-    candidates{end + 1} = output_context.headless; %#ok<AGROW>
-end
-for ii = 1:length(candidates)
-    raw = candidates{ii};
-    if islogical(raw) && isscalar(raw) && ~isempty(raw)
-        if raw
-            value = true;
-            return;
-        end
-    elseif isnumeric(raw) && isscalar(raw) && isfinite(raw)
-        if double(raw) == 1
-            value = true;
-            return;
-        end
-    elseif ischar(raw) && size(raw, 1) == 1
-        trimmed = lower(strtrim(raw));
-        if strcmp(trimmed, 'yes') || strcmp(trimmed, 'true') || ...
-                strcmp(trimmed, 'on') || strcmp(trimmed, '1')
-            value = true;
-            return;
-        end
-    end
-end
-end
-
-function local_ensure_spm_headless()
-% Bundled SPM initialization for noninteractive batch execution. No GUI,
-% no prompts, no figure windows. The initialized cfg_util batch call is
-% the only batch entry point allowed on this path.
-try
-    spm('Defaults', 'FMRI');
-catch ME
-    error('pseudo_CT:HeadlessSPMUnavailable', ...
-        'Bundled SPM initialization failed: %s', ME.message);
-end
-if exist('spm_jobman', 'file') == 2
-    try
-        spm_jobman('initcfg');
-    catch ME
-        error('pseudo_CT:HeadlessSPMUnavailable', ...
-            'Bundled SPM batch initialization failed: %s', ME.message);
-    end
-else
-    error('pseudo_CT:HeadlessSPMUnavailable', ...
-        'Bundled SPM batch system (spm_jobman) is unavailable.');
-end
-if exist('cfg_util', 'file') ~= 2
-    error('pseudo_CT:HeadlessSPMUnavailable', ...
-        'Bundled SPM batch runner (cfg_util) is unavailable.');
-end
 end
 
 function code_version = local_resolve_code_version()
@@ -459,7 +391,7 @@ context.stage_count = 8;
 end
 
 function colormap_path = local_qc_colormap_resource()
-% Explicit bundled QC colormap for the headless path: src/qc resource,
+% Explicit bundled QC colormap resource under src/qc,
 % never a loose MAT assumed beside caller output. Resolves the same file
 % the quick_fusion default uses, so rendered output is unchanged; a missing
 % bundled resource fails closed instead of surfacing a raw load error.

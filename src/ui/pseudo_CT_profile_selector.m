@@ -1,134 +1,191 @@
 function profile = pseudo_CT_profile_selector()
 %PSEUDO_CT_PROFILE_SELECTOR Show the profile selection dialog.
 %   Returns the filename-derived canonical profile key, or an empty string
-%   when the user cancels or closes the window.
-%
-%   Recommended profiles are always visible. Specialized / Custom profiles
-%   start collapsed on every open. The disclosure pushbutton toggles between
-%   an expand marker [+] and a collapse marker [-] (ASCII-safe expand and
-%   collapse affordance) with clean reflow through
-%   pseudo_CT_profile_selector_layout. A collapsed specialized selection is
-%   retained and shown in the collapsed summary label; re-expand restores
-%   the checked row. No silent switch to local-current occurs.
+%   when the user cancels or closes the window. Standard Processing remains
+%   visible; MPRAGE-only Processing and Legacy Processing disclosures start
+%   collapsed and can be opened independently. Selecting an option never
+%   collapses its section.
 %
 %   Minimum supported MATLAB: R2010b.
 
 config_root = fullfile(fileparts(mfilename('fullpath')), '..', 'config');
-[profiles, selected_index] = pseudo_CT_prepare_profile_choices( ...
-    pseudo_CT_list_profiles(config_root));
+[profiles, default_index] = ...
+    pseudo_CT_prepare_routine_profile_choices(config_root);
 profile = '';
-radio_buttons = cell(length(profiles), 1);
-description_handles = cell(length(profiles), 1);
 
-recommended_count = sum(strcmp({profiles.group}, 'recommended'));
-specialized_count = sum(strcmp({profiles.group}, 'specialized'));
+% Present the recommended Center Standard option first while retaining the
+% local MATLAB routine choice in the same Standard Processing section.
+standard_indices = [find(strcmp({profiles.name}, 'mlsc-current'), 1), ...
+    find(strcmp({profiles.name}, 'local-current'), 1)];
+standard_indices = standard_indices(standard_indices > 0);
+custom_names = {'local-mprage-only', 'mlsc-mprage-only'};
+is_custom = false(1, length(profiles));
+for ii = 1:length(custom_names)
+    is_custom = is_custom | strcmp({profiles.name}, custom_names{ii});
+end
+custom_indices = find(is_custom);
+is_standard = strcmp({profiles.name}, 'local-current') | ...
+    strcmp({profiles.name}, 'mlsc-current');
+% Keep any additional non-development routine options available in the
+% historical disclosure instead of silently dropping future profiles.
+historical_indices = find(~is_standard & ~is_custom);
+selected_name = profiles(default_index).name;
+profiles = profiles([standard_indices custom_indices historical_indices]);
+selected_index = find(strcmp({profiles.name}, selected_name), 1);
+
+standard_count = length(standard_indices);
+custom_count = length(custom_indices);
+historical_count = length(historical_indices);
+custom_expanded = false;
+historical_expanded = false;
 screen_height = get_screen_height();
-expanded = false;
-layout = pseudo_CT_profile_selector_layout(recommended_count, ...
-    0, screen_height);
-expanded_layout = pseudo_CT_profile_selector_layout(recommended_count, ...
-    specialized_count, screen_height);
+profile_sections = zeros(length(profiles), 1);
+section_rows = zeros(length(profiles), 1);
+layout = current_layout();
+
 dialog = figure('Name', 'Pseudo-CT Profile', 'NumberTitle', 'off', ...
     'MenuBar', 'none', 'ToolBar', 'none', 'Resize', 'off', ...
     'WindowStyle', 'modal', 'Units', 'pixels', ...
     'Position', [100 100 layout.dialog_width layout.dialog_height], ...
+    'Tag', 'pseudo_CT_profile_selector_dialog', ...
     'CloseRequestFcn', @cancel_selection);
 
 header_title = uicontrol('Parent', dialog, 'Style', 'text', ...
     'String', 'Select a pseudo-CT execution profile', ...
     'HorizontalAlignment', 'left', 'FontSize', 12, 'FontWeight', 'bold', ...
-    'Position', [24 layout.dialog_height - 38 730 24]);
+    'Position', [24 layout.dialog_height - 35 730 24]);
+availability_note = uicontrol('Parent', dialog, 'Style', 'text', ...
+    'String', 'Choose a workflow below, then select Run Selected.', ...
+    'HorizontalAlignment', 'left', 'FontSize', 9, ...
+    'Tag', 'center_standard_availability_note', ...
+    'Position', [24 layout.dialog_height - 78 730 36]);
 
 viewport = uipanel('Parent', dialog, 'BorderType', 'none', 'Units', 'pixels', ...
     'Position', [layout.horizontal_margin layout.bottom_height ...
-    layout.viewport_width layout.viewport_height]);
-if layout.scroll_needed
-    content_y = -layout.maximum_scroll;
-else
-    content_y = layout.viewport_height - layout.content_height;
-end
+    layout.viewport_width layout.viewport_height], ...
+    'Tag', 'profile_selector_viewport');
+content_y = initial_content_y(layout);
 content_panel = uipanel('Parent', viewport, 'BorderType', 'none', ...
     'Units', 'pixels', 'Position', [0 content_y layout.content_width ...
-    layout.content_height]);
+    layout.content_height], 'Tag', 'profile_selector_content');
 
-recommended_panel = [];
-if recommended_count > 0
-    recommended_panel = uipanel('Parent', content_panel, ...
-        'Title', 'Recommended', 'FontWeight', 'bold', 'Units', 'pixels', ...
-        'Position', layout.recommended_panel_position);
-end
-specialized_panel = [];
-if specialized_count > 0
-    specialized_panel = uipanel('Parent', content_panel, ...
-        'Title', 'Specialized / Custom', 'FontWeight', 'bold', ...
-        'Units', 'pixels', 'Position', expanded_layout.specialized_panel_position, ...
-        'Visible', 'off');
-end
+standard_panel = uipanel('Parent', dialog, ...
+    'Title', 'Standard Processing', 'FontWeight', 'bold', 'Units', 'pixels', ...
+    'Position', layout.standard_panel_position, 'Tag', 'standard_processing');
+standard_subtitle = uicontrol('Parent', standard_panel, 'Style', 'text', ...
+    'String', ['MPRAGE + UMAP required ' char(183) ...
+    ' NIfTI and DICOM output'], ...
+    'HorizontalAlignment', 'left', 'FontSize', 8, 'Units', 'pixels', ...
+    'Position', [18 layout.standard_panel_height - ...
+    layout.panel_header_height + 4 layout.content_width - 36 16], ...
+    'Tag', 'standard_processing_subtitle');
+custom_panel = uipanel('Parent', content_panel, 'BorderType', 'none', ...
+    'Units', 'pixels', 'Position', safe_panel_position( ...
+    layout.custom_panel_position, layout.custom_panel_height), ...
+    'Visible', 'off', 'Tag', 'custom_processing_options');
+historical_panel = uipanel('Parent', content_panel, 'BorderType', 'none', ...
+    'Units', 'pixels', 'Position', safe_panel_position( ...
+    layout.historical_panel_position, layout.historical_panel_height), ...
+    'Visible', 'off', 'Tag', 'historical_processing_options');
 
 slider_handle = uicontrol('Parent', dialog, 'Style', 'slider', ...
     'Units', 'pixels', 'Min', 0, 'Max', max(1, layout.maximum_scroll), ...
     'Value', layout.maximum_scroll, 'Visible', 'off', ...
+    'Tag', 'profile_selector_scrollbar', ...
     'Position', [layout.horizontal_margin + layout.content_width + ...
     layout.scrollbar_gap layout.bottom_height layout.scrollbar_width ...
     layout.viewport_height], 'Callback', @scroll_content);
-if layout.scroll_needed
-    step = min(1, layout.row_height / layout.maximum_scroll);
-    page_step = min(1, layout.viewport_height / layout.maximum_scroll);
-    set(slider_handle, 'Max', layout.maximum_scroll, ...
-        'Value', layout.maximum_scroll, ...
-        'SliderStep', [step page_step], 'Visible', 'on');
-end
 
-recommended_row = 0;
-specialized_row = 0;
+radio_buttons = cell(length(profiles), 1);
+description_handles = cell(length(profiles), 1);
+recommended_handles = cell(length(profiles), 1);
+profile_sections = zeros(length(profiles), 1);
+section_rows = zeros(length(profiles), 1);
+section_counts = [standard_count custom_count historical_count];
+row_counts = zeros(1, 3);
 for ii = 1:length(profiles)
-    if strcmp(profiles(ii).group, 'recommended')
-        panel = recommended_panel;
-        recommended_row = recommended_row + 1;
-        row = recommended_row;
+    if ii <= standard_count
+        section = 1;
+        panel = standard_panel;
         row_layout = layout;
-        panel_height = layout.recommended_panel_height;
+        panel_height = layout.standard_panel_height;
+        header_height = layout.panel_header_height;
+    elseif ii <= standard_count + custom_count
+        section = 2;
+        panel = custom_panel;
+        row_layout = layout;
+        panel_height = custom_count * layout.row_height + layout.panel_padding;
+        header_height = 0;
     else
-        panel = specialized_panel;
-        specialized_row = specialized_row + 1;
-        row = specialized_row;
-        row_layout = expanded_layout;
-        panel_height = expanded_layout.specialized_panel_height;
+        section = 3;
+        panel = historical_panel;
+        row_layout = layout;
+        panel_height = historical_count * layout.row_height + ...
+            layout.panel_padding;
+        header_height = 0;
     end
-    row_bottom = panel_height - row_layout.panel_header_height - ...
-        row * row_layout.row_height;
-    label = profiles(ii).display_name;
-    row_width = row_layout.content_width;
+    row_counts(section) = row_counts(section) + 1;
+    row = row_counts(section);
+    profile_sections(ii) = section;
+    section_rows(ii) = row;
+    row_bottom = panel_height - header_height - row * row_layout.row_height;
+    label = pseudo_CT_profile_selector_label(profiles(ii).name, ...
+        profiles(ii).display_name);
     radio_buttons{ii} = uicontrol('Parent', panel, 'Style', 'radiobutton', ...
         'String', label, 'FontWeight', 'bold', 'HorizontalAlignment', 'left', ...
         'Units', 'pixels', 'Position', [18 row_bottom + 30 ...
-        row_width - 36 20], ...
+        row_layout.content_width - 150 20], ...
+        'Tag', ['profile_' profiles(ii).name], ...
         'Value', ii == selected_index, 'Callback', {@select_profile, ii});
-    if strcmp(profiles(ii).group, 'specialized')
-        set(radio_buttons{ii}, 'Visible', 'off');
-    end
     description_handles{ii} = uicontrol('Parent', panel, 'Style', 'text', ...
         'String', profiles(ii).description, 'HorizontalAlignment', 'left', ...
-        'Units', 'pixels', 'Position', [50 row_bottom + 6 ...
-        row_width - 68 20]);
-    if strcmp(profiles(ii).group, 'specialized')
-        set(description_handles{ii}, 'Visible', 'off');
+        'FontSize', 8, 'Units', 'pixels', ...
+        'Position', [42 row_bottom + 6 row_layout.content_width - 54 20]);
+    if strcmp(profiles(ii).name, 'mlsc-current')
+        recommended_handles{ii} = uicontrol('Parent', panel, 'Style', 'text', ...
+            'String', 'Recommended', 'HorizontalAlignment', 'center', ...
+            'FontSize', 8, 'FontWeight', 'bold', ...
+            'ForegroundColor', [0.16 0.40 0.25], 'Units', 'pixels', ...
+            'Position', [row_layout.content_width - 122 ...
+            row_bottom + 31 104 18], ...
+            'Tag', 'profile_mlsc-current_recommended');
     end
 end
 
-disclosure_handle = uicontrol('Parent', dialog, 'Style', 'pushbutton', ...
-    'String', collapsed_label(specialized_count), ...
-    'HorizontalAlignment', 'center', ...
-    'Position', [24 28 250 32], 'Callback', @toggle_disclosure);
-summary_handle = uicontrol('Parent', dialog, 'Style', 'text', ...
+custom_disclosure = uicontrol('Parent', content_panel, 'Style', 'pushbutton', ...
     'String', '', 'HorizontalAlignment', 'left', ...
-    'Position', [284 28 256 32]);
-update_summary();
+    'FontWeight', 'bold', 'FontSize', 9, ...
+    'Position', disclosure_title_position(layout.custom_disclosure_position), ...
+    'Tag', 'custom_processing_disclosure', ...
+    'Callback', @toggle_custom);
+historical_disclosure = uicontrol('Parent', content_panel, ...
+    'Style', 'pushbutton', 'String', '', 'HorizontalAlignment', 'left', ...
+    'FontWeight', 'bold', 'FontSize', 9, ...
+    'Position', disclosure_title_position(layout.historical_disclosure_position), ...
+    'Tag', 'historical_processing_disclosure', ...
+    'Callback', @toggle_historical);
+custom_subtitle = uicontrol('Parent', content_panel, 'Style', 'text', ...
+    'String', ['No UMAP required ' char(183) ' NIfTI output only'], ...
+    'HorizontalAlignment', 'left', 'FontSize', 8, ...
+    'Position', disclosure_subtitle_position( ...
+    layout.custom_disclosure_position), ...
+    'Tag', 'mprage_only_processing_subtitle');
+historical_subtitle = uicontrol('Parent', content_panel, 'Style', 'text', ...
+    'String', ['Previous software version ' char(183) ...
+    ' MATLAB R2010b host required ' char(183) ...
+    ' Historical compatibility'], ...
+    'HorizontalAlignment', 'left', 'FontSize', 8, ...
+    'Position', disclosure_subtitle_position( ...
+    layout.historical_disclosure_position), ...
+    'Tag', 'legacy_processing_subtitle');
+update_disclosure_labels();
 
 uicontrol('Parent', dialog, 'Style', 'pushbutton', 'String', 'Cancel', ...
-    'Position', [550 28 90 32], 'Callback', @cancel_selection);
+    'Position', [550 28 90 32], 'Tag', 'cancel_selection', ...
+    'Callback', @cancel_selection);
 uicontrol('Parent', dialog, 'Style', 'pushbutton', 'String', 'Run Selected', ...
     'FontWeight', 'bold', 'Position', [650 28 105 32], ...
+    'Tag', 'run_selected', ...
     'Callback', @run_selection);
 
 movegui(dialog, 'center');
@@ -143,7 +200,7 @@ end
             set(radio_buttons{jj}, 'Value', 0);
         end
         set(radio_buttons{index}, 'Value', 1);
-        update_summary();
+        update_disclosure_labels();
     end
 
     function run_selection(~, ~)
@@ -164,101 +221,172 @@ end
         set(content_panel, 'Position', position);
     end
 
-    function toggle_disclosure(~, ~)
-        expanded = ~expanded;
+    function toggle_custom(~, ~)
+        custom_expanded = ~custom_expanded;
+        apply_disclosure_state();
+    end
+
+    function toggle_historical(~, ~)
+        historical_expanded = ~historical_expanded;
         apply_disclosure_state();
     end
 
     function apply_disclosure_state()
-        if expanded
-            visible_count = specialized_count;
-        else
-            visible_count = 0;
+        previous_scroll = NaN;
+        if ishghandle(slider_handle) && ...
+                strcmp(get(slider_handle, 'Visible'), 'on')
+            previous_scroll = get(slider_handle, 'Value');
         end
-        layout = pseudo_CT_profile_selector_layout(recommended_count, ...
-            visible_count, screen_height);
+        layout = current_layout(previous_scroll);
         set(dialog, 'Position', ...
             [100 100 layout.dialog_width layout.dialog_height]);
+        movegui(dialog, 'center');
         set(header_title, 'Position', ...
-            [24 layout.dialog_height - 38 730 24]);
+            [24 layout.dialog_height - 35 730 24]);
+        set(availability_note, 'Position', ...
+            [24 layout.dialog_height - 78 730 36]);
         set(viewport, 'Position', [layout.horizontal_margin ...
             layout.bottom_height layout.viewport_width ...
             layout.viewport_height]);
-        if layout.scroll_needed
-            content_y = -layout.maximum_scroll;
-        else
-            content_y = layout.viewport_height - layout.content_height;
-        end
-        set(content_panel, 'Position', [0 content_y ...
-            layout.content_width layout.content_height]);
-        if ~isempty(recommended_panel)
-            set(recommended_panel, 'Position', ...
-                layout.recommended_panel_position);
-        end
-        if ~isempty(specialized_panel)
-            if expanded
-                set(specialized_panel, 'Position', ...
-                    layout.specialized_panel_position, 'Visible', 'on');
-            else
-                set(specialized_panel, 'Visible', 'off');
-            end
-        end
-        for kk = 1:length(profiles)
-            radio_position = get(radio_buttons{kk}, 'Position');
-            radio_position(3) = layout.content_width - 36;
-            set(radio_buttons{kk}, 'Position', radio_position);
-            desc_position = get(description_handles{kk}, 'Position');
-            desc_position(3) = layout.content_width - 68;
-            set(description_handles{kk}, 'Position', desc_position);
-            if strcmp(profiles(kk).group, 'specialized')
-                if expanded
-                    set(radio_buttons{kk}, 'Visible', 'on');
-                    set(description_handles{kk}, 'Visible', 'on');
-                else
-                    set(radio_buttons{kk}, 'Visible', 'off');
-                    set(description_handles{kk}, 'Visible', 'off');
-                end
-            end
-        end
+        set(standard_panel, 'Position', layout.standard_panel_position);
+        set(standard_subtitle, 'Position', [18 ...
+            layout.standard_panel_height - layout.panel_header_height + 4 ...
+            layout.content_width - 36 16]);
+        set(custom_panel, 'Position', safe_panel_position( ...
+            layout.custom_panel_position, layout.custom_panel_height), ...
+            'Visible', on_off(custom_expanded));
+        set(historical_panel, 'Position', safe_panel_position( ...
+            layout.historical_panel_position, layout.historical_panel_height), ...
+            'Visible', on_off(historical_expanded));
+        set(custom_disclosure, 'Position', ...
+            disclosure_title_position(layout.custom_disclosure_position));
+        set(historical_disclosure, 'Position', ...
+            disclosure_title_position(layout.historical_disclosure_position));
+        set(custom_subtitle, 'Position', ...
+            disclosure_subtitle_position(layout.custom_disclosure_position));
+        set(historical_subtitle, 'Position', ...
+            disclosure_subtitle_position(layout.historical_disclosure_position));
+        configure_profile_rows(layout);
         if layout.scroll_needed
             step = min(1, layout.row_height / layout.maximum_scroll);
             page_step = min(1, layout.viewport_height / layout.maximum_scroll);
             set(slider_handle, 'Max', layout.maximum_scroll, ...
-                'Value', layout.maximum_scroll, ...
+                'Value', layout.scroll_value, ...
                 'SliderStep', [step page_step], ...
                 'Position', [layout.horizontal_margin + ...
                 layout.content_width + layout.scrollbar_gap ...
                 layout.bottom_height layout.scrollbar_width ...
                 layout.viewport_height], 'Visible', 'on');
+            set(content_panel, 'Position', [0 -layout.scroll_value ...
+                layout.content_width layout.content_height]);
         else
-            set(slider_handle, 'Visible', 'off', ...
+            set(slider_handle, 'Max', 1, 'Value', 0, 'Visible', 'off', ...
                 'Position', [layout.horizontal_margin + ...
                 layout.content_width + layout.scrollbar_gap ...
                 layout.bottom_height layout.scrollbar_width ...
                 layout.viewport_height]);
+            set(content_panel, 'Position', [0 initial_content_y(layout) ...
+                layout.content_width layout.content_height]);
         end
-        if expanded
-            set(disclosure_handle, 'String', '[-] Hide Specialized / Custom');
-        else
-            set(disclosure_handle, 'String', ...
-                collapsed_label(specialized_count));
-        end
-        update_summary();
+        update_disclosure_labels();
     end
 
-    function update_summary()
-        if ~expanded && ~isempty(selected_index) && ...
-                strcmp(profiles(selected_index).group, 'specialized')
-            set(summary_handle, 'String', ['Selected (hidden): ' ...
-                profiles(selected_index).display_name]);
-        else
-            set(summary_handle, 'String', '');
+    function configure_profile_rows(current_layout)
+        for kk = 1:length(profiles)
+            section = profile_sections(kk);
+            row = section_rows(kk);
+            if section == 1
+                panel_height = current_layout.standard_panel_height;
+                header_height = current_layout.panel_header_height;
+            else
+                panel_height = section_counts(section) * ...
+                    current_layout.row_height + current_layout.panel_padding;
+                header_height = 0;
+            end
+            row_bottom = panel_height - header_height - ...
+                row * current_layout.row_height;
+            radio_position = [18 row_bottom + 30 ...
+                current_layout.content_width - 150 20];
+            desc_position = [42 row_bottom + 6 ...
+                current_layout.content_width - 54 20];
+            set(radio_buttons{kk}, 'Position', radio_position);
+            set(description_handles{kk}, 'Position', desc_position);
+            if ~isempty(recommended_handles{kk})
+                set(recommended_handles{kk}, 'Position', ...
+                    [current_layout.content_width - 122 ...
+                    row_bottom + 31 104 18]);
+            end
         end
     end
-end
 
-function label = collapsed_label(specialized_count)
-label = sprintf('[+] Show Specialized / Custom (%d)', specialized_count);
+    function update_disclosure_labels()
+        set(custom_disclosure, 'String', disclosure_label( ...
+            'MPRAGE-only Processing', 2, custom_expanded));
+        set(historical_disclosure, 'String', disclosure_label( ...
+            'Legacy Processing', 3, historical_expanded));
+    end
+
+    function label = disclosure_label(section_name, section, is_expanded)
+        if is_expanded
+            label = ['[-] ' section_name];
+        else
+            label = ['[+] ' section_name];
+            if ~isempty(selected_index) && ...
+                    profile_sections(selected_index) == section
+                dash = char(8212);
+                selected_label = pseudo_CT_profile_selector_label( ...
+                    profiles(selected_index).name, ...
+                    profiles(selected_index).display_name);
+                label = [label ' ' dash ' Selected: ' selected_label];
+            end
+        end
+    end
+
+    function layout = current_layout(previous_scroll)
+        if nargin < 1
+            previous_scroll = NaN;
+        end
+        selected_section = 0;
+        selected_row = 0;
+        if ~isempty(selected_index)
+            selected_section = profile_sections(selected_index);
+            selected_row = section_rows(selected_index);
+        end
+        layout = pseudo_CT_profile_selector_layout(standard_count, ...
+            custom_count, historical_count, custom_expanded, ...
+            historical_expanded, screen_height, selected_section, ...
+            selected_row, previous_scroll);
+    end
+
+    function y = initial_content_y(current_layout)
+        if current_layout.scroll_needed
+            y = -current_layout.maximum_scroll;
+        else
+            y = current_layout.viewport_height - current_layout.content_height;
+        end
+    end
+
+    function position = safe_panel_position(position, height)
+        position(4) = max(1, height);
+    end
+
+    function position = disclosure_title_position(disclosure_position)
+        position = [disclosure_position(1) disclosure_position(2) + 22 ...
+            disclosure_position(3) 24];
+    end
+
+    function position = disclosure_subtitle_position(disclosure_position)
+        position = [disclosure_position(1) + 18 disclosure_position(2) + 3 ...
+            disclosure_position(3) - 30 16];
+    end
+
+    function value = on_off(is_on)
+        if is_on
+            value = 'on';
+        else
+            value = 'off';
+        end
+    end
 end
 
 function screen_height = get_screen_height()

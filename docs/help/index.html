@@ -68,8 +68,10 @@
           <div class="callout recommendation">
             <strong>Routine use</strong>
             <p>
-              For normal subject processing, use the
-              <strong>LOCAL - Current</strong> (<code>local-current</code>) profile.
+              For normal subject processing, use
+              <strong>Center Standard — MLSC</strong>
+              (<code>mlsc-current</code>). <strong>Local MATLAB</strong>
+              (<code>local-current</code>) remains available as an alternate.
             </p>
           </div>
 
@@ -154,8 +156,8 @@
               <pre><code>run_pseudo_CT</code></pre>
             </li>
             <li>
-              <strong>Select LOCAL - Current</strong> for routine
-              processing.
+              <strong>Select Center Standard — MLSC</strong> for routine
+              processing. Local MATLAB remains available as an alternate.
             </li>
             <li>
               Select the first DICOM of the MPRAGE series, or select the single
@@ -211,10 +213,9 @@
               alt="Pseudo-CT execution profile selector"
             />
             <figcaption>
-              The profile selector separates routine workflows from
-              specialized/development profiles. This screenshot shows a
-              historical row count; the authoritative five Recommended
-              rows plus three Specialized profiles are listed below.
+              The screenshot is illustrative and may not show the current
+              selector organization or availability. Current profile
+              availability is described below.
             </figcaption>
           </figure>
 
@@ -227,44 +228,29 @@
             Current and Legacy follow different numerical paths; no
             universal equivalence is claimed. Always inspect the QC image.
           </p>
-          <table>
-            <thead>
-              <tr>
-                <th></th>
-                <th>Local workstation</th>
-                <th>MLSC cluster</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Current source MATLAB</td>
-                <td><code>local-current</code> (available now)</td>
-                <td><code>mlsc-current</code> (selectable now; bundled backend included)</td>
-              </tr>
-              <tr>
-                <td>Legacy v2.0 compiled (Aether)</td>
-                <td><code>local-legacy</code> (available now)</td>
-                <td><code>mlsc-legacy</code> (available now)</td>
-              </tr>
-            </tbody>
-          </table>
           <p>
-            Eight profiles exist: five Recommended
-            (<code>local-current</code>, <code>mlsc-current</code>,
-            <code>local-legacy</code>, <code>mlsc-legacy</code>,
-            <code>launchpad-legacy</code>) and three Specialized
-            (<code>local-mprage-only</code>, <code>mlsc-mprage-only</code>,
-            <code>devel</code>). The selector shows exactly the five
-            Recommended rows in fixed order, with WHERE and WHICH visible
-            in each label; the Specialized section starts collapsed and
-            expands with the <code>[+]</code> control. Scripts use the
-            stable canonical keys above, never display labels. The bare key
-            <code>mlsc</code> is only a deprecated alias for
-            <code>mlsc-legacy</code> and creates no selector row. The
-            deprecated keys (<code>launchpad</code>,
-            <code>launchpad-mprage-only</code>,
-            <code>local-near-parity-r2010b</code>) remain excluded from
-            discovery and are not supported.
+            <strong>Standard Processing</strong> presents Center Standard —
+            MLSC (<code>mlsc-current</code>) as the recommended default and
+            keeps Local MATLAB (<code>local-current</code>) available. The
+            labels are display names; canonical profile IDs remain unchanged.
+            Center Standard fails closed if required runtime or artifact
+            validation fails and does not silently fall back to Local or a
+            historical profile.
+          </p>
+          <p>
+            <strong>Custom Processing</strong> and
+            <strong>Historical Processing</strong> are separate disclosure
+            groups and start collapsed. Custom contains
+            <code>local-mprage-only</code> and
+            <code>mlsc-mprage-only</code>. Historical contains
+            <code>local-legacy</code>, <code>mlsc-legacy</code>, and
+            <code>launchpad-legacy</code>; site resources may be unavailable.
+            The development profile is available only by explicit canonical
+            key, not in the routine selector. Scripts use canonical profile
+            keys, not display labels. The bare key
+            <code>mlsc</code> is a deprecated alias for
+            <code>mlsc-legacy</code>; deprecated Launchpad aliases are not
+            supported.
           </p>
           <p>
             Standard profiles require the UMAP reference and produce both
@@ -274,52 +260,49 @@
 
           <div class="profile-card">
             <div class="profile-title">
-              <h3>LOCAL - Current</h3>
-              <span class="badge good">Recommended</span>
+              <h3>Center Standard — MLSC</h3>
+              <span class="badge good">Recommended default</span>
             </div>
             <p>
-              Runs the full MPRAGE + UMAP workflow locally on the workstation
-              using the current MATLAB source (<code>local-current</code>).
-              This is the recommended profile for routine processing.
-            </p>
-            <p>
-              On an average workstation, expect approximately
-              <strong>30 minutes per subject</strong>.
+              Runs the full MPRAGE + UMAP workflow on MLSC using the current
+              MATLAB source (<code>mlsc-current</code>). Requires a valid
+              cluster account and provisioned resources. The accepted
+              current-lineage artifact uses MATLAB R2010b, Compiler 4.14, and
+              MCR 7.14; an unmet artifact/runtime requirement fails closed.
             </p>
           </div>
 
           <div class="profile-card">
             <div class="profile-title">
-              <h3>MLSC - Current</h3>
-              <span class="badge good">Recommended</span>
+              <h3>Local MATLAB</h3>
+              <span class="badge">Available</span>
             </div>
             <p>
-              Runs the full MPRAGE + UMAP workflow on the MLSC cluster from
-              the current source (<code>mlsc-current</code>). It requires
-              the UMAP reference and produces NIfTI and DICOM output.
-              The bundled backend is included in the installation; use
-              requires a valid cluster account and provisioned paths.
+              Runs the full MPRAGE + UMAP workflow locally on the workstation
+              using the current MATLAB source (<code>local-current</code>).
+              This remains an available alternative to Center Standard.
             </p>
           </div>
 
           <div class="profile-card">
             <div class="profile-title">
               <h3>LOCAL - Legacy v2.0 (Aether)</h3>
-              <span class="badge good">Recommended</span>
+              <span class="badge">Historical</span>
             </div>
             <p>
               Runs the full MPRAGE + UMAP workflow locally on the workstation
               using the legacy v2.0 compiled backend
               (<code>local-legacy</code>) with direct-local execution. There
               is no login dialog and no cluster submission on this path.
-              Recommended where the legacy backend is required.
+              Selectable under Historical Processing where the legacy
+              backend is required.
             </p>
           </div>
 
           <div class="profile-card">
             <div class="profile-title">
               <h3>MLSC - Legacy v2.0 (Aether)</h3>
-              <span class="badge good">Recommended</span>
+              <span class="badge">Historical</span>
             </div>
             <p>
               Runs the standard MPRAGE + UMAP workflow on the MLSC cluster
@@ -327,38 +310,31 @@
               (<code>mlsc-legacy</code>). It requires the UMAP reference and
               produces both NIfTI and DICOM output.
             </p>
-            <p>
-              Expected processing time is approximately
-              <strong>1 hour per subject</strong>, excluding queue wait.
-              Use requires a valid cluster account and provisioned paths.
-            </p>
+            <p>Use requires a valid cluster account and provisioned paths.</p>
           </div>
 
           <div class="profile-card">
             <div class="profile-title">
               <h3>LAUNCHPAD - Legacy v2.0 (Aether)</h3>
-              <span class="badge good">Recommended</span>
+              <span class="badge">Historical</span>
             </div>
             <p>
               Runs the full MPRAGE + UMAP workflow on the legacy remote path
-              (<code>launchpad-legacy</code>). Restored as a selectable
-              Recommended profile; this is an availability restoration only
-              with unchanged submission and retrieval behavior. No new
+              (<code>launchpad-legacy</code>), selectable under Historical
+              Processing. No new
               correctness claim is made beyond the dataset-specific states
               recorded in the technical notes.
             </p>
           </div>
 
           <div class="callout warning">
-            <strong>Specialized / Custom profiles</strong>
+            <strong>Custom Processing</strong>
             <p>
-              Three profiles live under the Specialized / Custom disclosure,
-              which starts collapsed on every open and expands with the
-              <code>[+]</code> control: <code>local-mprage-only</code>
+              The initially collapsed Custom Processing disclosure contains
+              <code>local-mprage-only</code>
               (Local MPRAGE Only; MPRAGE without UMAP, NIfTI only, local),
               <code>mlsc-mprage-only</code> (MLSC MPRAGE Only; MPRAGE without
-              UMAP, NIfTI only, on MLSC), and <code>devel</code>
-              (Development Current MATLAB; inspection and development only).
+              UMAP, NIfTI only, on MLSC).
               They are not intended for routine use.
             </p>
             <p>
@@ -367,34 +343,28 @@
               <code>local-near-parity-r2010b</code>) are never shown in the
               selector and are not supported.
             </p>
-            <p>
-              <strong
-                >If you do not already know why you need a specialized profile,
-                do not select one.</strong
-              >
-            </p>
           </div>
         </section>
 
         <section id="mlsc">
           <h2>MLSC remote workflow</h2>
           <p>
-            MLSC runs pseudoCT on the cluster for subjects that cannot be
-            processed locally. The same MPRAGE and UMAP inputs and the same
-            final NIFTI/DICOM layout are used; cluster execution and local
-            finalization happen behind the dialogs described below.
+            Center Standard (<code>mlsc-current</code>) is the current-lineage
+            standard MLSC workflow. <code>mlsc-legacy</code> remains available
+            separately under Historical Processing. A user-accepted R2010b
+            run verified MLSC completion and copyback, DICOM output, output
+            promotion, and cleanup for one dataset; this does not establish
+            universal numerical equivalence or clinical correctness.
           </p>
 
           <div class="callout warning">
-            <strong>What is already validated</strong>
+            <strong>Evidence limits</strong>
             <p>
-              The bundled MLSC CURRENT backend already passed controlled
-              validation on MLSC (job 10492486, strict Gate-A PASS,
-              byte-identical to the local-current reference). v3.0.2 added
-              no new scientific or submission run. Use requires an
-              installed bundled backend, a valid cluster account, and the
-              provisioned runtime and resources. No production deployment
-              is claimed by this release.
+              The accepted run is dataset-specific and does not establish
+              universal parity. Cluster accounts and paths remain
+              site-provisioned. Executor host, CPU allocation, and build
+              identity must not be inferred from profile configuration or
+              from this acceptance record.
             </p>
           </div>
 
@@ -437,8 +407,18 @@
             diagnosis. Rerunning restarts from the beginning.
           </p>
           <p>
-            Expected processing time is approximately
-            <strong>1 hour per subject</strong>, excluding queue wait.
+            The profile summary is written before dispatch: it records the
+            canonical profile ID, submitter MATLAB, configured scientific
+            paths/settings, and requested aliasing/recentering options. Those
+            settings are not proof that a step ran. No per-stage confirmation
+            is recorded for aliasing or recentering, so their completion is
+            <strong>Not confirmed</strong>. After an MLSC job, the application
+            refreshes the summary from that run's lifecycle/finalization
+            evidence when available. Scheduler state and local finalization
+            describe recorded current-run outcomes; executor hostname, CPU,
+            runtime, and build remain unknown unless an actual record proves
+            them. Missing facts are shown as Not confirmed or Not recorded,
+            not inferred from the configured scheduler or final status.
           </p>
 
           <h3>Logs</h3>
@@ -651,13 +631,6 @@
         <section id="processing">
           <h2>During processing</h2>
           <p>
-            Local execution takes approximately
-            <strong>30 minutes per subject</strong> on an average workstation.
-            MLSC execution is expected to take approximately
-            <strong>1 hour per subject</strong>, excluding queue wait. The exact
-            time depends on the workstation, cluster, and input data.
-          </p>
-          <p>
             MATLAB prints stage-by-stage status messages and writes a detailed
             run log in
             <code>MR_PET</code>.
@@ -778,8 +751,10 @@
 
           <h3>Profile provenance</h3>
           <p>
-            The profile summary is useful when checking or reporting exactly how
-            a subject was processed.
+            The profile summary is a bounded provenance record, not a complete
+            account of exactly how a subject was processed. It distinguishes
+            configured/requested settings from outcomes actually recorded for
+            the current run.
           </p>
           <figure>
             <img
@@ -939,7 +914,8 @@
                   (availability restoration only). The deprecated keys
                   (<code>launchpad</code>, <code>launchpad-mprage-only</code>)
                   are never shown in the selector and are not supported.
-                  Use LOCAL - Current for routine processing.
+                  Use Center Standard — MLSC for routine processing; Local
+                  MATLAB remains available as an alternate.
                 </td>
               </tr>
               <tr>

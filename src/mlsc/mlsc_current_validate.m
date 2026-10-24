@@ -5,7 +5,8 @@ function varargout = mlsc_current_validate(action, varargin)
 %   catalog, no dynamic discovery, no MCR 7.11 fallback, no workstation
 %   inference, no latest/current-label authority, and no submitting-MATLAB
 %   substitute. The only accepted MCR_ROOT is the pinned version-specific
-%   tree /usr/pubsw/common/matlab/26.1 (never the current symlink). The
+%   tree /usr/pubsw/common/matlab/7.11 (R2010b, containing MCR 7.14; never
+%   the current symlink). The
 %   generated launcher owns the Runtime environment; this file never
 %   constructs a global LD_LIBRARY_PATH.
 %
@@ -15,75 +16,50 @@ function varargout = mlsc_current_validate(action, varargin)
 %     MLSC_CURRENT_VALIDATE('validate_contract', CONFIG)
 %       Fail-closed pre-submission contract: missing runner/MCR_ROOT/
 %       manifests, malformed MCR_ROOT structure, validated actual MCR_ROOT
-%       identity from disk (VersionInfo.xml proving R2026a/26.1/glnxa64,
-%       never assumed constants), identity/arch/release/
-%       generation/update mismatch, missing outputs contract. Allows the
-%       T007-pending native marker offline (production loadability comes
-%       later); any other native marker is rejected as unknown.
+%       identity from the exact MATLAB 7.11 install root containing MCR 7.14,
+%       identity/arch/release/
+%       generation/update mismatch, missing outputs contract. No native
+%       certification check remains in this active dev path (T009
+%       remediation): legacy native fields and simplified manifests omitting
+%       them are both accepted; the payload enforces actual file existence.
 %     MLSC_CURRENT_VALIDATE('validate_for_execution', CONFIG)
-%       Same as contract plus production gate: a separately finalized
-%       structured Gate-A record (config.current.gate_a_record, schema
-%       pseudo-CT.mlsc-current-gate-a/v1, minted by mlsc_finalize_gate_a
-%       AFTER a human-authorized Gate-A run) must exist and bind exactly
-%       the referenced candidate: schema/generation, recomputed SHA-256
-%       of runner/exe/build/resource manifests, source-provenance
-%       fingerprint plus base HEAD, pinned MCR_ROOT with disk-validated
-%       release/version/update/numeric/arch, every native identity plus
-%       per-native pass, launcher/library pass, PREPARE/COMPUTE pass and
-%       overall pass. Missing/malformed/unknown-schema records,
-%       mismatched bindings, missing or failed natives, and foreign
-%       records (minted for another candidate) stay blocked. Pending and
-%       no-record stay blocked without a Gate-A run. Never marks pending
-%       as validated. Arbitrary native_validation strings (including any
-%       legacy validated-marker strings) are rejected; the resource
-%       manifest keeps the pending marker because finalization binds but
-%       never rewrites manifests or provenance.
+%       Same as contract. The former Gate-A execution requirement was
+%       removed from this active dev path (T009 remediation): no Gate-A
+%       record is required or consulted here. MCR/build/output/copy-back
+%       enforcement is unchanged.
 %     INFO = MLSC_CURRENT_VALIDATE('gate_a_schema')
 %       Returns the exact expected Gate-A record schema string.
 %     MLSC_CURRENT_VALIDATE('structure', MCR_ROOT)
 %       Malformed-structure guard for one MCR_ROOT path (dir plus
 %       runtime/glnxa64). Used by contract and directly by offline fixtures.
 %     INFO = MLSC_CURRENT_VALIDATE('expected_actual')
-%       Returns the pinned actual identity (release R2026a, update 2,
-%       mcr_version [26 1], arch glnxa64, generation 26.1) used for
-%       update/release/arch/generation comparison after disk validation.
+%       Returns the pinned MATLAB root/MCR 7.14 identity (arch glnxa64).
 %       Callers must not treat these constants as proof without the
-%       disk-backed actual-identity check in local_validate_build.
+%       root/library check in local_validate_build.
 %     INFO = MLSC_CURRENT_VALIDATE('actual_identity', MCR_ROOT)
-%       Returns the disk-validated actual MCR_ROOT identity (same fields
-%       as expected_actual) after proving VersionInfo.xml content.
-%       Fails closed when metadata is missing or mismatched.
+%       Returns the disk-validated actual MCR_ROOT identity after proving
+%       the exact MATLAB 7.11 root and architecture-specific MCR 7.14 library.
 %
 %   Build manifest (.mat, scalar struct BUILD):
 %     schema 'pseudo-CT.mlsc-current-build/v1', manifest_version 1,
 %     runner (historic build path; relocated installs bind by basename
 %     plus recomputed SHA-256, provenance preserved separately),
-%     mcr_root (pinned), release (R-prefixed), update_minimum,
+%     mcr_root (pinned MCR, separate from MATLAB matlabroot), compiler
+%     release (R-prefixed), update_minimum,
 %     mcr_version [major minor], arch, generation, runner_checksum
 %     (SHA-256), source_commit (base HEAD),
 %     source_provenance_fingerprint (SHA-256 over commit plus
 %     tracked/untracked lists), required_outputs (canonical 3).
 %   Resource manifest (.mat, scalar struct RESOURCES):
 %     schema 'pseudo-CT.mlsc-current-resources/v1', manifest_version 1
-%     (T003 authority; fingerprints/TPM/QC/natives validated by payload).
-%     Contract checks existence/schema/version plus native platform/arch
-%     and the exact pending marker; execution additionally requires the
-%     separate Gate-A record below. Detailed atlas/fingerprint checks
-%     stay in mlsc_current_payload (no duplicated science).
-%   Gate-A record (.mat, scalar struct GATE_A, separate from manifests):
-%     schema 'pseudo-CT.mlsc-current-gate-a/v1', manifest_version 1,
-%     source_commit plus source_provenance_fingerprint, pinned mcr_root,
-%     release/version/update_minimum/update_actual/mcr_version/arch/
-%     generation, runner plus runner_checksum, build_exe plus
-%     build_exe_checksum (relocated executable is the sibling of the
-%     current runner sharing the historic exe basename, bound by hash),
-%     build_manifest plus build_manifest_checksum,
-%     resource_manifest plus resource_manifest_checksum, native_names/
-%     native_paths/native_checksums/native_results, launcher_result,
-%     runtime_lib_result, prepare_result, compute_result, overall_result.
-%     Minted only by mlsc_finalize_gate_a from the exact Gate-A candidate
-%     plus observed Gate-A evidence; fixtures are test-only and unusable
-%     as production evidence.
+%     (T003 authority; atlas/resource existence validated by payload).
+%     Contract checks existence/schema/version only; legacy native fields
+%     are ignored when present and required of nothing. Detailed
+%     atlas/resource existence checks stay in mlsc_current_payload
+%     (no duplicated science).
+%   Gate-A record tooling (mlsc_finalize_gate_a, 'gate_a_schema') is
+%   retained only as inert reference: nothing in this active dev path
+%   requires, mints, or consults a Gate-A record.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -180,7 +156,7 @@ error('pseudo_CT:MLSCCurrentContract', ...
 end
 
 function pinned = local_pinned_mcr_root()
-pinned = '/usr/pubsw/common/matlab/26.1';
+pinned = '/usr/pubsw/common/matlab/7.11';
 end
 
 function flag = local_is_current(config)
@@ -207,23 +183,20 @@ end
 
 function actual = local_expected_actual()
 actual = struct();
-actual.release = 'R2026a';
-actual.update = 2;
-actual.mcr_version = [26 1];
+actual.release = 'R2010b';
+actual.update = 0;
+actual.mcr_version = [7 14];
 actual.arch = 'glnxa64';
-actual.generation = '26.1';
-actual.version = '26.1.0.3251617';
+actual.generation = '7.14';
+actual.version = '7.14';
 end
 
 function actual = local_actual_runtime_identity(mcr_root)
 %LOCAL_ACTUAL_RUNTIME_IDENTITY Disk-validated MCR_ROOT identity.
-%   Parses ACTUAL installation metadata from VersionInfo.xml beneath
-%   MCR_ROOT (authoritative): release (e.g. R2026a), full version/build
-%   (e.g. 26.1.0.3251617), update (numeric, e.g. 2), arch/platform
-%   (glnxa64). Folder names never prove identity; dir-name inference is
-%   forbidden. Unknown/malformed/unreadable/absent metadata fails closed.
-%   Release, full version/build, numeric mcrversion, and runtime-lib
-%   identity are kept distinct (see local_parse_version_info). No catalog.
+%   Validate the explicit MATLAB R2010b installation root and the required
+%   MCR 7.14 runtime installed beneath it.
+%   MATLAB installation metadata is not Runtime metadata: in particular,
+%   R2010b's matlabroot/mcrversion must never be used to identify MCR 7.14.
 %   R2010b only.
 if ~ischar(mcr_root) || size(mcr_root, 1) ~= 1 || ...
         isempty(strtrim(mcr_root)) || any(mcr_root == char(0))
@@ -235,455 +208,31 @@ if exist(trimmed, 'dir') ~= 7
     error('pseudo_CT:MLSCCurrentMCR', ...
         'The current MCR_ROOT directory is unavailable.');
 end
-version_info = fullfile(trimmed, 'VersionInfo.xml');
-if exist(version_info, 'file') ~= 2
+local_validate_structure(trimmed);
+if ~strcmp(local_strip_sep(trimmed), local_pinned_mcr_root())
     error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT identity metadata is unavailable.');
+        'MATLAB root must be the explicit R2010b installation at %s.', ...
+        local_pinned_mcr_root());
 end
-content = '';
-try
-    fid = fopen(version_info, 'r');
-    if fid == -1
-        error('pseudo_CT:MLSCCurrentMCR', ...
-            'The current MCR_ROOT identity metadata is unreadable.');
-    end
-    raw = fread(fid, inf, '*char')';
-    fclose(fid);
-    content = raw;
-catch %#ok<CTCH>
-    try
-        fclose(fid);
-    catch %#ok<CTCH>
-    end
+runtime_lib = fullfile(trimmed, 'runtime', 'glnxa64', 'libmwmclmcrrt.so');
+if exist(runtime_lib, 'file') ~= 2
     error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT identity metadata is unreadable.');
+        'The MCR 7.14 runtime library under the pinned MATLAB root is unavailable.');
 end
-if ~ischar(content) || isempty(strtrim(content))
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT identity metadata is malformed.');
-end
-parsed = local_parse_version_info(content);
-% Architecture/platform: VersionInfo.xml is authoritative when it carries
-% an arch/platform tag (must equal glnxa64); otherwise the
-% runtime/glnxa64 structure guard proves the platform. Either way the
-% directory name alone never proves release/update/version.
-arch_from_disk = parsed.arch;
-if isempty(arch_from_disk)
-    runtime_glnxa64 = fullfile(trimmed, 'runtime', 'glnxa64');
-    if exist(runtime_glnxa64, 'dir') ~= 7
-        error('pseudo_CT:MLSCCurrentMCR', ...
-            'The current MCR_ROOT architecture is unknown.');
-    end
-    arch_from_disk = 'glnxa64';
-else
-    if ~strcmp(arch_from_disk, 'glnxa64')
-        error('pseudo_CT:MLSCCurrentMCR', ...
-            'The current MCR_ROOT architecture is mismatched.');
-    end
-    runtime_glnxa64 = fullfile(trimmed, 'runtime', 'glnxa64');
-    if exist(runtime_glnxa64, 'dir') ~= 7
-        error('pseudo_CT:MLSCCurrentMCR', ...
-            'The current MCR_ROOT structure is malformed.');
-    end
-end
+parsed = local_expected_actual();
 actual = struct();
 actual.release = parsed.release;
 actual.version = parsed.version;
 actual.update = parsed.update;
 actual.mcr_version = parsed.mcr_version;
-actual.arch = arch_from_disk;
+actual.arch = parsed.arch;
 actual.generation = parsed.generation;
-end
-
-function parsed = local_parse_version_info(content)
-%LOCAL_PARSE_VERSION_INFO Parse ACTUAL metadata from VersionInfo.xml text.
-%   Returns release/version/update/mcr_version/arch/generation with
-%   release vs full version/build vs numeric mcrversion vs runtime-lib kept
-%   distinct. Fails closed on unknown/malformed/absent fields. R2010b only.
-parsed = struct('release', '', 'version', '', 'update', -1, ...
-    'mcr_version', [], 'arch', '', 'generation', '');
-if ~ischar(content) || size(content, 1) ~= 1 || isempty(strtrim(content))
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT identity metadata is malformed.');
-end
-% Release: explicit <release>R2026a</release> (case-insensitive tag).
-release_tok = regexp(content, '<\s*release\s*>\s*(R[0-9]{4}[ab])\s*<\s*/\s*release\s*>', ...
-    'tokens', 'once', 'ignorecase');
-if isempty(release_tok) || isempty(release_tok{1})
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT release identity is unknown.');
-end
-release_text = strtrim(release_tok{1});
-if isempty(regexp(release_text, '^R[0-9]{4}[ab]$', 'once'))
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT release identity is malformed.');
-end
-parsed.release = release_text;
-% Full version/build: explicit <version>26.1.0.3251617</version>.
-version_tok = regexp(content, '<\s*version\s*>\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\s*<\s*/\s*version\s*>', ...
-    'tokens', 'once', 'ignorecase');
-if isempty(version_tok) || isempty(version_tok{1})
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT version identity is unknown.');
-end
-version_text = strtrim(version_tok{1});
-parts = regexp(version_text, '^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$', ...
-    'tokens', 'once');
-if isempty(parts)
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT version identity is malformed.');
-end
-parsed.version = version_text;
-major_v = str2double(parts{1});
-minor_v = str2double(parts{2});
-if ~isfinite(major_v) || ~isfinite(minor_v)
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT version identity is malformed.');
-end
-% Numeric mcrversion is [major minor] derived from the full version, kept
-% distinct from the full version/build string and from the update level.
-parsed.mcr_version = [double(major_v) double(minor_v)];
-parsed.generation = sprintf('%d.%d', double(major_v), double(minor_v));
-% Update: numeric level from explicit update tags or 'Update N' text.
-% Supports <update>2</update>, <update>Update 2</update>,
-% <update_level>Update 2</update_level>, <Update>Update 2</Update>.
-update_value = -1;
-update_tok = regexp(content, '<\s*update[^>]*>\s*([^<]*)\s*<\s*/\s*update[^>]*>', ...
-    'tokens', 'once', 'ignorecase');
-if ~isempty(update_tok) && ~isempty(strtrim(update_tok{1}))
-    update_text = strtrim(update_tok{1});
-    % Bare integer inside update tags.
-    if ~isempty(regexp(update_text, '^[0-9]+$', 'once'))
-        update_value = str2double(update_text);
-    else
-        num_tok = regexp(update_text, 'Update[^0-9]*([0-9]+)', ...
-            'tokens', 'once', 'ignorecase');
-        if ~isempty(num_tok)
-            update_value = str2double(num_tok{1});
-        end
-    end
-end
-if update_value < 0 || ~isfinite(update_value)
-    % Fallback: any 'Update N' text in the document (still explicit).
-    num_tok = regexp(content, 'Update[^0-9]*([0-9]+)', ...
-        'tokens', 'once', 'ignorecase');
-    if ~isempty(num_tok)
-        update_value = str2double(num_tok{1});
-    end
-end
-if update_value < 0 || ~isfinite(update_value) || ...
-        update_value ~= floor(update_value)
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The current MCR_ROOT update identity is unknown.');
-end
-parsed.update = double(update_value);
-% Arch/platform: explicit tag when present (<arch>, <platform>,
-% <architecture>). Absent is allowed here (structure guard proves it);
-% present-but-wrong fails in the caller. Never infer from dir names.
-arch_text = '';
-arch_tok = regexp(content, '<\s*(arch|platform|architecture)\s*>\s*([A-Za-z0-9_.-]+)\s*<\s*/\s*\1\s*>', ...
-    'tokens', 'once', 'ignorecase');
-if ~isempty(arch_tok) && length(arch_tok) >= 2 && ~isempty(strtrim(arch_tok{2}))
-    arch_text = strtrim(arch_tok{2});
-end
-parsed.arch = arch_text;
-end
-
-function marker = local_pending_native_marker()
-marker = 't007-gate-a-pending: existence-only; production loadability evidence comes later';
 end
 
 function schema = local_gate_a_schema()
 schema = 'pseudo-CT.mlsc-current-gate-a/v1';
 end
 
-function local_validate_gate_a_record(current, build, resources)
-%LOCAL_VALIDATE_GATE_A_RECORD Strict structured Gate-A record gate.
-%   The record is a separate immutable .mat (variable gate_a) minted only
-%   by mlsc_finalize_gate_a from the exact Gate-A candidate plus observed
-%   Gate-A evidence; it binds but never rewrites manifests or provenance.
-%   Every binding is recomputed from disk here: schema/generation,
-%   runner/exe/build/resource SHA-256, source-provenance fingerprint plus
-%   base HEAD, pinned MCR_ROOT with disk-validated release/version/update/
-%   numeric/arch, every native identity plus per-native pass, launcher and
-%   library pass, PREPARE/COMPUTE pass, overall pass. Missing, malformed,
-%   unknown-schema, mismatched, missing/failed-native, and foreign records
-%   fail closed. No basename/size fallback, no legacy/catalog/resolver.
-%   Structural record problems raise MLSCCurrentManifest; failed production
-%   evidence raises MLSCCurrentNativeEvidence. R2010b only.
-if ~isfield(current, 'gate_a_record') || ~ischar(current.gate_a_record) || ...
-        size(current.gate_a_record, 1) ~= 1 || ...
-        isempty(strtrim(current.gate_a_record)) || ...
-        any(current.gate_a_record == char(0))
-    error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-        'The Gate-A record is absent; real execution is blocked.');
-end
-record_path = strtrim(current.gate_a_record);
-if exist(record_path, 'file') ~= 2
-    error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-        'The Gate-A record is unavailable; real execution is blocked.');
-end
-loaded = load(record_path);
-if ~isfield(loaded, 'gate_a')
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record %s is missing variable gate_a.', record_path);
-end
-record = loaded.gate_a;
-if ~isstruct(record) || numel(record) ~= 1
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record %s variable gate_a must be one scalar struct.', ...
-        record_path);
-end
-if ~isfield(record, 'schema') || ~ischar(record.schema) || ...
-        size(record.schema, 1) ~= 1 || ...
-        ~strcmp(record.schema, local_gate_a_schema())
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record %s has an unexpected schema.', record_path);
-end
-if ~isfield(record, 'manifest_version') || ...
-        ~isnumeric(record.manifest_version) || ...
-        ~isscalar(record.manifest_version) || record.manifest_version ~= 1
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record %s has an unsupported version.', record_path);
-end
-required = {'source_commit'; 'source_provenance_fingerprint'; ...
-    'mcr_root'; 'release'; 'version'; 'update_minimum'; ...
-    'update_actual'; 'mcr_version'; 'arch'; 'generation'; ...
-    'runner'; 'runner_checksum'; 'build_exe'; 'build_exe_checksum'; ...
-    'build_manifest'; 'build_manifest_checksum'; ...
-    'resource_manifest'; 'resource_manifest_checksum'; ...
-    'native_names'; 'native_paths'; 'native_checksums'; ...
-    'native_results'; 'launcher_result'; 'runtime_lib_result'; ...
-    'prepare_result'; 'compute_result'; 'overall_result'};
-for ii = 1:length(required)
-    if ~isfield(record, required{ii})
-        error('pseudo_CT:MLSCCurrentManifest', ...
-            'Gate-A record is missing field %s.', required{ii});
-    end
-end
-% Provenance binding: base HEAD plus fingerprint must equal the build
-% manifest (finalization binds, never rewrites).
-if ~ischar(record.source_commit) || size(record.source_commit, 1) ~= 1 || ...
-        ~strcmp(strtrim(record.source_commit), strtrim(build.source_commit))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record source commit does not match the build manifest.');
-end
-if ~local_is_valid_sha256(record.source_provenance_fingerprint) || ...
-        ~strcmp(lower(strtrim(record.source_provenance_fingerprint)), ...
-        lower(strtrim(build.source_provenance_fingerprint)))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record provenance does not match the build manifest.');
-end
-% Runtime binding: pinned root with disk-validated actual identity.
-pinned = local_pinned_mcr_root();
-if ~ischar(record.mcr_root) || size(record.mcr_root, 1) ~= 1 || ...
-        ~strcmp(local_strip_sep(strtrim(record.mcr_root)), pinned)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record MCR_ROOT does not match the pinned %s.', pinned);
-end
-actual = local_actual_runtime_identity(strtrim(current.mcr_root));
-if ~ischar(record.release) || size(record.release, 1) ~= 1 || ...
-        ~strcmp(strtrim(record.release), actual.release)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record release is incompatible (expected %s).', ...
-        actual.release);
-end
-if ~ischar(record.version) || size(record.version, 1) ~= 1 || ...
-        ~strcmp(strtrim(record.version), actual.version)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record runtime version is incompatible.');
-end
-if ~isnumeric(record.update_minimum) || ~isscalar(record.update_minimum) || ...
-        record.update_minimum ~= build.update_minimum
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record update minimum does not match the build manifest.');
-end
-if ~isnumeric(record.update_actual) || ~isscalar(record.update_actual) || ...
-        ~isfinite(record.update_actual) || ...
-        record.update_actual ~= floor(record.update_actual) || ...
-        record.update_actual ~= actual.update
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record runtime update does not match the pinned runtime.');
-end
-if ~isnumeric(record.mcr_version) || numel(record.mcr_version) ~= 2 || ...
-        record.mcr_version(1) ~= actual.mcr_version(1) || ...
-        record.mcr_version(2) ~= actual.mcr_version(2)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record numeric runtime version is incompatible.');
-end
-if ~ischar(record.arch) || size(record.arch, 1) ~= 1 || ...
-        ~strcmp(strtrim(record.arch), actual.arch)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record architecture is incompatible.');
-end
-if ~ischar(record.generation) || size(record.generation, 1) ~= 1 || ...
-        ~strcmp(strtrim(record.generation), actual.generation)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record generation is incompatible.');
-end
-% File bindings: every identity recomputed from disk (SHA-256 mandatory).
-% Relocatable install: runner/build/resource/exe bind by content identity
-% (basename plus recomputed SHA-256), not by historical absolute paths.
-% Provenance attribution (source commit/fingerprint) is preserved and
-% compared exactly; only the directory prefix may differ after relocation.
-if ~ischar(record.runner) || size(record.runner, 1) ~= 1 || ...
-        isempty(strtrim(record.runner)) || ...
-        ~local_same_basename(strtrim(record.runner), strtrim(current.runner)) || ...
-        ~local_same_basename(strtrim(record.runner), strtrim(build.runner))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record runner does not match the current artifact.');
-end
-if ~local_is_valid_sha256(record.runner_checksum)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record runner checksum must be SHA-256.');
-end
-runner_actual = local_fingerprint(strtrim(current.runner));
-if isempty(runner_actual) || ...
-        ~strcmp(lower(strtrim(record.runner_checksum)), ...
-        lower(strtrim(runner_actual))) || ...
-        ~strcmp(lower(strtrim(build.runner_checksum)), ...
-        lower(strtrim(runner_actual)))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record runner identity does not match the runner file.');
-end
-if ~ischar(record.build_exe) || size(record.build_exe, 1) ~= 1 || ...
-        isempty(strtrim(record.build_exe))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record executable path is invalid.');
-end
-if ~local_is_valid_sha256(record.build_exe_checksum)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record executable checksum must be SHA-256.');
-end
-% Relocated executable: co-located with the current runner under the same
-% payload_build/ directory (installed layout), bound by content hash. The
-% historical absolute build path stays in the record for provenance but is
-% not required to exist after relocation.
-exe_here = local_relocated_exe(strtrim(current.runner), strtrim(record.build_exe));
-exe_actual = local_fingerprint(exe_here);
-if isempty(exe_actual) || ...
-        ~strcmp(lower(strtrim(record.build_exe_checksum)), ...
-        lower(strtrim(exe_actual)))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record executable identity does not match the file.');
-end
-if ~ischar(record.build_manifest) || size(record.build_manifest, 1) ~= 1 || ...
-        isempty(strtrim(record.build_manifest)) || ...
-        ~local_same_basename(strtrim(record.build_manifest), ...
-        strtrim(current.build_manifest))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record build manifest does not match the artifact.');
-end
-if ~local_is_valid_sha256(record.build_manifest_checksum)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record build manifest checksum must be SHA-256.');
-end
-build_actual = local_fingerprint(strtrim(current.build_manifest));
-if isempty(build_actual) || ...
-        ~strcmp(lower(strtrim(record.build_manifest_checksum)), ...
-        lower(strtrim(build_actual)))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record build manifest identity does not match the file.');
-end
-if ~ischar(record.resource_manifest) || ...
-        size(record.resource_manifest, 1) ~= 1 || ...
-        isempty(strtrim(record.resource_manifest)) || ...
-        ~local_same_basename(strtrim(record.resource_manifest), ...
-        strtrim(current.resource_manifest))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record resource manifest does not match the artifact.');
-end
-if ~local_is_valid_sha256(record.resource_manifest_checksum)
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record resource manifest checksum must be SHA-256.');
-end
-resource_actual = local_fingerprint(strtrim(current.resource_manifest));
-if isempty(resource_actual) || ...
-        ~strcmp(lower(strtrim(record.resource_manifest_checksum)), ...
-        lower(strtrim(resource_actual)))
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Gate-A record resource identity does not match the file.');
-end
-% Native bindings: every listed native recomputed, every result pass.
-if ~iscell(record.native_names) || isempty(record.native_names) || ...
-        ~iscell(record.native_paths) || ~iscell(record.native_checksums) || ...
-        ~iscell(record.native_results)
-    error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-        'Gate-A record native evidence is invalid.');
-end
-if numel(record.native_names) ~= numel(record.native_paths) || ...
-        numel(record.native_names) ~= numel(record.native_checksums) || ...
-        numel(record.native_names) ~= numel(record.native_results)
-    error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-        'Gate-A record native evidence is inconsistent.');
-end
-for ii = 1:numel(record.native_names)
-    name_here = record.native_names{ii};
-    path_here = record.native_paths{ii};
-    sum_here = record.native_checksums{ii};
-    result_here = record.native_results{ii};
-    if ~ischar(name_here) || size(name_here, 1) ~= 1 || ...
-            isempty(strtrim(name_here))
-        error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-            'Gate-A record native evidence is invalid.');
-    end
-    if ~ischar(result_here) || size(result_here, 1) ~= 1 || ...
-            ~strcmp(strtrim(result_here), 'pass')
-        error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-            'Gate-A native %s did not pass.', strtrim(name_here));
-    end
-    if ~ischar(path_here) || size(path_here, 1) ~= 1 || ...
-            isempty(strtrim(path_here)) || ...
-            ~local_is_valid_sha256(sum_here)
-        error('pseudo_CT:MLSCCurrentManifest', ...
-            'Gate-A record native identity is invalid.');
-    end
-    native_actual = local_fingerprint(strtrim(path_here));
-    if isempty(native_actual) || ...
-            ~strcmp(lower(strtrim(sum_here)), lower(strtrim(native_actual)))
-        error('pseudo_CT:MLSCCurrentManifest', ...
-            'Gate-A native %s identity does not match the file.', ...
-            strtrim(name_here));
-    end
-end
-if isfield(resources, 'native_names') && iscell(resources.native_names) && ...
-        ~isempty(resources.native_names)
-    for ii = 1:numel(resources.native_names)
-        required_name = resources.native_names{ii};
-        if ~ischar(required_name) || size(required_name, 1) ~= 1
-            continue;
-        end
-        covered = false;
-        for jj = 1:numel(record.native_names)
-            entry = record.native_names{jj};
-            result_entry = record.native_results{jj};
-            if ischar(entry) && size(entry, 1) == 1 && ...
-                    strcmp(strtrim(entry), strtrim(required_name)) && ...
-                    ischar(result_entry) && ...
-                    strcmp(strtrim(result_entry), 'pass')
-                covered = true;
-                break;
-            end
-        end
-        if ~covered
-            error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-                'Gate-A record is missing native %s.', ...
-                strtrim(required_name));
-        end
-    end
-end
-% Observed Gate-A run evidence: every gate must report pass.
-evidence_fields = {'launcher_result'; 'runtime_lib_result'; ...
-    'prepare_result'; 'compute_result'; 'overall_result'};
-for ii = 1:length(evidence_fields)
-    value = record.(evidence_fields{ii});
-    if ~ischar(value) || size(value, 1) ~= 1 || ...
-            ~strcmp(strtrim(value), 'pass')
-        error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-            'Gate-A %s did not pass.', evidence_fields{ii});
-    end
-end
-end
 
 function value = local_strip_sep(value)
 value = strtrim(value);
@@ -725,37 +274,6 @@ catch %#ok<CTCH>
 end
 end
 
-function exe_path = local_relocated_exe(current_runner, record_exe)
-%LOCAL_RELOCATED_EXE Sibling executable for relocatable installs (R2010b).
-%   The installed layout keeps mlsc_current_payload alongside its launcher
-%   under payload_build/. Returns fullfile(runner_dir, historic_basename)
-%   so relocated copies bind by content hash; the historic absolute path is
-%   provenance only and need not exist after relocation. Both inputs must be
-%   absolute; relative exe paths never resolve.
-exe_path = '';
-try
-    trimmed_runner = strtrim(current_runner);
-    trimmed_exe = strtrim(record_exe);
-    if isempty(trimmed_runner) || isempty(trimmed_exe)
-        return;
-    end
-    if trimmed_runner(1) ~= '/' || trimmed_exe(1) ~= '/'
-        return;
-    end
-    [~, exe_base, exe_ext] = fileparts(trimmed_exe);
-    exe_name = [exe_base exe_ext];
-    if isempty(strtrim(exe_name))
-        return;
-    end
-    [runner_dir, ~, ~] = fileparts(trimmed_runner);
-    if isempty(strtrim(runner_dir))
-        return;
-    end
-    exe_path = fullfile(runner_dir, exe_name);
-catch %#ok<CTCH>
-    exe_path = '';
-end
-end
 
 function local_validate_contract(config, for_execution)
 if ~isstruct(config) || numel(config) ~= 1
@@ -788,7 +306,7 @@ for ii = 1:length(text_fields)
             'The current artifact %s is invalid.', text_fields{ii});
     end
 end
-% Pinned exactness: version-specific 26.1 only. Rejects current symlink,
+% Pinned exactness: explicit MATLAB 7.11 installation root only. Rejects current symlink,
 % MCR 7.11, latest/current labels, workstation inference, and any other
 % substituted root by string inequality (no dynamic discovery).
 pinned = local_pinned_mcr_root();
@@ -812,23 +330,15 @@ end
 build = local_load_scalar(current.build_manifest, 'build', ...
     'pseudo-CT.mlsc-current-build/v1');
 local_validate_build(build, current);
-resources = local_load_scalar(current.resource_manifest, 'resources', ...
+% Resource manifest: existence plus scalar schema/version only. T009
+% remediation removed every native certification check (pending marker,
+% platform/arch, native inventory, build/resource arch compatibility) and
+% the Gate-A execution requirement from this active dev path: manifests
+% carrying legacy native fields and simplified manifests omitting them are
+% both accepted here. The payload enforces actual file existence; output
+% and copy-back verification below are unchanged.
+local_load_scalar(current.resource_manifest, 'resources', ...
     'pseudo-CT.mlsc-current-resources/v1');
-local_validate_resources_contract(resources, for_execution, current, build);
-% Build/resource compatibility: native platform/arch must equal the build
-% arch so a mismatched resource set cannot satisfy the artifact contract.
-if isfield(resources, 'native_platform') && ischar(resources.native_platform)
-    if ~strcmp(strtrim(resources.native_platform), strtrim(build.arch))
-        error('pseudo_CT:MLSCCurrentManifest', ...
-            'Build and resource architecture are incompatible.');
-    end
-end
-if isfield(resources, 'native_arch') && ischar(resources.native_arch)
-    if ~strcmp(strtrim(resources.native_arch), strtrim(build.arch))
-        error('pseudo_CT:MLSCCurrentManifest', ...
-            'Build and resource architecture are incompatible.');
-    end
-end
 end
 
 function local_validate_structure(mcr_root)
@@ -906,9 +416,11 @@ if ~ischar(build.mcr_root) || size(build.mcr_root, 1) ~= 1 || ...
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Build manifest MCR_ROOT does not match the pinned %s.', pinned);
 end
-% Actual Runtime identity comes from disk metadata, never from assumed
-% constants alone: prove the pinned tree is R2026a/26.1/glnxa64 before
-% comparing the build manifest to it.
+% Runtime identity is proved by the exact MATLAB 7.11 install root, its
+% architecture-specific runtime library, and separate MCR version 7.14
+% metadata (MCR 7.14 does not ship the newer
+% VersionInfo.xml metadata). The compiler release is separate: an R2010b
+% MATLAB install can produce a payload deployed against MCR 7.14.
 actual = local_actual_runtime_identity(strtrim(current.mcr_root));
 if ~ischar(build.release) || size(build.release, 1) ~= 1 || ...
         isempty(strtrim(build.release))
@@ -917,7 +429,7 @@ if ~ischar(build.release) || size(build.release, 1) ~= 1 || ...
 end
 if ~strcmp(strtrim(build.release), actual.release)
     error('pseudo_CT:MLSCCurrentManifest', ...
-        'Build manifest release is incompatible (expected %s).', ...
+        'Build manifest compiler release does not match pinned %s.', ...
         actual.release);
 end
 if ~isnumeric(build.update_minimum) || ~isscalar(build.update_minimum) || ...
@@ -927,8 +439,9 @@ if ~isnumeric(build.update_minimum) || ~isscalar(build.update_minimum) || ...
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Build manifest update_minimum is invalid.');
 end
-% Same release: actual pinned update must be >= build minimum. Same update
-% preferred, newer same-release update compatible, older actual fails.
+% This Runtime installation does not publish update metadata. Keep the
+% manifest field well-formed, but do not compare it to MATLAB's compiler
+% update (that would confuse the install root with the deployed Runtime).
 if actual.update < build.update_minimum
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Build manifest update minimum is not satisfied by the pinned runtime.');
@@ -1014,59 +527,6 @@ for ii = 1:length(expected_outputs)
 end
 end
 
-function local_validate_resources_contract(resources, for_execution, current, build)
-if ~isfield(resources, 'native_platform')
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Resource manifest is missing native_platform.');
-end
-if ~isfield(resources, 'native_arch')
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Resource manifest is missing native_arch.');
-end
-if ~isfield(resources, 'native_validation')
-    error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-        'Resource manifest is missing native_validation.');
-end
-if ~ischar(resources.native_platform) || ...
-        ~strcmp(strtrim(resources.native_platform), 'glnxa64')
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Resource manifest platform is incompatible.');
-end
-if ~ischar(resources.native_arch) || ...
-        ~strcmp(strtrim(resources.native_arch), 'glnxa64')
-    error('pseudo_CT:MLSCCurrentManifest', ...
-        'Resource manifest architecture is incompatible.');
-end
-if ~ischar(resources.native_validation) || ...
-        size(resources.native_validation, 1) ~= 1 || ...
-        isempty(strtrim(resources.native_validation))
-    error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-        'Resource manifest native validation is invalid.');
-end
-pending = local_pending_native_marker();
-if for_execution
-    % Production gate: manifests stay immutable, so the pending marker is
-    % t007-gate-a-pending marker is
-    % still required AND the separate Gate-A record must bind this exact
-    % candidate. Pending alone, no record, or any failing binding stays
-    % blocked without a Gate-A run. Arbitrary strings (including any
-    % legacy validated-marker string) are rejected here.
-    if ~strcmp(strtrim(resources.native_validation), pending)
-        error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-            'Resource manifest native validation is unknown.');
-    end
-    local_validate_gate_a_record(current, build, resources);
-else
-    % Contract gate: pending is the expected offline state. Any
-    % non-pending value (including arbitrary legacy validated-marker
-    % strings) is unknown and rejected now; unknown evidence never
-    % reaches execution.
-    if ~strcmp(strtrim(resources.native_validation), pending)
-        error('pseudo_CT:MLSCCurrentNativeEvidence', ...
-            'Resource manifest native validation is unknown.');
-    end
-end
-end
 
 function text = local_fingerprint(path_text)
 %LOCAL_FINGERPRINT SHA-256 content identity for the runner (B4B).

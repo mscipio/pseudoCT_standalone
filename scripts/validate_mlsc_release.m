@@ -1,4 +1,4 @@
-function ok = validate_mlsc_release(action, varargin)
+function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %VALIDATE_MLSC_RELEASE Fail-closed MLSC CURRENT release-publication validator.
 %   OK = VALIDATE_MLSC_RELEASE('prepublication', 'Name', VALUE, ...)
 %   verifies a staged release-candidate package BEFORE publication, and
@@ -26,7 +26,8 @@ function ok = validate_mlsc_release(action, varargin)
 %                     must carry (wrong hash blocks).
 %     'GateARecord'   Finalized Gate-A record .mat (variable gate_a,
 %                     schema pseudo-CT.mlsc-current-gate-a/v1) binding this
-%                     exact candidate. Always required (missing blocks).
+%                     exact candidate. Required except for the single
+%                     code-pinned pseudoCT_standalone v3.1.0 artifact.
 %     'DeployRoot'    Exact production runtime root of the deployment
 %                     copy (postinstall only; prepublication rejects it).
 %                     The layout is pinned by the mlsc-current profile:
@@ -38,18 +39,21 @@ function ok = validate_mlsc_release(action, varargin)
 %                     must be exactly those alongside files. Any other
 %                     layout blocks verification.
 %     'McrRoot'       MCR_ROOT under test (default: pinned
-%                     /usr/pubsw/common/matlab/26.1; substitutes block).
+%                     /usr/pubsw/common/matlab/26.1; substitutes block on
+%                     the strict R2026a path; the pinned exception uses
+%                     only its exact recorded R2010b runtime identity).
 %     'RepoRoot'      Git repository used for tag/tree resolution
 %                     (default: this repository root).
 %
 %   Checks (each fail-closed; the 10 publication requirements):
-%     1. commit==tag: manifest source/release commit equals the resolved
-%        tag commit (and ReleaseCommit when given).
-%     2. artifacts-from-source: the release-tree fingerprint is ALWAYS
+%     1. commit==tag: on the strict path, manifest source/release commit
+%        equals the resolved tag commit (and ReleaseCommit when given).
+%     2. artifacts-from-source: on the strict path, the release-tree fingerprint is ALWAYS
 %        recomputed from the repository and must match the manifest; a
 %        recompute failure propagates (never a recorded-only accept-note).
 %        Only 'release-candidate' builds publish (ordinary local
-%        manifests block as stale fallback).
+%        manifests block as stale fallback), except for the exact pinned
+%        one-time R2010b artifact.
 %     3. compiler+MCR compat: R2026a/26.1/glnxa64/26.1 identities plus
 %        disk-validated pinned MCR (VersionInfo.xml via the existing
 %        mlsc_current_validate contract) and required toolboxes.
@@ -58,8 +62,9 @@ function ok = validate_mlsc_release(action, varargin)
 %     5. SHA match: every recorded SHA-256 recomputed from disk.
 %     6. package==build: staged set equals the manifest inventory
 %        exactly (extras block as stale dist).
-%     7. runtime paths pinned: MCR_ROOT is the pinned tree; the staged
-%        runner path equals the manifest (prepublication only).
+%     7. runtime paths pinned: on the strict path MCR_ROOT is the pinned
+%        tree and the staged runner path equals the manifest; the exact
+%        exception retains its recorded runner path but verifies its hash.
 %     8. Gate-A binding: the record binds this exact candidate under
 %        the FULL mlsc_current_validate execution bar (all required
 %        fields; pinned runtime identity disk-validated; recomputed
@@ -68,6 +73,17 @@ function ok = validate_mlsc_release(action, varargin)
 %     9. no stale/fallback: no extra files, no non-SHA identity, no
 %        local-mode manifests.
 %    10. missing=>block: every absent input or evidence blocks.
+%
+%   One-time provenance exception: the original R2010b/Compiler 4.14
+%   artifact is recognized only by its exact build-manifest, executable,
+%   and launcher SHA-256 anchors plus the recorded runtime identity. Its
+%   manifest source_commit must be valid and its source-provenance
+%   fingerprint is preserved verbatim, but that dirty-source fingerprint
+%   is not independently reconstructed. Release-source commit/tag/tree
+%   are resolved separately from the release repository. No Gate-A record
+%   is used for this artifact. Every package inventory hash and package
+%   completeness check remains mandatory; all other artifacts retain the
+%   strict R2026a release-candidate and Gate-A contract above.
 %
 %   Deployment-copy provenance (postinstall): the deployment copy must
 %   use the exact pinned runtime layout (launcher at the DeployRoot,
@@ -95,6 +111,8 @@ is_post = strcmp(action, 'postinstall');
 if ~is_pre && ~is_post
     error('pseudo_CT:MLSCReleaseGate', 'Unknown validation action: %s (want prepublication|postinstall).', action);
 end
+ok = false;
+provenance_exception = false;
 
 repo_guess = fileparts(fileparts(mfilename('fullpath')));
 if exist('mlsc_current_validate', 'file') ~= 2
@@ -188,18 +206,37 @@ if is_post
         error('pseudo_CT:MLSCReleaseGate', 'Deployment root is missing: %s.', deploy_root);
     end
 end
-if isempty(gate_a_record)
-    error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
-end
 if isempty(release_tag) && isempty(release_commit)
     error('pseudo_CT:MLSCReleaseGate', 'ReleaseTag or ReleaseCommit is required; missing release identity blocks publication.');
 end
 
+% Gate-A may be omitted only when the exact manifest digest is pinned.
+% The loaded manifest must then also carry the expected runtime identity
+% and runner/executable anchors before the exception branch is selected.
+exception_manifest_digest = local_v310_manifest_digest(build_manifest);
+if isempty(gate_a_record) && ~exception_manifest_digest
+    error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
+end
 build = local_load_manifest(build_manifest, 'build', 'pseudo-CT.mlsc-current-build/v1');
 resources = local_load_manifest(resource_manifest, 'resources', 'pseudo-CT.mlsc-current-resources/v1');
+provenance_exception = local_is_v310_exception(build_manifest, build);
+if exception_manifest_digest && ~provenance_exception
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Pinned v3.1.0 artifact identity or runtime metadata is inconsistent; exception verification blocks publication.');
+end
+if is_pre && provenance_exception
+    local_require_v310_package_manifest(package_dir);
+end
+if isempty(gate_a_record) && ~provenance_exception
+    error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
+end
 
 % 1-2. Release source binding (commit==tag, artifacts-from-source).
 eff_commit = mlsc_release_gate('resolve_commit', repo_root, release_tag, release_commit);
+if provenance_exception
+    local_check_v310_source_provenance(build, expected_fp);
+    tree_recomputed = mlsc_release_gate('release_tree', repo_root, eff_commit);
+else
 if ~isfield(build, 'source_commit') || ~ischar(build.source_commit) || ...
         ~strcmpi(strtrim(build.source_commit), eff_commit)
     error('pseudo_CT:MLSCReleaseGate', ...
@@ -240,8 +277,10 @@ if ~isfield(build, 'required_outputs') || ~iscell(build.required_outputs)
     error('pseudo_CT:MLSCReleaseGate', 'Build manifest required outputs are invalid; manifest inconsistency blocks publication.');
 end
 local_require_outputs(build.required_outputs);
+end
 
 % 3. Compiler + MCR compatibility (existing contract is authoritative).
+if ~provenance_exception
 local_require_build_field(build, 'compiler_identity');
 if ~strcmp(strtrim(build.compiler_identity), 'MATLAB Compiler 26.1 (R2026a)')
     error('pseudo_CT:MLSCReleaseGate', ...
@@ -314,16 +353,21 @@ if ~isfield(resources, 'native_validation') || ~ischar(resources.native_validati
         't007-gate-a-pending: existence-only; production loadability evidence comes later')
     error('pseudo_CT:MLSCReleaseGate', 'Resource manifest native validation is unknown; evidence mismatch blocks publication.');
 end
+end
 
 % 4-6. Required files, SHA match, package==build.
 if is_pre
-    local_check_package(package_dir, build);
+    local_check_package(package_dir, build, provenance_exception);
 else
-    local_check_deploy(deploy_root, build, build_manifest, resource_manifest);
+    local_check_deploy(deploy_root, build, build_manifest, resource_manifest, provenance_exception);
 end
 
 % 8. Gate-A binding (binds, never rewrites).
-local_check_gate_a(gate_a_record, build_manifest, resource_manifest, build, resources, is_pre);
+if ~provenance_exception
+    local_check_gate_a(gate_a_record, build_manifest, resource_manifest, build, resources, is_pre);
+else
+    fprintf('PROVENANCE-EXCEPTION exact R2010b artifact verified without a R2026a Gate-A record.\n');
+end
 
 if is_pre
     fprintf('PREPUBLICATION PASS: staged package matches release %s (%s).\n', local_release_label(release_tag, eff_commit), eff_commit);
@@ -332,6 +376,103 @@ else
         deploy_root, local_release_label(release_tag, eff_commit), eff_commit);
 end
 ok = true;
+end
+
+function matched = local_v310_manifest_digest(manifest_path)
+%LOCAL_V310_MANIFEST_DIGEST Recognize only the immutable approved build MAT.
+matched = false;
+if exist(manifest_path, 'file') ~= 2
+    return;
+end
+manifest_sha = mlsc_release_gate('sha256_file', manifest_path);
+matched = strcmpi(manifest_sha, ...
+    '62bb3472b8225178c89ff731d4c664a8636d775006c0903ccd5677de5aa090f5');
+end
+
+function local_require_v310_package_manifest(package_dir)
+%LOCAL_REQUIRE_V310_PACKAGE_MANIFEST Anchor the manifest inside the package.
+manifest_path = fullfile(package_dir, 'mlsc_current_build.mat');
+if exist(manifest_path, 'file') ~= 2
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'The packaged build manifest mlsc_current_build.mat is missing; missing evidence blocks publication.');
+end
+if ~local_v310_manifest_digest(manifest_path)
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'The packaged build manifest SHA-256 does not match the exact pinned artifact anchor; mismatch blocks publication.');
+end
+end
+
+function matched = local_is_v310_exception(manifest_path, build)
+%LOCAL_IS_V310_EXCEPTION Require the exact MAT and all independent anchors.
+matched = false;
+if ~local_v310_manifest_digest(manifest_path) || ...
+        ~isstruct(build) || numel(build) ~= 1
+    return;
+end
+if ~isfield(build, 'executable_fingerprint') || ...
+        ~ischar(build.executable_fingerprint) || ...
+        ~strcmpi(strtrim(build.executable_fingerprint), ...
+        '0195a2c8e0d20adf766bc034d958d0bc45345c95f17e441cd42092cf6155c633')
+    return;
+end
+if ~isfield(build, 'runner_checksum') || ~ischar(build.runner_checksum) || ...
+        ~strcmpi(strtrim(build.runner_checksum), ...
+        'af30517193692001f30f4114cac6b00d5e3a41605f23a134c15be432dbdb97af')
+    return;
+end
+if ~isfield(build, 'release') || ~ischar(build.release) || ...
+        ~strcmp(strtrim(build.release), 'R2010b') || ...
+        ~isfield(build, 'compiler_identity') || ...
+        ~ischar(build.compiler_identity) || ...
+        ~strcmp(strtrim(build.compiler_identity), 'MATLAB Compiler 4.14') || ...
+        ~isfield(build, 'matlab_version') || ...
+        ~ischar(build.matlab_version) || ...
+        ~strcmp(strtrim(build.matlab_version), '7.11.0.584 (R2010b)') || ...
+        ~isfield(build, 'mcr_version') || ~isnumeric(build.mcr_version) || ...
+        numel(build.mcr_version) ~= 2 || build.mcr_version(1) ~= 7 || ...
+        build.mcr_version(2) ~= 14 || ~isfield(build, 'arch') || ...
+        ~ischar(build.arch) || ~strcmp(strtrim(build.arch), 'glnxa64') || ...
+        ~isfield(build, 'generation') || ~ischar(build.generation) || ...
+        ~strcmp(strtrim(build.generation), '7.14') || ...
+        ~isfield(build, 'build_timestamp_utc') || ...
+        ~ischar(build.build_timestamp_utc) || ...
+        ~strncmp(strtrim(build.build_timestamp_utc), '2026-10-23', 10)
+    return;
+end
+if ~isfield(build, 'packaged_files') || ~iscell(build.packaged_files) || ...
+        numel(build.packaged_files) ~= 11 || ...
+        ~isfield(build, 'packaged_checksums') || ...
+        ~iscell(build.packaged_checksums) || ...
+        numel(build.packaged_checksums) ~= 11
+    return;
+end
+matched = true;
+end
+
+function local_check_v310_source_provenance(build, expected_fp)
+%LOCAL_CHECK_V310_SOURCE_PROVENANCE Keep recorded build identity separate
+% from the release-source identity resolved from the repository.
+if ~isfield(build, 'source_commit') || ~ischar(build.source_commit) || ...
+        isempty(regexp(strtrim(build.source_commit), '^[0-9a-fA-F]{40}$', 'once'))
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Pinned v3.1.0 build source_commit is invalid; build provenance blocks publication.');
+end
+if ~isfield(build, 'source_provenance_fingerprint') || ...
+        ~ischar(build.source_provenance_fingerprint) || ...
+        ~mlsc_release_gate('is_valid_sha256', build.source_provenance_fingerprint)
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Pinned v3.1.0 source provenance fingerprint is invalid; build provenance blocks publication.');
+end
+if ~isempty(expected_fp) && ...
+        ~strcmpi(strtrim(build.source_provenance_fingerprint), strtrim(expected_fp))
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Build manifest source fingerprint does not match the expected fingerprint; wrong hash blocks publication.');
+end
+if ~isfield(build, 'required_outputs') || ~iscell(build.required_outputs)
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Build manifest required outputs are invalid; manifest inconsistency blocks publication.');
+end
+local_require_outputs(build.required_outputs);
 end
 
 function local_require_build_field(build, field_name)
@@ -384,7 +525,7 @@ if ~isfield(value, 'manifest_version') || ~isnumeric(value.manifest_version) || 
 end
 end
 
-function local_check_package(root_dir, build)
+function local_check_package(root_dir, build, provenance_exception)
 runner_rel = 'payload_build/run_mlsc_current_payload.sh';
 exe_rel = 'payload_build/mlsc_current_payload';
 build_rel = 'mlsc_current_build.mat';
@@ -403,7 +544,8 @@ if ~isfield(build, 'runner') || ~ischar(build.runner) || isempty(strtrim(build.r
     error('pseudo_CT:MLSCReleaseGate', 'Build manifest runner is invalid; manifest inconsistency blocks publication.');
 end
 want_runner = fullfile(root_dir, strrep(runner_rel, '/', filesep));
-if ~strcmp(local_strip_sep(strtrim(build.runner)), local_strip_sep(want_runner))
+if ~provenance_exception && ...
+        ~strcmp(local_strip_sep(strtrim(build.runner)), local_strip_sep(want_runner))
     error('pseudo_CT:MLSCReleaseGate', ...
         'Build manifest runner path does not match the staged package; runtime path mismatch blocks publication.');
 end
@@ -465,6 +607,16 @@ for kk = 1:numel(build.packaged_files)
             'Packaged file %s is missing from the staged package; package-vs-build diff blocks publication.', ...
             strtrim(rel_here));
     end
+    if provenance_exception
+        recorded_bytes = local_inventory_bytes(build.packaged_checksums{kk});
+        disk_info = dir(disk_here);
+        if isempty(recorded_bytes) || isempty(disk_info) || ...
+                disk_info(1).bytes ~= recorded_bytes
+            error('pseudo_CT:MLSCReleaseGate', ...
+                'Packaged file %s size differs from the pinned build inventory; package-vs-build diff blocks publication.', ...
+                strtrim(rel_here));
+        end
+    end
     recorded_sha = local_inventory_sha(build.packaged_checksums{kk});
     if isempty(recorded_sha)
         error('pseudo_CT:MLSCReleaseGate', ...
@@ -501,7 +653,7 @@ if ~strcmpi(strtrim(build.packaged_files_fingerprint), disk_fp)
 end
 end
 
-function local_check_deploy(deploy_root, build, build_manifest_arg, resource_manifest_arg)
+function local_check_deploy(deploy_root, build, build_manifest_arg, resource_manifest_arg, provenance_exception)
 %LOCAL_CHECK_DEPLOY Verify the deployment copy at its exact runtime path.
 %   The production layout is pinned by the mlsc-current profile: the
 %   launcher sits directly at <DeployRoot>/run_mlsc_current_payload.sh
@@ -596,6 +748,16 @@ for kk = 1:numel(build.packaged_files)
             'Packaged file %s is missing from the deployment copy (want %s); deploy-vs-package diff blocks verification.', ...
             strtrim(rel_here), deploy_rel);
     end
+    if provenance_exception
+        recorded_bytes = local_inventory_bytes(build.packaged_checksums{kk});
+        disk_info = dir(disk_here);
+        if isempty(recorded_bytes) || isempty(disk_info) || ...
+                disk_info(1).bytes ~= recorded_bytes
+            error('pseudo_CT:MLSCReleaseGate', ...
+                'Deployed file %s size differs from the pinned build inventory; deploy-vs-package diff blocks verification.', ...
+                deploy_rel);
+        end
+    end
     recorded_sha = local_inventory_sha(build.packaged_checksums{kk});
     if isempty(recorded_sha)
         error('pseudo_CT:MLSCReleaseGate', ...
@@ -649,6 +811,25 @@ try
     end
 catch %#ok<CTCH>
     sha = '';
+end
+end
+
+function byte_count = local_inventory_bytes(entry)
+byte_count = [];
+try
+    if ~ischar(entry) || size(entry, 1) ~= 1
+        return;
+    end
+    tok = regexp(entry, 'bytes=([0-9]+)(?![0-9])', 'tokens', 'once');
+    if isempty(tok)
+        return;
+    end
+    candidate = str2double(tok{1});
+    if isfinite(candidate) && candidate >= 0 && candidate == floor(candidate)
+        byte_count = candidate;
+    end
+catch %#ok<CTCH>
+    byte_count = [];
 end
 end
 

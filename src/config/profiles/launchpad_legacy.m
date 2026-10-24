@@ -45,10 +45,11 @@ config.io_policy.gui = 'mMR';
 % a profile name requires all non-policy settings to match that baseline.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'LAUNCHPAD - Legacy v2.0 (Aether)';
-config.presentation.description = 'Remote pseudoCT processing using Aether v2.0.';
-config.presentation.group = 'recommended';
-config.presentation.recommended = true;
+config.presentation.display_name = 'Launchpad - Legacy (Aether)';
+config.presentation.description = ...
+    'Run the original v2 pipeline on Launchpad for comparison with older studies.';
+config.presentation.group = 'specialized';
+config.presentation.recommended = false;
 config.presentation.order = 80;
 
 % FreeSurfer environment command.

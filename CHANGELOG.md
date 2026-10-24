@@ -1,4 +1,9 @@
-3.0.2
+3.1.0
+
+## 3.1.0 — Profile terminology and evidence documentation
+
+- Documents the recommended PseudoCT v3 — MLSC default, accepted R2010b Compiler 4.14/MCR 7.14 backend, chosen-version local execution, MPRAGE-only requirements, and retained Aether profiles.
+- Records accepted job 10515471 and its dataset-specific map digest/comparison; executor sidecar reporting is implemented, but live delivery is unconfirmed.
 
 ## 3.0.2 — Flat-layout corrective release, published 2026-10-21 (see [release notes](RELEASE_NOTES_v3.0.2.md))
 

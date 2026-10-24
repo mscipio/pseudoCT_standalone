@@ -522,6 +522,7 @@ result.copy_back = struct('contract_represented', false, ...
     'att_map_nonempty', false);
 result.scp_used = false;
 result.network_payload_staging = false;
+result.executor_provenance = local_empty_executor_provenance();
 result.cleanup = struct('attempted', false, 'script_removed', false, ...
     'script_preserved', false, ...
     'node_local_tmpdir', 'Slurm-owned cleanup on job exit', ...
@@ -1722,6 +1723,9 @@ end
 end
 
 function result = local_finish(result, evidence, runtime, transport)
+% Capture the job-ID-specific sidecar before any local cleanup can run.
+result.executor_provenance = local_read_executor_provenance( ...
+    result.shared_subject_temp, result.job_id);
 result.log_paths = local_archive_logs(result.log_paths, result.job_id, runtime);
 result = local_archive_progress(result, runtime);
 result.cleanup = local_cleanup(result.cleanup, runtime, transport, ...
@@ -1754,6 +1758,167 @@ if ~isempty(runtime.evidence_dir)
     end
 end
 result.evidence = evidence;
+end
+
+function provenance = local_empty_executor_provenance()
+provenance = struct('sidecar_path', '', 'sidecar_present', false, ...
+    'job_id', 'Not confirmed', 'hostname', 'Not confirmed', ...
+    'cpu_model', 'Not confirmed', 'architecture', 'Not confirmed', ...
+    'shell_exit_code', 'Not confirmed', ...
+    'shell_terminal_outcome', 'Not confirmed', ...
+    'selected_mcr_root', 'Not confirmed', ...
+    'runtime_library_dir', 'Not confirmed', ...
+    'runtime_library_present', 'Not confirmed', ...
+    'runtime_release', 'Not confirmed', ...
+    'build_manifest_compiler_release', 'Not confirmed', ...
+    'build_manifest_mcr_version', 'Not confirmed', ...
+    'build_manifest_generation', 'Not confirmed', ...
+    'build_manifest_arch', 'Not confirmed', ...
+    'build_manifest_mcr_root', 'Not confirmed', ...
+    'build_manifest_source_commit', 'Not confirmed', ...
+    'build_manifest_runner_checksum', 'Not confirmed');
+end
+
+function provenance = local_read_executor_provenance(shared_temp, job_id)
+provenance = local_empty_executor_provenance();
+try
+    if ~ischar(shared_temp) || size(shared_temp, 1) ~= 1 || ...
+            isempty(shared_temp) || any(shared_temp == char(0)) || ...
+            ~isnumeric(job_id) || ~isscalar(job_id) || ...
+            ~isfinite(job_id) || job_id <= 0 || job_id ~= floor(job_id)
+        return;
+    end
+    expected_job_id = sprintf('%.0f', job_id);
+    provenance.sidecar_path = fullfile(shared_temp, ...
+        ['mlsc_executor_provenance_' expected_job_id '.txt']);
+    if exist(provenance.sidecar_path, 'file') ~= 2
+        return;
+    end
+    provenance.sidecar_present = true;
+    fid = fopen(provenance.sidecar_path, 'r');
+    if fid == -1
+        return;
+    end
+    close_file = onCleanup(@() fclose(fid));
+    keys = {'schema'; 'job_id'; 'hostname'; 'cpu_model'; 'architecture'; ...
+        'shell_exit_code'; 'shell_terminal_outcome'; 'selected_mcr_root'; ...
+        'runtime_library_dir'; 'runtime_library_present'; 'runtime_release'; ...
+        'build_manifest_compiler_release'; 'build_manifest_mcr_version'; ...
+        'build_manifest_generation'; 'build_manifest_arch'; ...
+        'build_manifest_mcr_root'; 'build_manifest_source_commit'; ...
+        'build_manifest_runner_checksum'};
+    values = repmat({''}, length(keys), 1);
+    seen = false(length(keys), 1);
+    duplicate = false(length(keys), 1);
+    while true
+        line = fgetl(fid);
+        if ~ischar(line)
+            break;
+        end
+        equals = find(line == '=', 1);
+        if isempty(equals)
+            continue;
+        end
+        key = line(1:equals - 1);
+        position = find(strcmp(keys, key), 1);
+        if isempty(position)
+            continue;
+        end
+        if seen(position)
+            duplicate(position) = true;
+            values{position} = '';
+        else
+            seen(position) = true;
+            values{position} = strtrim(line(equals + 1:end));
+        end
+    end
+    schema_pos = find(strcmp(keys, 'schema'), 1);
+    job_pos = find(strcmp(keys, 'job_id'), 1);
+    if duplicate(schema_pos) || duplicate(job_pos) || ...
+            ~seen(schema_pos) || ~seen(job_pos) || ...
+            ~strcmp(values{schema_pos}, ...
+            'pseudo-CT.mlsc-executor-provenance/v1') || ...
+            ~strcmp(values{job_pos}, expected_job_id)
+        return;
+    end
+    provenance.job_id = expected_job_id;
+    for ii = 1:length(keys)
+        if ~seen(ii) || duplicate(ii) || ...
+                ~local_executor_provenance_value(values{ii})
+            continue;
+        end
+        value = values{ii};
+        switch keys{ii}
+            case 'hostname'
+                provenance.hostname = value;
+            case 'cpu_model'
+                provenance.cpu_model = value;
+            case 'architecture'
+                provenance.architecture = value;
+            case 'shell_exit_code'
+                if ~isempty(regexp(value, '^[0-9]+$', 'once'))
+                    provenance.shell_exit_code = value;
+                end
+            case 'shell_terminal_outcome'
+                if strcmp(value, 'completed') || strcmp(value, 'failed')
+                    provenance.shell_terminal_outcome = value;
+                end
+            case 'selected_mcr_root'
+                provenance.selected_mcr_root = value;
+            case 'runtime_library_dir'
+                provenance.runtime_library_dir = value;
+            case 'runtime_library_present'
+                if strcmp(value, 'yes') || strcmp(value, 'no')
+                    provenance.runtime_library_present = value;
+                end
+            case 'runtime_release'
+                provenance.runtime_release = value;
+            case 'build_manifest_compiler_release'
+                if ~isempty(regexp(value, '^R[0-9]{4}[ab]$', 'once'))
+                    provenance.build_manifest_compiler_release = value;
+                end
+            case {'build_manifest_mcr_version', 'build_manifest_generation'}
+                if ~isempty(regexp(value, '^[0-9]+[.][0-9]+$', 'once'))
+                    provenance.(keys{ii}) = value;
+                end
+            case 'build_manifest_arch'
+                provenance.build_manifest_arch = value;
+            case 'build_manifest_mcr_root'
+                provenance.build_manifest_mcr_root = value;
+            case 'build_manifest_source_commit'
+                if ~isempty(regexp(value, '^[0-9a-fA-F]{40}$', 'once'))
+                    provenance.build_manifest_source_commit = lower(value);
+                end
+            case 'build_manifest_runner_checksum'
+                if ~isempty(regexp(value, '^[0-9a-fA-F]{64}$', 'once'))
+                    provenance.build_manifest_runner_checksum = lower(value);
+                end
+        end
+    end
+    if ~strcmp(provenance.shell_exit_code, 'Not confirmed')
+        if strcmp(provenance.shell_exit_code, '0') && ...
+                strcmp(provenance.shell_terminal_outcome, 'completed')
+            provenance.shell_terminal_outcome = 'Completed (exit status 0)';
+        elseif ~strcmp(provenance.shell_exit_code, '0') && ...
+                strcmp(provenance.shell_terminal_outcome, 'failed')
+            provenance.shell_terminal_outcome = ...
+                ['Failed (exit status ' provenance.shell_exit_code ')'];
+        else
+            provenance.shell_exit_code = 'Not confirmed';
+            provenance.shell_terminal_outcome = 'Not confirmed';
+        end
+    else
+        provenance.shell_terminal_outcome = 'Not confirmed';
+    end
+catch %#ok<CTCH>
+    provenance = local_empty_executor_provenance();
+end
+end
+
+function valid = local_executor_provenance_value(value)
+valid = ischar(value) && size(value, 1) == 1 && ...
+    ~isempty(strtrim(value)) && ~any(value == char(0)) && ...
+    isempty(regexp(value, '[\r\n]', 'once'));
 end
 
 function cleanup = local_cleanup(cleanup, runtime, transport, script_materialized)
@@ -1790,6 +1955,7 @@ values.subject_count = 1;
 values.subject_id = result.subject_id;
 values.runtime_account = result.runtime_account;
 values.job_id = result.job_id;
+values.executor_provenance = result.executor_provenance;
 values.submission_attempted = result.submission_attempted;
 values.submission_response_lost = result.submission_response_lost;
 values.submission_response_parseable = result.submission_response_parseable;

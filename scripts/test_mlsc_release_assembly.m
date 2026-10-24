@@ -1,4 +1,4 @@
-function test_mlsc_release_assembly()
+function test_mlsc_release_assembly(mode)
 %TEST_MLSC_RELEASE_ASSEMBLY Bounded assembly tests (synthetic, no mcc/science).
 %   Offline only: synthetic staged packages under
 %   scratch/release_gate/assembly_fixtures/ (ignored), read-only git
@@ -19,6 +19,14 @@ function test_mlsc_release_assembly()
 root_dir = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(root_dir, 'src', 'mlsc'), '-begin');
 addpath(fullfile(root_dir, 'scripts'), '-begin');
+if nargin > 0
+    if ~ischar(mode) || size(mode, 1) ~= 1 || ...
+            ~strcmp(mode, 'v310_exception')
+        error('pseudo_CT:MLSCReleaseGate', 'Unknown focused release-assembly test mode.');
+    end
+    local_test_v310_exception(root_dir);
+    return;
+end
 
 gate_root = fullfile(root_dir, 'scratch', 'release_gate');
 if exist(gate_root, 'dir') ~= 7
@@ -236,6 +244,53 @@ gate_a.overall_result = 'pass';
 record = fullfile(case_root, 'mlsc_current_gate_a.mat');
 save(record, 'gate_a');
 P = struct('pkg', pkg, 'buildmat', buildmat, 'resmat', resmat, 'record', record);
+end
+
+function local_test_v310_exception(root_dir)
+gate_root = fullfile(root_dir, 'scratch', 'release_gate');
+if exist(gate_root, 'dir') ~= 7
+    [ok_gate, msg_gate] = mkdir(gate_root);
+    assert(ok_gate, 'Cannot create gate staging dir: %s.', msg_gate);
+end
+run_root = fullfile(gate_root, 'assembly_v310_exception');
+assert(exist(run_root, 'dir') ~= 7, ...
+    'Focused assembly directory already exists; preserving existing scratch data.');
+mkdir(run_root);
+cleanup_root = onCleanup(@() local_cleanup(run_root)); %#ok<NASGU>
+
+[s_head, o_head] = system(sprintf('git -C "%s" --no-pager rev-parse HEAD 2>&1', root_dir));
+commit = lower(strtrim(o_head));
+assert(s_head == 0 && length(commit) == 40, 'Release-source commit fixture is unavailable.');
+[s_cl, o_cl] = system(sprintf('git -C "%s" --no-pager show %s:CHANGELOG.md 2>&1', ...
+    root_dir, commit));
+assert(s_cl == 0, 'HEAD CHANGELOG fixture unreadable.');
+head_version = strtrim(strtok(strtrim(o_cl), char(10)));
+
+package = local_copy_compiled_package(root_dir, run_root);
+output_dir = fullfile(run_root, 'assembly');
+archive = assemble_mlsc_release('PackageDir', package, ...
+    'ReleaseCommit', commit, 'SourceVersion', head_version, ...
+    'OutputDir', output_dir, 'RepoRoot', root_dir);
+assert(ischar(archive) && exist(archive, 'file') == 2, ...
+    'Exact R2010b package assembly did not produce its scratch-only verification archive.');
+assert(~isempty(strfind(archive, [filesep 'scratch' filesep])), ...
+    'Focused archive escaped the worktree scratch tree.');
+fprintf('ASSEMBLY-V310-EXACT PASS: archive extraction verified the exact retained package.\n');
+end
+
+function package = local_copy_compiled_package(root_dir, run_root)
+package = fullfile(run_root, 'package');
+mkdir(package);
+source = fullfile(root_dir, 'compiled');
+entries = dir(source);
+for kk = 1:numel(entries)
+    name = entries(kk).name;
+    if strcmp(name, '.') || strcmp(name, '..')
+        continue;
+    end
+    [ok_copy, msg_copy] = copyfile(fullfile(source, name), fullfile(package, name));
+    assert(ok_copy, 'Could not copy retained package into scratch: %s.', msg_copy);
+end
 end
 
 function local_expect_block(thunk, reason_substr)

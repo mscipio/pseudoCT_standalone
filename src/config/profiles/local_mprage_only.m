@@ -45,7 +45,7 @@ config.compatibility_profile = 'local-current';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'Local MPRAGE Only';
 config.presentation.description = ...
-    'Generate NIfTI-only pseudoCT locally from MPRAGE without requiring a UMAP reference.';
+    'Generate a NIfTI-only pseudoCT from MPRAGE alone on this computer. No UMAP required.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
 config.presentation.order = 10;

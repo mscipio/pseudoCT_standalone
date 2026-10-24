@@ -41,7 +41,7 @@ config.compatibility_profile = 'mlsc';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'MLSC MPRAGE Only';
 config.presentation.description = ...
-    'Generate NIfTI-only pseudoCT on MLSC from MPRAGE without requiring a UMAP reference.';
+    'Generate a NIfTI-only pseudoCT from MPRAGE alone on MLSC. No UMAP required.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
 config.presentation.order = 20;

@@ -6,9 +6,8 @@ function build_mlsc_current(varargin)
 %   mlsc_current_payload.m via mcc. Any identity mismatch STOPS with error
 %   (no fallback, no science change).
 %
-%   Approved build MATLAB (T014): /usr/pubsw/packages/matlab/26.1 R2026a
-%   Update 2 26.1.0.3251617 glnxa64. Expected MCR_ROOT (launcher contract,
-%   recorded not executed): /usr/pubsw/common/matlab/26.1. The launcher is
+%   Build identity (release, compiler, architecture, and runtime) is read
+%   from the MATLAB process executing this script. The launcher is
 %   invoked as run_mlsc_current_payload.sh <MCR_ROOT> <phase>
 %   <job_manifest> <resource_manifest> (MCR_ROOT first).
 %
@@ -17,15 +16,15 @@ function build_mlsc_current(varargin)
 %   mlsc_generate_slurm_script) -> COMPUTE. This script never runs science;
 %   it only compiles. No run_pseudo_CT compilation.
 %
-%   Output stays in ignored controlled NONPRODUCTION (default
-%   dist/mlsc_current_build under the repo root). Rejects /usr/pubsw
-%   outputs, compiled/mlsc-current/, tarballs. No commit/push/tag.
+%   Compilation is staged under scratch and only promoted to compiled after
+%   successful verification. A failed build leaves compiled untouched.
 %
-%   Generates immutable resource manifest (atlas/ch2/batch MATs/Templates/
-%   TPM/hotmap + fingerprints; legacy defaults/runner/TPM not authority)
+%   Generates immutable existence-only resource manifest (atlas list plus
+%   required resource names; legacy defaults/runner/TPM not authority; no
+%   content-identity fingerprints since T009)
 %   and machine-readable build manifest with the canonical validator
-%   schema (runner full path as built, pinned mcr_root, release with R
-%   prefix, update_minimum, mcr_version [26 1], arch, generation,
+%   schema (runner full path as built, derived mcr_root, release with R
+%   prefix, update_minimum, mcr_version [major minor], arch, generation,
 %   runner_checksum SHA-256, source_commit base HEAD plus content-bound
 %   provenance fingerprint (canonical <relpath>\t<SHA256>\n per included
 %   file sorted by path, SHA-256 over that text), canonical
@@ -33,9 +32,9 @@ function build_mlsc_current(varargin)
 %   plus T007 build-environment provenance (full version/build/update,
 %   Compiler, toolboxes, mcc options, entrypoint, dep/MEX inventory,
 %   files/checksums, executable/resource fingerprints, thread policy).
-%   Compilation is NOT Gate-A PASS; Gate-A evidence is finalized later
-%   into a SEPARATE record file that binds (never rewrites) this
-%   manifest.
+%   No Gate-A record is required or consulted in the active dev path (T009
+%   remediation removed the Gate-A execution requirement and the native
+%   pending marker).
 %
 %   Opt-in release-candidate path (exact-source gate, staged under
 %   scratch/release_gate/): BUILD_MLSC_CURRENT('ReleaseTag', TAG,
@@ -51,7 +50,7 @@ function build_mlsc_current(varargin)
 %   follow the byte-identical historical path (same entrypoint, same
 %   -I/-a manifest, same defaults).
 %
-%   Minimum supported MATLAB: R2010b (build host is R2026a per T014).
+%   Minimum supported MATLAB: R2010b.
 
 % Parse name-value args (R2010b-safe, no inputParser dependency).
 out_dir_arg = '';
@@ -115,32 +114,46 @@ release_worktree_rel = '';
 dflt_spm = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
 dflt_atlas = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
 dflt_alias = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-0.3.0';
-dflt_mcr = '/usr/pubsw/common/matlab/26.1';
-dflt_out = fullfile(repo_root, 'dist', 'mlsc_current_build');
+dflt_mcr = '';
+dflt_out = '';
 if isempty(spm_arg), spm_arg = dflt_spm; end
 if isempty(atlas_arg), atlas_arg = dflt_atlas; end
 if isempty(alias_arg), alias_arg = dflt_alias; end
 if isempty(mcr_arg), mcr_arg = dflt_mcr; end
 if isempty(out_dir_arg), out_dir_arg = dflt_out; end
 
-% Output guard: never /usr/pubsw, never compiled/mlsc-current/, never tarball.
-if ~isempty(strfind(out_dir_arg, '/usr/pubsw'))
-    error('pseudo_CT:BuildOutputRejected', 'Output must not target /usr/pubsw: %s', out_dir_arg);
+% Require a new destination directly under the canonical repository scratch
+% root before any build output is written. Canonicalization rejects symlink
+% escapes; lexical checks reject traversal even when it resolves back inside.
+scratch_root = local_canonical(fullfile(repo_root, 'scratch'));
+if exist(scratch_root, 'dir') ~= 7
+    [ok_scratch, msg_scratch] = mkdir(scratch_root);
+    if ~ok_scratch
+        error('pseudo_CT:BuildOutputRejected', 'Cannot create controlled scratch root: %s', msg_scratch);
+    end
+    scratch_root = local_canonical(scratch_root);
 end
-if ~isempty(strfind(out_dir_arg, 'compiled/mlsc-current'))
-    error('pseudo_CT:BuildOutputRejected', 'Output must not target compiled/mlsc-current/: %s', out_dir_arg);
+if isempty(out_dir_arg)
+    out_dir_arg = tempname(scratch_root);
 end
-if length(out_dir_arg) >= 7 && strcmp(out_dir_arg(end-6:end), '.tar.gz')
-    error('pseudo_CT:BuildOutputRejected', 'Output must not be a tarball: %s', out_dir_arg);
+if ~isempty(strfind(out_dir_arg, '..')) || ~isempty(strfind(out_dir_arg, '/usr/pubsw')) || ...
+        ~isempty(strfind(out_dir_arg, '.tar.gz')) || ~isempty(strfind(out_dir_arg, '.tgz'))
+    error('pseudo_CT:BuildOutputRejected', 'Output must be a fresh scratch staging directory: %s', out_dir_arg);
 end
-if length(out_dir_arg) >= 4 && strcmp(out_dir_arg(end-3:end), '.tgz')
-    error('pseudo_CT:BuildOutputRejected', 'Output must not be a tarball: %s', out_dir_arg);
+canonical_out = local_canonical(out_dir_arg);
+scratch_prefix = [scratch_root filesep];
+if ~strncmp(canonical_out, scratch_prefix, length(scratch_prefix)) || ...
+        ~strcmp(fileparts(canonical_out), scratch_root) || ...
+        ~isempty(strfind([filesep canonical_out filesep], [filesep 'compiled' filesep]))
+    error('pseudo_CT:BuildOutputRejected', ...
+        'Output must be a direct, controlled child of scratch (never compiled): %s', canonical_out);
 end
+if exist(out_dir_arg, 'file') == 2 || exist(out_dir_arg, 'dir') == 7
+    error('pseudo_CT:BuildOutputRejected', 'Output staging destination already exists: %s', canonical_out);
+end
+out_dir_arg = canonical_out;
 
 % 1. Verify EXECUTING MATLAB via live introspection (no path authority).
-exp_release = '2026a';
-exp_version = '26.1.0.3251617 (R2026a) Update 2';
-exp_arch = 'glnxa64';
 act_release = '';
 act_version = '';
 try
@@ -153,13 +166,8 @@ try
 catch ME
     error('pseudo_CT:BuildIdentityMismatch', 'Cannot introspect MATLAB version: %s', ME.message);
 end
-if ~ischar(act_release) || ~strcmp(strtrim(act_release), exp_release)
-    error('pseudo_CT:BuildIdentityMismatch', ...
-        'MATLAB release mismatch (expected %s, actual %s); STOP, no fallback.', exp_release, act_release);
-end
-if ~ischar(act_version) || ~strcmp(strtrim(act_version), exp_version)
-    error('pseudo_CT:BuildIdentityMismatch', ...
-        'MATLAB version mismatch (expected %s, actual %s); STOP, no fallback.', exp_version, act_version);
+if ~ischar(act_release) || isempty(regexp(strtrim(act_release), '^[0-9]{4}[ab]$', 'once'))
+    error('pseudo_CT:BuildIdentityMismatch', 'Unexpected MATLAB release: %s.', act_release);
 end
 act_mcr = [];
 try
@@ -167,16 +175,27 @@ try
 catch ME
     error('pseudo_CT:BuildIdentityMismatch', 'Cannot introspect mcrversion: %s', ME.message);
 end
-% R2026a reports scalar 26 here; accept scalar 26 or vector [26 1] only.
-mcr_ok = false;
-if isnumeric(act_mcr) && numel(act_mcr) == 1 && act_mcr(1) == 26
-    mcr_ok = true;
-elseif isnumeric(act_mcr) && numel(act_mcr) == 2 && act_mcr(1) == 26 && act_mcr(2) == 1
-    mcr_ok = true;
+if ~isnumeric(act_mcr) || isempty(act_mcr) || numel(act_mcr) > 2
+    error('pseudo_CT:BuildIdentityMismatch', 'Unexpected MATLAB runtime version: %s.', mat2str(act_mcr));
 end
-if ~mcr_ok
-    error('pseudo_CT:BuildIdentityMismatch', ...
-        'MATLAB mcrversion mismatch (expected 26 or [26 1], actual %s); STOP, no fallback.', mat2str(act_mcr));
+if numel(act_mcr) == 1
+    % Some releases report only the runtime major. In that case, derive the
+    % minor from the active MATLAB Compiler version rather than pinning a
+    % release/runtime pair here. Releases reporting both components remain
+    % authoritative as returned.
+    compiler_version = ver('compiler');
+    if isempty(compiler_version) || isempty(compiler_version(1).Version)
+        error('pseudo_CT:BuildIdentityMismatch', ...
+            'Cannot derive runtime minor from MATLAB Compiler identity.');
+    end
+    compiler_parts = regexp(compiler_version(1).Version, '\.', 'split');
+    if numel(compiler_parts) < 2 || isempty(regexp(compiler_parts{end}, '^[0-9]+$', 'once'))
+        error('pseudo_CT:BuildIdentityMismatch', ...
+            'Unexpected MATLAB Compiler version: %s.', compiler_version(1).Version);
+    end
+    act_mcr = [double(act_mcr(1)) str2double(compiler_parts{end})];
+else
+    act_mcr = double(act_mcr(:)');
 end
 act_arch = '';
 try
@@ -184,9 +203,8 @@ try
 catch ME
     error('pseudo_CT:BuildIdentityMismatch', 'Cannot introspect arch: %s', ME.message);
 end
-if ~ischar(act_arch) || ~strcmp(strtrim(act_arch), exp_arch)
-    error('pseudo_CT:BuildIdentityMismatch', ...
-        'MATLAB arch mismatch (expected %s, actual %s); STOP, no fallback.', exp_arch, act_arch);
+if ~ischar(act_arch) || isempty(strtrim(act_arch))
+    error('pseudo_CT:BuildIdentityMismatch', 'Cannot determine MATLAB architecture.');
 end
 try
     has_compiler = license('test', 'Compiler');
@@ -209,6 +227,16 @@ if ~(has_stats == 1)
     error('pseudo_CT:BuildIdentityMismatch', 'Statistics Toolbox unavailable; STOP, no fallback.');
 end
 act_root = matlabroot;
+if isempty(mcr_arg)
+    mcr_arg = act_root;
+end
+% mcrversion is the executing MATLAB Compiler's required runtime identity.
+% McrRoot remains the separately selected deployment runtime (for example,
+% Center Standard R2010b deployments use MCR 7.14); do not infer it from or
+% overwrite it with the compiler installation root.
+if exist(mcr_arg, 'dir') ~= 7
+    error('pseudo_CT:BuildIdentityMismatch', 'Selected deployment MCR root is missing: %s', mcr_arg);
+end
 fprintf('BUILD_IDENTITY release=%s version=%s mcr=%s arch=%s root=%s\n', ...
     strtrim(act_release), strtrim(act_version), mat2str(act_mcr), strtrim(act_arch), act_root);
 
@@ -251,7 +279,7 @@ if release_mode
     canonical_out = local_canonical(out_dir_arg);
     canonical_scratch = local_canonical(fullfile(repo_root, 'scratch'));
     scratch_prefix = [canonical_scratch filesep];
-    if ~(strcmp(canonical_out, canonical_scratch) || strncmp(canonical_out, scratch_prefix, length(scratch_prefix)))
+    if ~strncmp(canonical_out, scratch_prefix, length(scratch_prefix))
         error('pseudo_CT:MLSCReleaseGate', ...
             'Release-candidate outputs must stage under scratch/release_gate/: %s', out_dir_arg);
     end
@@ -361,15 +389,19 @@ for kk = 1:numel(forbidden_tokens)
     end
 end
 
-% 4. Prepare output layout (ignored nonproduction only).
-if exist(out_dir_arg, 'dir') ~= 7
-    [ok_mk, msg_mk] = mkdir(out_dir_arg);
-    if ~ok_mk
-        error('pseudo_CT:BuildOutput', 'Cannot create output dir %s: %s', out_dir_arg, msg_mk);
-    end
+% 4. Prepare the already-validated fresh staging destination.
+[ok_mk, msg_mk] = mkdir(out_dir_arg);
+if ~ok_mk
+    error('pseudo_CT:BuildOutput', 'Cannot create output dir %s: %s', out_dir_arg, msg_mk);
 end
 build_dir = fullfile(out_dir_arg, 'payload_build');
 cfggen_dir = fullfile(out_dir_arg, 'cfggen');
+if exist(build_dir, 'dir') ~= 7
+    [ok_bd, msg_bd] = mkdir(build_dir);
+    if ~ok_bd
+        error('pseudo_CT:BuildOutput', 'Cannot create compiler output dir %s: %s', build_dir, msg_bd);
+    end
+end
 if exist(cfggen_dir, 'dir') ~= 7
     [ok_cg, msg_cg] = mkdir(cfggen_dir);
     if ~ok_cg
@@ -406,7 +438,7 @@ local_write_text(fullfile(cfggen_dir, 'spm_cfg_static_tools.m'), { ...
 
 % 6. Immutable resource manifest BEFORE expensive work (fail-closed).
 resources_path = fullfile(out_dir_arg, 'mlsc_current_resources.mat');
-resources = local_build_resources(atlas_arg, spm_arg, hotmap_path);
+resources = local_build_resources(atlas_arg);
 save(resources_path, 'resources');
 % Human-readable fingerprint companion (same identities, not authority).
 local_write_text(fullfile(out_dir_arg, 'mlsc_current_resources.txt'), ...
@@ -512,7 +544,7 @@ for kk = 1:numel(build_files)
     local_assert_no_personal_path(build_files{kk}, 'build.files');
 end
 
-% 9. Machine-readable build manifest (authority; native pending Gate A).
+% 9. Machine-readable build manifest (authority).
 % Canonical compatibility-identity fields EXACTLY match the validator
 % contract (mlsc_current_validate local_validate_build): runner (full
 % path as built; must equal config.current.runner textually, so the
@@ -529,22 +561,15 @@ build_stamp = local_utc_stamp();
 build = struct();
 build.schema = 'pseudo-CT.mlsc-current-build/v1';
 build.manifest_version = 1;
-build.runner = runner_path;
+build.runner = fullfile(repo_root, 'compiled', 'payload_build', 'run_mlsc_current_payload.sh');
 build.mcr_root = mcr_arg;
 if isempty(regexp(strtrim(act_release), '^[0-9]{4}[ab]$', 'once'))
     error('pseudo_CT:BuildIdentityMismatch', ...
         'MATLAB release has an unexpected shape: %s.', act_release);
 end
 build.release = ['R' strtrim(act_release)];
-build.update_minimum = 2;
-if isnumeric(act_mcr) && numel(act_mcr) == 1 && act_mcr(1) == 26
-    build.mcr_version = [26 1];
-elseif isnumeric(act_mcr) && numel(act_mcr) == 2 && act_mcr(1) == 26 && act_mcr(2) == 1
-    build.mcr_version = [double(act_mcr(1)) double(act_mcr(2))];
-else
-    error('pseudo_CT:BuildIdentityMismatch', ...
-        'MATLAB mcrversion cannot be normalized to [26 1]; STOP.');
-end
+build.update_minimum = 0;
+build.mcr_version = act_mcr;
 build.arch = strtrim(act_arch);
 build.generation = sprintf('%d.%d', build.mcr_version(1), build.mcr_version(2));
 if ~local_is_valid_sha256(runner_fp)
@@ -562,10 +587,15 @@ build.source_untracked = untracked_sources;
 build.source_status = git_status;
 build.build_timestamp_utc = build_stamp;
 build.matlab_version = strtrim(act_version);
-build.matlab_update = 'Update 2';
-build.matlab_build = '26.1.0.3251617';
+build.matlab_update = '';
+build.matlab_build = strtrim(act_version);
 build.matlab_root = act_root;
-build.compiler_identity = 'MATLAB Compiler 26.1 (R2026a)';
+compiler_info = ver('compiler');
+if isempty(compiler_info)
+    build.compiler_identity = 'MATLAB Compiler';
+else
+    build.compiler_identity = [compiler_info(1).Name ' ' compiler_info(1).Version];
+end
 build.required_toolboxes = {'Image_Toolbox'; 'Statistics_Toolbox'; 'Compiler'};
 build.mcc_options = mcc_options_text;
 build.entrypoint = 'src/mlsc/mlsc_current_payload.m';
@@ -597,7 +627,8 @@ build.checksums = build_checksums;
 % Complete SHA-256 inventory of every packaged file (schema v1 retained,
 % additive only). Covers every file staged under the output root except
 % the self-describing manifest pair mlsc_current_build.mat/.txt (self-hash
-% impossible; the .mat identity is bound later by the Gate-A record).
+% impossible; the .mat identity stands alone in the active dev path (no
+% Gate-A binding is required or consulted).
 % Ordinary local builds carry the same inventory; only the release_* and
 % build_mode values differ.
 local_write_text(fullfile(out_dir_arg, 'mcc_args.txt'), {mcc_options_text});
@@ -616,11 +647,50 @@ build.release_tree = release_tree_hash;
 build.release_worktree = release_worktree_rel;
 build.thread_policy = 'no -singleCompThread, no OMP/MKL=1 forcing; evidence-selected multithreading preferred';
 build.compat_note = 'same release required; same update preferred, newer same-release update compatible; never different release or older update';
-build.gate_a_status = 'pending: compilation is NOT Gate-A PASS; execution requires a separately finalized Gate-A record binding this manifest (see runbook)';
 build.provenance_method = 'content-bound: canonical <relpath>\t<SHA256>\n per included file sorted by path, SHA-256 over that text; tracked mods + every untracked source, .nfs excluded; deterministic, no timestamps; fail closed on unreadable; base HEAD bound via source_commit + MATLAB introspection';
 build_manifest_path = fullfile(out_dir_arg, 'mlsc_current_build.mat');
 save(build_manifest_path, 'build');
 local_write_text(fullfile(out_dir_arg, 'mlsc_current_build.txt'), local_build_text(build));
+
+% Promote only after compilation and structural verification have completed.
+% Keep the existing compiled tree (including its historical R2026a files)
+% outside compiled/ before replacing it; never delete/overwrite it.
+compiled_dir = fullfile(repo_root, 'compiled');
+scratch_dir = fullfile(repo_root, 'scratch');
+if exist(scratch_dir, 'dir') ~= 7
+    [ok_mkdir, msg_mkdir] = mkdir(scratch_dir);
+    if ~ok_mkdir
+        error('pseudo_CT:BuildOutput', ...
+            'Cannot create scratch directory for prior build preservation: %s', msg_mkdir);
+    end
+end
+history_dir = tempname(scratch_dir);
+if exist(history_dir, 'dir') == 7 || exist(history_dir, 'file') == 2
+    error('pseudo_CT:BuildOutput', ...
+        'Unique prior-build backup path unexpectedly exists: %s.', history_dir);
+end
+had_previous = exist(compiled_dir, 'dir') == 7;
+if had_previous
+    [ok_move, msg_move] = movefile(compiled_dir, history_dir);
+    if ~ok_move
+        error('pseudo_CT:BuildOutput', 'Cannot preserve prior compiled tree: %s', msg_move);
+    end
+end
+[ok_move, msg_move] = movefile(out_dir_arg, compiled_dir);
+if ~ok_move
+    if had_previous
+        [ok_rollback, msg_rollback] = movefile(history_dir, compiled_dir);
+        if ~ok_rollback
+            error('pseudo_CT:BuildOutput', ...
+                ['Cannot promote verified build: %s. CRITICAL: rollback also ', ...
+                 'failed (%s); prior compiled tree remains preserved at %s.'], ...
+                msg_move, msg_rollback, history_dir);
+        end
+    end
+    error('pseudo_CT:BuildOutput', 'Cannot promote verified build: %s', msg_move);
+end
+runner_path = fullfile(compiled_dir, 'payload_build', 'run_mlsc_current_payload.sh');
+exe_path = fullfile(compiled_dir, 'payload_build', 'mlsc_current_payload');
 
 fprintf('BUILD_SUCCESS out=%s runner=%s exe=%s\n', out_dir_arg, runner_path, exe_path);
 fprintf('RESOURCES %s\n', resources_path);
@@ -672,9 +742,19 @@ if isempty(txt)
     return;
 end
 txt = local_clean_git_text(txt);
-parts = strsplit(txt, char(10));
-for kk = 1:numel(parts)
-    t = strtrim(local_clean_git_text(parts{kk}));
+% strsplit is unavailable in the minimum supported MATLAB (R2010b).
+% Split explicitly so the later provenance commands cannot turn a valid
+% HEAD capture into an empty result through the enclosing fail-closed catch.
+while ~isempty(txt)
+    nl = find(txt == char(10), 1);
+    if isempty(nl)
+        part = txt;
+        txt = '';
+    else
+        part = txt(1:nl - 1);
+        txt = txt(nl + 1:end);
+    end
+    t = strtrim(local_clean_git_text(part));
     if ~isempty(t)
         lines{end + 1, 1} = t; %#ok<AGROW>
     end
@@ -729,16 +809,12 @@ catch %#ok<CTCH>
 end
 end
 
-function fp = local_fingerprint(path_text)
-info = dir(path_text);
-if isempty(info)
-    fp = 'missing';
-    return;
-end
-fp = sprintf('bytes=%d;datenum=%.6f', info(1).bytes, info(1).datenum);
-end
-
-function resources = local_build_resources(atlas_dir, spm_dir, hotmap_path)
+function resources = local_build_resources(atlas_dir)
+% T009 existence-only resource manifest: atlas_list plus resource_names.
+% Content-identity (bytes/datenum) fingerprint fields and the native
+% inventory/certification fields were removed with the payload gates; the
+% build keeps the fail-closed presence checks (dependency roots above plus
+% per-name existence here).
 fixed = {'ch2.nii'; 'new_segment_batch.mat'; 'dartel_existing_template_batch.mat'; ...
     'create_inverse_warped_batch.mat'; 'Template_1.nii'; 'Template_2.nii'; ...
     'Template_3.nii'; 'Template_4.nii'; 'Template_5.nii'; 'Template_6.nii'};
@@ -752,46 +828,17 @@ for kk = 1:numel(listed)
 end
 atlas_list = sort(atlas_list);
 names = [fixed; atlas_list];
-fps = {};
 for kk = 1:numel(names)
-    fp_here = local_fingerprint(fullfile(atlas_dir, names{kk}));
-    if strcmp(fp_here, 'missing')
+    if exist(fullfile(atlas_dir, names{kk}), 'file') ~= 2
         error('pseudo_CT:BuildDependency', 'Atlas resource missing: %s', fullfile(atlas_dir, names{kk}));
     end
-    fps{end + 1, 1} = fp_here; %#ok<AGROW>
 end
-tpm_fp = local_fingerprint(fullfile(spm_dir, 'toolbox', 'Seg', 'TPM.nii'));
-qc_fp = local_fingerprint(hotmap_path);
-if strcmp(tpm_fp, 'missing') || strcmp(qc_fp, 'missing')
-    error('pseudo_CT:BuildDependency', 'TPM or QC fingerprint missing.');
-end
-native_names = {'spm_bsplinc.mexa64'; 'spm_bsplins.mexa64'; 'spm_conv_vol.mexa64'; ...
-    'spm_sample_vol.mexa64'; 'spm_slice_vol.mexa64'};
-native_names = sort(native_names);
-native_fps = {};
-for kk = 1:numel(native_names)
-    fp_here = local_fingerprint(fullfile(spm_dir, native_names{kk}));
-    if strcmp(fp_here, 'missing')
-        error('pseudo_CT:BuildDependency', 'Native missing: %s', fullfile(spm_dir, native_names{kk}));
-    end
-    native_fps{end + 1, 1} = fp_here; %#ok<AGROW>
-end
-native_types = {'MEX'; 'MEX'; 'MEX'; 'MEX'; 'MEX'};
 resources = struct();
 resources.schema = 'pseudo-CT.mlsc-current-resources/v1';
 resources.manifest_version = 1;
 resources.atlas_dir = atlas_dir;
 resources.atlas_list = atlas_list;
 resources.resource_names = names;
-resources.resource_fingerprints = fps;
-resources.tpm_fingerprint = tpm_fp;
-resources.qc_fingerprint = qc_fp;
-resources.native_names = native_names;
-resources.native_fingerprints = native_fps;
-resources.native_types = native_types;
-resources.native_platform = 'glnxa64';
-resources.native_arch = 'glnxa64';
-resources.native_validation = 't007-gate-a-pending: existence-only; production loadability evidence comes later';
 end
 
 function lines = local_resources_text(resources)
@@ -800,17 +847,10 @@ lines = {'# MLSC current resource manifest (human-readable companion; .mat is au
     sprintf('manifest_version %d', resources.manifest_version); ...
     sprintf('atlas_dir %s', resources.atlas_dir); ...
     sprintf('atlas_count %d', numel(resources.atlas_list)); ...
-    sprintf('tpm_fingerprint %s', resources.tpm_fingerprint); ...
-    sprintf('qc_fingerprint %s', resources.qc_fingerprint); ...
-    sprintf('native_validation %s', resources.native_validation); ...
-    '## resources (name fingerprint)'; ...
+    '## resources (name)'; ...
     };
 for kk = 1:numel(resources.resource_names)
-    lines{end + 1, 1} = sprintf('%s %s', resources.resource_names{kk}, resources.resource_fingerprints{kk}); %#ok<AGROW>
-end
-lines{end + 1, 1} = '## natives (name fingerprint type)'; %#ok<AGROW>
-for kk = 1:numel(resources.native_names)
-    lines{end + 1, 1} = sprintf('%s %s %s', resources.native_names{kk}, resources.native_fingerprints{kk}, resources.native_types{kk}); %#ok<AGROW>
+    lines{end + 1, 1} = sprintf('%s', resources.resource_names{kk}); %#ok<AGROW>
 end
 end
 
@@ -836,7 +876,6 @@ lines = {'# MLSC current build manifest (human-readable companion; .mat is autho
     sprintf('release_tree %s', build.release_tree); ...
     sprintf('release_worktree %s', build.release_worktree); ...
     sprintf('packaged_files %d sha256=%s', numel(build.packaged_files), build.packaged_files_fingerprint); ...
-    sprintf('gate_a_status %s', build.gate_a_status); ...
     };
 end
 
@@ -965,9 +1004,12 @@ h = 'unavailable';
 try
     [s, out] = system(sprintf('sha256sum "%s" 2>&1', path_text));
     if s == 0
-        tok = strsplit(strtrim(out));
-        if ~isempty(tok)
-            h = tok{1};
+        out = strtrim(out);
+        sep = find(isspace(out), 1);
+        if isempty(sep)
+            h = out;
+        else
+            h = out(1:sep - 1);
         end
     end
 catch %#ok<CTCH>
@@ -998,7 +1040,8 @@ end
 function fp = local_provenance_fingerprint(repo_root, head, tracked, untracked)
 %LOCAL_PROVENANCE_FINGERPRINT Content-bound deterministic fingerprint.
 %   Canonical text is "<relpath>\t<SHA256>\n" per included file sorted by
-%   path (tracked mods + every untracked source consumed, .nfs excluded),
+%   path (tracked mods + every untracked source consumed, .nfs excluded);
+%   tracked deletions are explicitly represented as "<relpath>\tdeleted\n",
 %   SHA-256 over that text. Deterministic normalization (strtrimmed
 %   relpaths sorted, lowercase hex, tab/newline separators), no timestamps.
 %   Missing/unreadable/unhashable file STOPS the build (fail closed).
@@ -1047,6 +1090,10 @@ rels = uniq;
 canonical = '';
 for kk = 1:numel(rels)
     full_here = fullfile(strtrim(repo_root), rels{kk});
+    if exist(full_here, 'file') ~= 2 && any(strcmp(tracked, rels{kk}))
+        canonical = [canonical rels{kk} char(9) 'deleted' char(10)]; %#ok<AGROW>
+        continue;
+    end
     h = local_sha256(full_here);
     if ~local_is_valid_sha256(h)
         error('pseudo_CT:BuildProvenance', ...

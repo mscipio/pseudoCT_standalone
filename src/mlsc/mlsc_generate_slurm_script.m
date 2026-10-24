@@ -271,15 +271,120 @@ lines{end + 1} = ['input_name=' q_input_name];
 lines{end + 1} = ['normalized_name=' q_normalized_name];
 end
 
-function lines = local_generic_progress_tmpdir(progress_filename)
+function lines = local_generic_progress_tmpdir(progress_filename, include_executor_provenance)
 %LOCAL_GENERIC_PROGRESS_TMPDIR Single generic progress/TMPDIR path (R005).
 %   Progress file, record helper, node-local TMPDIR guards, shared
 %   input/temp checks, and write-probe. R2010b only.
+if nargin < 2
+    include_executor_provenance = false;
+end
 lines = {};
 lines{end + 1} = ['progress_file="$shared_temp/' progress_filename '"'];
 lines{end + 1} = 'mlsc_record_progress() {';
 lines{end + 1} = '    (umask 077; printf ''%s\n'' "$1" >> "$progress_file") || true';
 lines{end + 1} = '}';
+if ~include_executor_provenance
+    lines{end + 1} = 'if [ -z "${TMPDIR:-}" ]; then';
+    lines{end + 1} = '    printf ''MLSC job requires node-local TMPDIR.\n'' >&2';
+    lines{end + 1} = '    exit 71';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if [ ! -d "$TMPDIR" ] || [ ! -w "$TMPDIR" ]; then';
+    lines{end + 1} = '    printf ''Node-local TMPDIR is unavailable or unwritable.\n'' >&2';
+    lines{end + 1} = '    exit 71';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'case "$TMPDIR" in';
+    lines{end + 1} = '    "$shared_temp"|"$shared_temp"/*)';
+    lines{end + 1} = '        printf ''TMPDIR must be node-local, not the shared subject temp.\n'' >&2';
+    lines{end + 1} = '        exit 71';
+    lines{end + 1} = '        ;;';
+    lines{end + 1} = 'esac';
+    lines{end + 1} = 'if [ ! -r "$shared_input" ]; then';
+    lines{end + 1} = '    printf ''Shared MLSC input is not readable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if [ ! -d "$shared_temp" ] || [ ! -w "$shared_temp" ]; then';
+    lines{end + 1} = '    printf ''Shared MLSC subject temp is unavailable or unwritable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+end
+lines{end + 1} = 'shared_probe="$shared_temp/.mlsc_preflight.$$"';
+lines{end + 1} = 'shared_probe_created=0';
+lines{end + 1} = 'cleanup_shared_probe() {';
+lines{end + 1} = '    if [ "$shared_probe_created" -eq 1 ]; then';
+lines{end + 1} = '        rm -f -- "$shared_probe"';
+lines{end + 1} = '    fi';
+lines{end + 1} = '}';
+if include_executor_provenance
+    lines{end + 1} = 'mlsc_capture_executor_provenance() {';
+    lines{end + 1} = '    local provenance_exit_status="$1"';
+    lines{end + 1} = '    local provenance_job_id="${SLURM_JOB_ID:-}"';
+    lines{end + 1} = '    local provenance_sidecar_name';
+    lines{end + 1} = '    case "$provenance_job_id" in';
+    lines{end + 1} = '        ""|*[!0-9]*) provenance_job_id="Not confirmed"; provenance_sidecar_name="mlsc_executor_provenance_unknown.txt" ;;';
+    lines{end + 1} = '        *) provenance_sidecar_name="mlsc_executor_provenance_${provenance_job_id}.txt" ;;';
+    lines{end + 1} = '    esac';
+    lines{end + 1} = '    local provenance_hostname';
+    lines{end + 1} = '    local provenance_cpu_model';
+    lines{end + 1} = '    local provenance_architecture';
+    lines{end + 1} = '    local provenance_mcr_root="${current_mcr_root:-Not confirmed}"';
+    lines{end + 1} = '    local provenance_library_dir';
+    lines{end + 1} = '    local provenance_library_present';
+    lines{end + 1} = '    local provenance_runtime_release="${actual_mcr_release:-Not confirmed}"';
+    lines{end + 1} = '    local provenance_shell_outcome';
+    lines{end + 1} = '    local provenance_path';
+    lines{end + 1} = '    provenance_hostname="$(hostname 2>/dev/null || true)"';
+    lines{end + 1} = '    provenance_cpu_model="$(awk -F: ''/^model name[[:space:]]*:/ {sub(/^[[:space:]]*/, "", $2); print $2; exit}'' /proc/cpuinfo 2>/dev/null || true)"';
+    lines{end + 1} = '    provenance_architecture="$(uname -m 2>/dev/null || true)"';
+    lines{end + 1} = '    if [ -z "$provenance_hostname" ]; then provenance_hostname="Not confirmed"; fi';
+    lines{end + 1} = '    if [ -z "$provenance_cpu_model" ]; then provenance_cpu_model="Not confirmed"; fi';
+    lines{end + 1} = '    if [ -z "$provenance_architecture" ]; then provenance_architecture="Not confirmed"; fi';
+    lines{end + 1} = '    if [ "$provenance_mcr_root" = "Not confirmed" ]; then';
+    lines{end + 1} = '        provenance_library_dir="Not confirmed"';
+    lines{end + 1} = '        provenance_library_present="Not confirmed"';
+    lines{end + 1} = '    else';
+    lines{end + 1} = '        provenance_library_dir="${provenance_mcr_root%/}/runtime/glnxa64"';
+    lines{end + 1} = '        if [ -d "$provenance_library_dir" ]; then provenance_library_present="yes"; else provenance_library_present="no"; fi';
+    lines{end + 1} = '    fi';
+    lines{end + 1} = '    case "$provenance_exit_status" in';
+    lines{end + 1} = '        ""|*[!0-9]*) provenance_shell_outcome="Not confirmed" ;;';
+    lines{end + 1} = '        0) provenance_shell_outcome="completed" ;;';
+    lines{end + 1} = '        *) provenance_shell_outcome="failed" ;;';
+    lines{end + 1} = '    esac';
+    lines{end + 1} = '    if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ]; then';
+    lines{end + 1} = '        provenance_path="$TMPDIR/$provenance_sidecar_name"';
+    lines{end + 1} = '    else';
+    lines{end + 1} = '        provenance_path="$shared_temp/$provenance_sidecar_name"';
+    lines{end + 1} = '    fi';
+    lines{end + 1} = '    {';
+    lines{end + 1} = '        printf ''schema=%s\n'' ''pseudo-CT.mlsc-executor-provenance/v1''';
+    lines{end + 1} = '        printf ''job_id=%s\n'' "$provenance_job_id"';
+    lines{end + 1} = '        printf ''hostname=%s\n'' "$provenance_hostname"';
+    lines{end + 1} = '        printf ''cpu_model=%s\n'' "$provenance_cpu_model"';
+    lines{end + 1} = '        printf ''architecture=%s\n'' "$provenance_architecture"';
+    lines{end + 1} = '        printf ''shell_exit_code=%s\n'' "$provenance_exit_status"';
+    lines{end + 1} = '        printf ''shell_terminal_outcome=%s\n'' "$provenance_shell_outcome"';
+    lines{end + 1} = '        printf ''selected_mcr_root=%s\n'' "$provenance_mcr_root"';
+    lines{end + 1} = '        printf ''runtime_library_dir=%s\n'' "$provenance_library_dir"';
+    lines{end + 1} = '        printf ''runtime_library_present=%s\n'' "$provenance_library_present"';
+    lines{end + 1} = '        printf ''runtime_release=%s\n'' "$provenance_runtime_release"';
+    lines{end + 1} = '        printf ''build_manifest_compiler_release=%s\n'' "$recorded_build_release"';
+    lines{end + 1} = '        printf ''build_manifest_mcr_version=%s\n'' "$recorded_build_mcr_version"';
+    lines{end + 1} = '        printf ''build_manifest_generation=%s\n'' "$recorded_build_generation"';
+    lines{end + 1} = '        printf ''build_manifest_arch=%s\n'' "$recorded_build_arch"';
+    lines{end + 1} = '        printf ''build_manifest_mcr_root=%s\n'' "$recorded_build_mcr_root"';
+    lines{end + 1} = '        printf ''build_manifest_source_commit=%s\n'' "$recorded_build_source_commit"';
+    lines{end + 1} = '        printf ''build_manifest_runner_checksum=%s\n'' "$recorded_build_runner_checksum"';
+    lines{end + 1} = '    } > "$provenance_path" 2>/dev/null || return 0';
+    lines{end + 1} = '    if [ "$provenance_path" != "$shared_temp/$provenance_sidecar_name" ]; then';
+    lines{end + 1} = '        cp -- "$provenance_path" "$shared_temp/$provenance_sidecar_name" >/dev/null 2>&1 || true';
+    lines{end + 1} = '    fi';
+    lines{end + 1} = '    return 0';
+    lines{end + 1} = '}';
+    lines{end + 1} = 'trap ''mlsc_capture_executor_provenance "$?" || true; cleanup_shared_probe || true'' EXIT';
+else
+    lines{end + 1} = 'trap cleanup_shared_probe EXIT';
+end
+if include_executor_provenance
 lines{end + 1} = 'if [ -z "${TMPDIR:-}" ]; then';
 lines{end + 1} = '    printf ''MLSC job requires node-local TMPDIR.\n'' >&2';
 lines{end + 1} = '    exit 71';
@@ -302,14 +407,7 @@ lines{end + 1} = 'if [ ! -d "$shared_temp" ] || [ ! -w "$shared_temp" ]; then';
 lines{end + 1} = '    printf ''Shared MLSC subject temp is unavailable or unwritable.\n'' >&2';
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
-lines{end + 1} = 'shared_probe="$shared_temp/.mlsc_preflight.$$"';
-lines{end + 1} = 'shared_probe_created=0';
-lines{end + 1} = 'cleanup_shared_probe() {';
-lines{end + 1} = '    if [ "$shared_probe_created" -eq 1 ]; then';
-lines{end + 1} = '        rm -f -- "$shared_probe"';
-lines{end + 1} = '    fi';
-lines{end + 1} = '}';
-lines{end + 1} = 'trap cleanup_shared_probe EXIT';
+end
 lines{end + 1} = 'if ! (umask 077; set -C; : > "$shared_probe"); then';
 lines{end + 1} = '    printf ''Shared MLSC subject temp failed its write preflight.\n'' >&2';
 lines{end + 1} = '    exit 72';
@@ -416,6 +514,14 @@ mcr_root = strtrim(current.mcr_root);
 build_manifest_path = strtrim(current.build_manifest);
 resource_manifest_path = strtrim(current.resource_manifest);
 resources = local_load_current_resources(resource_manifest_path);
+build = local_load_current_build(build_manifest_path);
+recorded_build_release = local_manifest_text(build, 'release');
+recorded_build_mcr_version = local_manifest_text(build, 'mcr_version');
+recorded_build_generation = local_manifest_text(build, 'generation');
+recorded_build_arch = local_manifest_text(build, 'arch');
+recorded_build_mcr_root = local_manifest_text(build, 'mcr_root');
+recorded_build_source_commit = local_manifest_text(build, 'source_commit');
+recorded_build_runner_checksum = local_manifest_text(build, 'runner_checksum');
 atlas_dir = strtrim(resources.atlas_dir);
 recenter_text = local_effective_yes_no(subject, config, ...
     {'recenter_before_normalization'}, 'Yes');
@@ -479,10 +585,18 @@ lines{end + 1} = ['shared_resource_manifest=' q_shared_resources];
 lines{end + 1} = ['shared_build_manifest=' q_shared_build];
 lines{end + 1} = ['current_runner=' q_runner];
 lines{end + 1} = ['current_mcr_root=' q_mcr_root];
+lines{end + 1} = 'actual_mcr_release=""';
+lines{end + 1} = ['recorded_build_release=' local_shell_quote(recorded_build_release)];
+lines{end + 1} = ['recorded_build_mcr_version=' local_shell_quote(recorded_build_mcr_version)];
+lines{end + 1} = ['recorded_build_generation=' local_shell_quote(recorded_build_generation)];
+lines{end + 1} = ['recorded_build_arch=' local_shell_quote(recorded_build_arch)];
+lines{end + 1} = ['recorded_build_mcr_root=' local_shell_quote(recorded_build_mcr_root)];
+lines{end + 1} = ['recorded_build_source_commit=' local_shell_quote(recorded_build_source_commit)];
+lines{end + 1} = ['recorded_build_runner_checksum=' local_shell_quote(recorded_build_runner_checksum)];
 [progress_filename, progress_correlation_id] = ...
     local_progress_selection(runtime);
 lines = local_append_generic(lines, local_generic_progress_tmpdir( ...
-    progress_filename));
+    progress_filename, true));
 % Startup TOCTOU recheck avoids time-of-check/time-of-use drift:
 % pre-submission validated the pinned artifact, but shared paths could
 % have changed before sbatch startup. Before any current science (before
@@ -556,10 +670,7 @@ lines{end + 1} = 'if [ ! -d "$current_mcr_root/runtime/glnxa64" ]; then';
 lines{end + 1} = '    printf ''Current MCR_ROOT structure is malformed.\n'' >&2';
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
-lines{end + 1} = 'if [ ! -f "$current_mcr_root/VersionInfo.xml" ]; then';
-lines{end + 1} = '    printf ''Current MCR_ROOT metadata is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
+lines{end + 1} = 'if [ -f "$current_mcr_root/VersionInfo.xml" ]; then';
 lines{end + 1} = '# B4A exact MCR identity (same rules as mlsc_current_validate):';
 lines{end + 1} = '# extract ACTUAL fields from VersionInfo.xml, then exact compare.';
 lines{end + 1} = '# No substring matching: Update 2 vs Update 20 cannot confuse';
@@ -643,6 +754,14 @@ lines{end + 1} = 'fi';
 lines{end + 1} = 'if [ "$actual_mcr_arch" != "$expected_mcr_arch" ]; then';
 lines{end + 1} = '    printf ''Current MCR_ROOT architecture changed after preflight (TOCTOU).\n'' >&2';
 lines{end + 1} = '    exit 72';
+lines{end + 1} = 'fi';
+lines{end + 1} = 'else';
+lines{end + 1} = '    # MCR 7.14 has no VersionInfo.xml; the exact pinned root plus';
+lines{end + 1} = '    # runtime library path is its fail-closed identity check.';
+lines{end + 1} = '    if [ "$expected_mcr_generation" != "7.14" ] || [ ! -s "$current_mcr_root/runtime/glnxa64/libmwmclmcrrt.so" ]; then';
+lines{end + 1} = '        printf ''Pinned MCR 7.14 runtime identity is invalid.\n'' >&2';
+lines{end + 1} = '        exit 72';
+lines{end + 1} = '    fi';
 lines{end + 1} = 'fi';
 lines{end + 1} = '# Gate-A dynamic loading is Gate-A-required state (not proven here);';
 lines{end + 1} = '# only MCR_ROOT plus library structure/metadata is verified now.';
@@ -919,6 +1038,39 @@ resources = loaded.resources;
 if ~isstruct(resources) || numel(resources) ~= 1
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Resource manifest must be one scalar struct.');
+end
+end
+
+function build = local_load_current_build(build_manifest_path)
+loaded = load(build_manifest_path);
+if ~isfield(loaded, 'build') || ~isstruct(loaded.build) || ...
+        numel(loaded.build) ~= 1
+    error('pseudo_CT:MLSCCurrentManifest', ...
+        'Build manifest must contain one scalar struct build.');
+end
+build = loaded.build;
+end
+
+function text = local_manifest_text(build, field_name)
+%LOCAL_MANIFEST_TEXT Bounded scalar metadata copied from the build manifest.
+text = 'Not confirmed';
+try
+    if ~isstruct(build) || numel(build) ~= 1 || ...
+            ~isfield(build, field_name)
+        return;
+    end
+    value = build.(field_name);
+    if ischar(value) && size(value, 1) == 1 && ~isempty(strtrim(value)) && ...
+            ~any(value == char(0)) && ...
+            isempty(regexp(value, '[\r\n]', 'once'))
+        text = strtrim(value);
+    elseif strcmp(field_name, 'mcr_version') && isnumeric(value) && ...
+            numel(value) == 2 && all(isfinite(value(:))) && ...
+            all(value(:) == floor(value(:)))
+        text = sprintf('%d.%d', value(1), value(2));
+    end
+catch %#ok<CTCH>
+    text = 'Not confirmed';
 end
 end
 
