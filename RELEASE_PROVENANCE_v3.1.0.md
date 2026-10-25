@@ -1,5 +1,7 @@
 # pseudoCT_standalone 3.1.0 — MLSC artifact provenance
 
+The accepted executable covered by this record is the current-lineage PseudoCT v3 implementation compiled using MATLAB R2010b. It is not the historical v2.0 Aether implementation described by the Legacy Processing profiles.
+
 This is a one-time provenance exception for one retained MLSC artifact. It
 applies only when all three immutable SHA-256 anchors match:
 

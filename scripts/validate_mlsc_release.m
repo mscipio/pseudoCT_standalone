@@ -21,13 +21,19 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %                     read-only against RepoRoot (commit==tag enforced).
 %     'ReleaseCommit' Expected 40-hex release commit (required when no
 %                     tag is given; cross-checked with the tag otherwise).
+%     'ExpectedTargetVersion'
+%                     Prepublication-only exact target v3.1.1 when its
+%                     release tag does not yet exist. Requires an explicit
+%                     ReleaseCommit and is accepted only for the exact
+%                     pinned R2010b artifact/package. Once tagged, use the
+%                     actual ReleaseTag and ReleaseCommit instead.
 %     'ExpectedFingerprint'
 %                     Optional out-of-band source fingerprint the manifest
 %                     must carry (wrong hash blocks).
 %     'GateARecord'   Finalized Gate-A record .mat (variable gate_a,
 %                     schema pseudo-CT.mlsc-current-gate-a/v1) binding this
-%                     exact candidate. Required except for the single
-%                     code-pinned pseudoCT_standalone v3.1.0 artifact.
+%                     exact candidate. Required except for the exact-pinned
+%                     R2010b artifact when targeting v3.1.0 or v3.1.1.
 %     'DeployRoot'    Exact production runtime root of the deployment
 %                     copy (postinstall only; prepublication rejects it).
 %                     The layout is pinned by the mlsc-current profile:
@@ -76,14 +82,20 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %
 %   One-time provenance exception: the original R2010b/Compiler 4.14
 %   artifact is recognized only by its exact build-manifest, executable,
-%   and launcher SHA-256 anchors plus the recorded runtime identity. Its
-%   manifest source_commit must be valid and its source-provenance
+%   and launcher SHA-256 anchors plus the recorded runtime identity. The
+%   exception is permitted for exact release tags v3.1.0/v3.1.1; while
+%   v3.1.1 is untagged, prepublication alone may use ExpectedTargetVersion
+%   v3.1.1 with an explicit ReleaseCommit. Postinstall always requires the
+%   actual tag.
+%   The artifact's source_commit must be valid and its source-provenance
 %   fingerprint is preserved verbatim, but that dirty-source fingerprint
 %   is not independently reconstructed. Release-source commit/tag/tree
-%   are resolved separately from the release repository. No Gate-A record
-%   is used for this artifact. Every package inventory hash and package
-%   completeness check remains mandatory; all other artifacts retain the
-%   strict R2026a release-candidate and Gate-A contract above.
+%   are resolved separately from the release repository; reusing this exact
+%   payload in a later source release does not claim it was built from that
+%   release. No Gate-A record is used for this artifact. Every package
+%   inventory hash and package completeness check remains mandatory; all
+%   other artifacts retain the strict R2026a release-candidate and Gate-A
+%   contract above.
 %
 %   Deployment-copy provenance (postinstall): the deployment copy must
 %   use the exact pinned runtime layout (launcher at the DeployRoot,
@@ -130,6 +142,7 @@ build_manifest = '';
 resource_manifest = '';
 release_tag = '';
 release_commit = '';
+expected_target_version = '';
 expected_fp = '';
 gate_a_record = '';
 deploy_root = '';
@@ -159,6 +172,8 @@ while ii <= numel(varargin)
             release_tag = strtrim(val_here);
         case 'releasecommit'
             release_commit = strtrim(val_here);
+        case 'expectedtargetversion'
+            expected_target_version = strtrim(val_here);
         case 'expectedfingerprint'
             expected_fp = strtrim(val_here);
         case 'gatearecord'
@@ -173,6 +188,25 @@ while ii <= numel(varargin)
             error('pseudo_CT:MLSCReleaseGate', 'Unknown validator argument %s.', name_here);
     end
     ii = ii + 2;
+end
+
+if ~isempty(expected_target_version)
+    if ~is_pre
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'ExpectedTargetVersion is prepublication-only; postinstall requires the actual release tag semantics.');
+    end
+    if ~strcmp(expected_target_version, 'v3.1.1')
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'ExpectedTargetVersion is available only for exact target v3.1.1; unsupported version blocks publication.');
+    end
+    if ~isempty(release_tag)
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'ExpectedTargetVersion is only for a pre-tag candidate; use ReleaseTag when the release tag exists.');
+    end
+    if isempty(release_commit)
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'ExpectedTargetVersion v3.1.1 requires an explicit ReleaseCommit while no tag exists.');
+    end
 end
 
 if is_pre && ~isempty(deploy_root)
@@ -210,22 +244,33 @@ if isempty(release_tag) && isempty(release_commit)
     error('pseudo_CT:MLSCReleaseGate', 'ReleaseTag or ReleaseCommit is required; missing release identity blocks publication.');
 end
 
-% Gate-A may be omitted only when the exact manifest digest is pinned.
+% Gate-A may be omitted only when the exact artifact manifest digest is pinned.
 % The loaded manifest must then also carry the expected runtime identity
 % and runner/executable anchors before the exception branch is selected.
-exception_manifest_digest = local_v310_manifest_digest(build_manifest);
+exception_manifest_digest = local_r2010b_manifest_digest(build_manifest);
+prepublication_v311_target = is_pre && isempty(release_tag) && ...
+    strcmp(expected_target_version, 'v3.1.1') && ~isempty(release_commit);
+if ~isempty(expected_target_version) && ~exception_manifest_digest
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'ExpectedTargetVersion is permitted only for the exact pinned R2010b artifact; other packages require a real release tag.');
+end
+if exception_manifest_digest && ~local_is_r2010b_compatible_tag(release_tag) && ...
+        ~prepublication_v311_target
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'The pinned R2010b artifact may target only release tags v3.1.0 or v3.1.1; unsupported version blocks publication.');
+end
 if isempty(gate_a_record) && ~exception_manifest_digest
     error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
 end
 build = local_load_manifest(build_manifest, 'build', 'pseudo-CT.mlsc-current-build/v1');
 resources = local_load_manifest(resource_manifest, 'resources', 'pseudo-CT.mlsc-current-resources/v1');
-provenance_exception = local_is_v310_exception(build_manifest, build);
+provenance_exception = local_is_r2010b_exception(build_manifest, build);
 if exception_manifest_digest && ~provenance_exception
     error('pseudo_CT:MLSCReleaseGate', ...
-        'Pinned v3.1.0 artifact identity or runtime metadata is inconsistent; exception verification blocks publication.');
+        'Pinned R2010b artifact identity or runtime metadata is inconsistent; exception verification blocks publication.');
 end
 if is_pre && provenance_exception
-    local_require_v310_package_manifest(package_dir);
+    local_require_r2010b_package_manifest(package_dir);
 end
 if isempty(gate_a_record) && ~provenance_exception
     error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
@@ -234,7 +279,7 @@ end
 % 1-2. Release source binding (commit==tag, artifacts-from-source).
 eff_commit = mlsc_release_gate('resolve_commit', repo_root, release_tag, release_commit);
 if provenance_exception
-    local_check_v310_source_provenance(build, expected_fp);
+    local_check_r2010b_source_provenance(build, expected_fp);
     tree_recomputed = mlsc_release_gate('release_tree', repo_root, eff_commit);
 else
 if ~isfield(build, 'source_commit') || ~ischar(build.source_commit) || ...
@@ -378,8 +423,8 @@ end
 ok = true;
 end
 
-function matched = local_v310_manifest_digest(manifest_path)
-%LOCAL_V310_MANIFEST_DIGEST Recognize only the immutable approved build MAT.
+function matched = local_r2010b_manifest_digest(manifest_path)
+%LOCAL_R2010B_MANIFEST_DIGEST Recognize only the immutable approved build MAT.
 matched = false;
 if exist(manifest_path, 'file') ~= 2
     return;
@@ -389,23 +434,28 @@ matched = strcmpi(manifest_sha, ...
     '62bb3472b8225178c89ff731d4c664a8636d775006c0903ccd5677de5aa090f5');
 end
 
-function local_require_v310_package_manifest(package_dir)
-%LOCAL_REQUIRE_V310_PACKAGE_MANIFEST Anchor the manifest inside the package.
+function matched = local_is_r2010b_compatible_tag(release_tag)
+%LOCAL_IS_R2010B_COMPATIBLE_TAG Allow only the two explicitly approved tags.
+matched = strcmp(release_tag, 'v3.1.0') || strcmp(release_tag, 'v3.1.1');
+end
+
+function local_require_r2010b_package_manifest(package_dir)
+%LOCAL_REQUIRE_R2010B_PACKAGE_MANIFEST Anchor the manifest inside the package.
 manifest_path = fullfile(package_dir, 'mlsc_current_build.mat');
 if exist(manifest_path, 'file') ~= 2
     error('pseudo_CT:MLSCReleaseGate', ...
         'The packaged build manifest mlsc_current_build.mat is missing; missing evidence blocks publication.');
 end
-if ~local_v310_manifest_digest(manifest_path)
+if ~local_r2010b_manifest_digest(manifest_path)
     error('pseudo_CT:MLSCReleaseGate', ...
         'The packaged build manifest SHA-256 does not match the exact pinned artifact anchor; mismatch blocks publication.');
 end
 end
 
-function matched = local_is_v310_exception(manifest_path, build)
-%LOCAL_IS_V310_EXCEPTION Require the exact MAT and all independent anchors.
+function matched = local_is_r2010b_exception(manifest_path, build)
+%LOCAL_IS_R2010B_EXCEPTION Require the exact MAT and all independent anchors.
 matched = false;
-if ~local_v310_manifest_digest(manifest_path) || ...
+if ~local_r2010b_manifest_digest(manifest_path) || ...
         ~isstruct(build) || numel(build) ~= 1
     return;
 end
@@ -449,19 +499,19 @@ end
 matched = true;
 end
 
-function local_check_v310_source_provenance(build, expected_fp)
-%LOCAL_CHECK_V310_SOURCE_PROVENANCE Keep recorded build identity separate
+function local_check_r2010b_source_provenance(build, expected_fp)
+%LOCAL_CHECK_R2010B_SOURCE_PROVENANCE Keep recorded build identity separate
 % from the release-source identity resolved from the repository.
 if ~isfield(build, 'source_commit') || ~ischar(build.source_commit) || ...
         isempty(regexp(strtrim(build.source_commit), '^[0-9a-fA-F]{40}$', 'once'))
     error('pseudo_CT:MLSCReleaseGate', ...
-        'Pinned v3.1.0 build source_commit is invalid; build provenance blocks publication.');
+        'Pinned R2010b build source_commit is invalid; build provenance blocks publication.');
 end
 if ~isfield(build, 'source_provenance_fingerprint') || ...
         ~ischar(build.source_provenance_fingerprint) || ...
         ~mlsc_release_gate('is_valid_sha256', build.source_provenance_fingerprint)
     error('pseudo_CT:MLSCReleaseGate', ...
-        'Pinned v3.1.0 source provenance fingerprint is invalid; build provenance blocks publication.');
+        'Pinned R2010b source provenance fingerprint is invalid; build provenance blocks publication.');
 end
 if ~isempty(expected_fp) && ...
         ~strcmpi(strtrim(build.source_provenance_fingerprint), strtrim(expected_fp))

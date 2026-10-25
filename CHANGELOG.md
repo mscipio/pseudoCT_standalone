@@ -1,18 +1,27 @@
-3.1.0
+3.1.1
+
+## 3.1.1 — Exact-payload release validation and documentation provenance
+
+- Permits release validation of only the exact pinned current-lineage R2010b artifact for v3.1.1, with explicit pre-tag source identity and the final matching release tag; complete package inventory size and SHA-256 checks remain required. The compiled scientific executable is unchanged.
+- Aligns operator and installation documentation with the Standard Processing, MPRAGE-only Processing, and Legacy Processing selector names and clarifies MATLAB R2010b compatibility requirements.
+- Clarifies that the accepted MLSC executable described by the prior artifact record is current-lineage PseudoCT v3 compiled using MATLAB R2010b, not the historical v2 Aether implementation. Its association with user-accepted job 10515471 is unverified; the dirty source fingerprint cannot be independently reconstructed, and the scientific result remains dataset-specific. See [artifact provenance](RELEASE_PROVENANCE_v3.1.0.md).
+- Source version metadata is 3.1.1; no production deployment is claimed.
 
 ## 3.1.0 — Profile terminology and evidence documentation
 
-- Documents the recommended PseudoCT v3 — MLSC default, accepted R2010b Compiler 4.14/MCR 7.14 backend, chosen-version local execution, MPRAGE-only requirements, and retained Aether profiles.
-- Records accepted job 10515471 and its dataset-specific map digest/comparison; executor sidecar reporting is implemented, but live delivery is unconfirmed.
+- Documents the recommended PseudoCT v3 — MLSC default, accepted current-lineage R2010b Compiler 4.14/MCR 7.14 backend, chosen-version local execution, MPRAGE-only requirements, and retained Aether profiles.
+- Records user-accepted job 10515471 and its dataset-specific map digest/comparison; its association with the cited executable is unverified. Executor sidecar reporting is implemented, but live delivery is unconfirmed.
 
-## 3.0.2 — Flat-layout corrective release, published 2026-10-21 (see [release notes](RELEASE_NOTES_v3.0.2.md))
+<a id="release-v3-0-2"></a>
+
+## 3.0.2 — Flat-layout corrective release, published 2026-10-21
 
 - Resolves the v3.0.0 MLSC validation issue and v3.0.1 source-wrapper incompatibility while retaining the complete v3 feature set; compiled scientific executable unchanged.
 - See [installation requirements](docs/installation.md) and [scientific notes](docs/scientific-notes.md). No production deployment is claimed.
 - Corrected source packaging: the published archive contains the complete current development source. The local CURRENT path (`src/core/atlas_based_attenuation_map.m`) is a thin facade that delegates preparation to `src/core/pseudo_CT_current_prepare.m` and computation to `src/core/pseudo_CT_current_compute.m`; the shared helpers and the MLSC CURRENT backend are unchanged.
 - The corresponding CLI/progress regression test (`scripts/test_cli_progress_output.m`) is included and updated for the shared-boundary contract. The compiled scientific executable is unchanged (SHA-256 `6649a6ae91fd49f41b71d948a7c05012a8b8ac7c044edd05b4d53352f8cd518d`); no new scientific, submission, or production run was performed.
 
-## 3.0.1 — WITHDRAWN (historical body retained; see [v3.0.2 release notes](RELEASE_NOTES_v3.0.2.md))
+## 3.0.1 — WITHDRAWN (historical body retained; see the [v3.0.2 changelog entry](#release-v3-0-2))
 
 - Corrects the withdrawn v3.0.0 installation-path validation issue; the compiled scientific backend is unchanged. No production deployment is claimed.
 - Retains eight profiles, including selectable `launchpad-legacy`; current and legacy implementations have different numerical paths, with bounded evidence only.

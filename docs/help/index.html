@@ -69,8 +69,8 @@
             <strong>Routine use</strong>
             <p>
               For normal subject processing, use
-              <strong>Center Standard — MLSC</strong>
-              (<code>mlsc-current</code>). <strong>Local MATLAB</strong>
+              <strong>PseudoCT v3 — MLSC</strong>
+              (<code>mlsc-current</code>). <strong>PseudoCT v3 — Local</strong>
               (<code>local-current</code>) remains available as an alternate.
             </p>
           </div>
@@ -116,12 +116,18 @@
           <h3>Which version should I use?</h3>
           <p>
             For a new subject or a new study, users should normally use
-            <code>pseudoCT_standalone-latest</code>. v3.0.2 is the current
-            published release; v2.8.4 was the last published archive before v3.0.2.
+            <code>pseudoCT_standalone-latest</code>. v3.0.2 remains the latest
+            published archive; the v3.1.1 source/documentation version is not
+            yet published or deployed. v2.8.4 was the last published archive before v3.0.2.
             v3.0.0 was withdrawn for an MLSC validation issue, and v3.0.1
             was withdrawn because its source wrapper broke the established
             installation layout. v3.0.2 resolves both; its compiled scientific
-            executable is unchanged. No production deployment is claimed.
+            executable is unchanged. The accepted MLSC executable described in
+            the provenance record is current-lineage PseudoCT v3 compiled using
+            MATLAB R2010b, not the historical Aether v2 implementation. Its
+            association with job 10515471 is unverified; the available
+            scientific evidence is dataset-specific. No v3.1.1 publication or
+            production deployment is claimed.
           </p>
           <div class="callout info">
             <strong>Long-running studies: pin a numbered release</strong>
@@ -148,16 +154,16 @@
               From a checkout, add the repository root; from an installed
               version, add its installation root:
               <pre><code>addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-latest')
-% installed version layout:
-% addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-3.0.2')</code></pre>
+% installed numbered version layout:
+% addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-&lt;version&gt;')</code></pre>
             </li>
             <li>
               <strong>Run pseudoCT.</strong>
               <pre><code>run_pseudo_CT</code></pre>
             </li>
             <li>
-              <strong>Select Center Standard — MLSC</strong> for routine
-              processing. Local MATLAB remains available as an alternate.
+              <strong>Select PseudoCT v3 — MLSC</strong> for routine
+              processing. PseudoCT v3 — Local remains available as an alternate.
             </li>
             <li>
               Select the first DICOM of the MPRAGE series, or select the single
@@ -200,9 +206,7 @@
             To pin processing to a numbered release, use that version
             explicitly (checkout root or installed version root):
           </p>
-          <pre><code>addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-&lt;version&gt;')
-% installed version layout:
-% addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-3.0.2')</code></pre>
+          <pre><code>addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-&lt;version&gt;')</code></pre>
         </section>
 
         <section id="profiles">
@@ -210,41 +214,62 @@
           <figure>
             <img
               src="assets/profile-selector.png"
-              alt="Pseudo-CT execution profile selector"
+              alt="Current MATLAB selector with the recommended PseudoCT v3 MLSC choice selected"
             />
             <figcaption>
-              The screenshot is illustrative and may not show the current
-              selector organization or availability. Current profile
-              availability is described below.
+              Standard Processing in the live MATLAB R2026a Update 2 selector,
+              before processing starts. The recommended PseudoCT v3 — MLSC
+              choice is selected.
+            </figcaption>
+          </figure>
+          <figure>
+            <img
+              src="assets/profile-selector-all-groups.png"
+              alt="Current MATLAB selector with Standard Processing, MPRAGE-only Processing, and Legacy Processing expanded"
+            />
+            <figcaption>
+              All three selector groups expanded, showing both MPRAGE-only
+              choices and the three historical Aether choices. This was
+              captured before processing; Cancel returned no selected profile.
             </figcaption>
           </figure>
 
           <p>
             PseudoCT uses profile-based execution. Implementation
-            (<code>current</code> source MATLAB vs <code>legacy-v2</code>
-            compiled Aether backend) and execution (<code>local</code>
+            (<code>current</code> PseudoCT v3 lineage vs <code>legacy-v2</code>
+            compiled Aether v2 backend) and execution (<code>local</code>
             workstation vs <code>mlsc</code> cluster vs
             <code>launchpad</code> remote) are independent properties.
             Current and Legacy follow different numerical paths; no
             universal equivalence is claimed. Always inspect the QC image.
           </p>
           <p>
-            <strong>Standard Processing</strong> presents Center Standard —
-            MLSC (<code>mlsc-current</code>) as the recommended default and
-            keeps Local MATLAB (<code>local-current</code>) available. The
-            labels are display names; canonical profile IDs remain unchanged.
-            Center Standard fails closed if required runtime or artifact
+            The selector groups profiles as <strong>Standard Processing</strong>,
+            <strong>MPRAGE-only Processing</strong>, and
+            <strong>Legacy Processing</strong>. Standard Processing presents
+            <strong>PseudoCT v3 — MLSC</strong> (<code>mlsc-current</code>) as
+            the recommended default and keeps <strong>PseudoCT v3 — Local</strong>
+            (<code>local-current</code>) available. The labels are display
+            names; canonical profile IDs remain unchanged. PseudoCT v3 — MLSC
+            uses the current lineage compiled with MATLAB R2010b, not the
+            historical Aether v2 implementation. It fails closed if required runtime or artifact
             validation fails and does not silently fall back to Local or a
             historical profile.
           </p>
           <p>
-            <strong>Custom Processing</strong> and
-            <strong>Historical Processing</strong> are separate disclosure
-            groups and start collapsed. Custom contains
-            <code>local-mprage-only</code> and
-            <code>mlsc-mprage-only</code>. Historical contains
-            <code>local-legacy</code>, <code>mlsc-legacy</code>, and
-            <code>launchpad-legacy</code>; site resources may be unavailable.
+            <strong>MPRAGE-only Processing</strong> and
+            <strong>Legacy Processing</strong> are separate groups. MPRAGE-only
+            contains <strong>MPRAGE-only — Local</strong>
+            (<code>local-mprage-only</code>) and
+            <strong>MPRAGE-only — MLSC</strong>
+            (<code>mlsc-mprage-only</code>); both generate NIfTI-only output
+            without a UMAP. Legacy contains
+            <strong>PseudoCT v2 (Aether) — Local</strong>
+            (<code>local-legacy</code>),
+            <strong>PseudoCT v2 (Aether) — MLSC</strong>
+            (<code>mlsc-legacy</code>), and
+            <strong>PseudoCT v2 (Aether) — Launchpad</strong>
+            (<code>launchpad-legacy</code>); site resources may be unavailable.
             The development profile is available only by explicit canonical
             key, not in the routine selector. Scripts use canonical profile
             keys, not display labels. The bare key
@@ -260,12 +285,14 @@
 
           <div class="profile-card">
             <div class="profile-title">
-              <h3>Center Standard — MLSC</h3>
+              <h3>PseudoCT v3 — MLSC</h3>
               <span class="badge good">Recommended default</span>
             </div>
             <p>
               Runs the full MPRAGE + UMAP workflow on MLSC using the current
-              MATLAB source (<code>mlsc-current</code>). Requires a valid
+              PseudoCT v3 lineage compiled with MATLAB R2010b
+              (<code>mlsc-current</code>). This is not the historical v2 Aether
+              implementation. Requires a valid
               cluster account and provisioned resources. The accepted
               current-lineage artifact uses MATLAB R2010b, Compiler 4.14, and
               MCR 7.14; an unmet artifact/runtime requirement fails closed.
@@ -274,19 +301,19 @@
 
           <div class="profile-card">
             <div class="profile-title">
-              <h3>Local MATLAB</h3>
+              <h3>PseudoCT v3 — Local</h3>
               <span class="badge">Available</span>
             </div>
             <p>
               Runs the full MPRAGE + UMAP workflow locally on the workstation
               using the current MATLAB source (<code>local-current</code>).
-              This remains an available alternative to Center Standard.
+              This remains an available alternative to PseudoCT v3 — MLSC.
             </p>
           </div>
 
           <div class="profile-card">
             <div class="profile-title">
-              <h3>LOCAL - Legacy v2.0 (Aether)</h3>
+              <h3>PseudoCT v2 (Aether) — Local</h3>
               <span class="badge">Historical</span>
             </div>
             <p>
@@ -294,47 +321,49 @@
               using the legacy v2.0 compiled backend
               (<code>local-legacy</code>) with direct-local execution. There
               is no login dialog and no cluster submission on this path.
-              Selectable under Historical Processing where the legacy
-              backend is required.
+              Selectable under Legacy Processing for historical compatibility.
+              Legacy profiles require a MATLAB R2010b host.
             </p>
           </div>
 
           <div class="profile-card">
             <div class="profile-title">
-              <h3>MLSC - Legacy v2.0 (Aether)</h3>
+              <h3>PseudoCT v2 (Aether) — MLSC</h3>
               <span class="badge">Historical</span>
             </div>
             <p>
               Runs the standard MPRAGE + UMAP workflow on the MLSC cluster
               using the legacy v2.0 compiled backend
               (<code>mlsc-legacy</code>). It requires the UMAP reference and
-              produces both NIfTI and DICOM output.
+              produces both NIfTI and DICOM output. Legacy profiles require a
+              MATLAB R2010b host.
             </p>
             <p>Use requires a valid cluster account and provisioned paths.</p>
           </div>
 
           <div class="profile-card">
             <div class="profile-title">
-              <h3>LAUNCHPAD - Legacy v2.0 (Aether)</h3>
+              <h3>PseudoCT v2 (Aether) — Launchpad</h3>
               <span class="badge">Historical</span>
             </div>
             <p>
               Runs the full MPRAGE + UMAP workflow on the legacy remote path
-              (<code>launchpad-legacy</code>), selectable under Historical
-              Processing. No new
+              (<code>launchpad-legacy</code>), selectable under Legacy
+              Processing. Legacy profiles require a MATLAB R2010b host. No new
               correctness claim is made beyond the dataset-specific states
               recorded in the technical notes.
             </p>
           </div>
 
           <div class="callout warning">
-            <strong>Custom Processing</strong>
+            <strong>MPRAGE-only Processing</strong>
             <p>
-              The initially collapsed Custom Processing disclosure contains
-              <code>local-mprage-only</code>
-              (Local MPRAGE Only; MPRAGE without UMAP, NIfTI only, local),
-              <code>mlsc-mprage-only</code> (MLSC MPRAGE Only; MPRAGE without
-              UMAP, NIfTI only, on MLSC).
+              This group contains <strong>MPRAGE-only — Local</strong>
+              (<code>local-mprage-only</code>; generate NIfTI-only pseudoCT
+              from MPRAGE alone on this computer, no UMAP required) and
+              <strong>MPRAGE-only — MLSC</strong>
+              (<code>mlsc-mprage-only</code>; generate NIfTI-only pseudoCT
+              from MPRAGE alone on MLSC, no UMAP required).
               They are not intended for routine use.
             </p>
             <p>
@@ -349,9 +378,9 @@
         <section id="mlsc">
           <h2>MLSC remote workflow</h2>
           <p>
-            Center Standard (<code>mlsc-current</code>) is the current-lineage
+            PseudoCT v3 — MLSC (<code>mlsc-current</code>) is the current-lineage
             standard MLSC workflow. <code>mlsc-legacy</code> remains available
-            separately under Historical Processing. A user-accepted R2010b
+            separately under Legacy Processing. A user-accepted R2010b
             run verified MLSC completion and copyback, DICOM output, output
             promotion, and cleanup for one dataset; this does not establish
             universal numerical equivalence or clinical correctness.
@@ -514,7 +543,7 @@
         <section id="single-subject">
           <h2>Single-subject workflow</h2>
           <p>
-            After selecting <strong>LOCAL - Current</strong>, the Load
+            After selecting <strong>PseudoCT v3 — Local</strong>, the Load
             Images dialog is shown.
           </p>
 
@@ -674,7 +703,7 @@
           <h2>Outputs</h2>
           <p>
             PseudoCT creates the required output directories automatically.
-            After a successful LOCAL - Current run, the subject directory contains:
+            After a successful PseudoCT v3 — Local run, the subject directory contains:
           </p>
 
           <pre><code>&lt;subject&gt;/
@@ -708,7 +737,7 @@
               alt="Successful local-current output folder showing MR pseudo_muMAP and MR_PET files"
             />
             <figcaption>
-              Example of the files remaining after a successful LOCAL - Current
+              Example of the files remaining after a successful PseudoCT v3 — Local
               run.
             </figcaption>
           </figure>
@@ -763,7 +792,7 @@
             />
             <figcaption>
               Example <code>pseudo_CT_profile_summary.txt</code> from a
-              LOCAL - Current run.
+              PseudoCT v3 — Local run.
             </figcaption>
           </figure>
 
@@ -914,8 +943,8 @@
                   (availability restoration only). The deprecated keys
                   (<code>launchpad</code>, <code>launchpad-mprage-only</code>)
                   are never shown in the selector and are not supported.
-                  Use Center Standard — MLSC for routine processing; Local
-                  MATLAB remains available as an alternate.
+                  Use PseudoCT v3 — MLSC for routine processing; PseudoCT v3 —
+                  Local remains available as an alternate.
                 </td>
               </tr>
               <tr>
@@ -968,9 +997,12 @@
             >, the
             <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/scientific-notes.md"
               >numerical parity assessment</a
+            >, the
+            <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/CHANGELOG.md#release-v3-0-2"
+              >v3.0.2 changelog entry</a
             >, and the
-            <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/RELEASE_NOTES_v3.0.2.md"
-              >v3.0.2 release notes</a
+            <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/RELEASE_PROVENANCE_v3.1.0.md"
+              >accepted artifact provenance record</a
             > for validation material and limits.
           </p>
 
@@ -984,13 +1016,13 @@
 
         <footer class="page-footer">
           <p>
-            Martinos PET/MR pseudoCT operator guide · Last updated October
-            2026 (v3.0.2)
+            Martinos PET/MR pseudoCT operator guide · Documentation version
+            3.1.1
           </p>
           <p class="privacy-note">
             Illustrative screenshots containing file paths or filenames have
-            been de-identified for documentation use. The profile selector
-            screenshot is illustrative; the authoritative Recommended row set
+            been de-identified for documentation use. The selector screenshots
+            show the current live MATLAB UI; authoritative profile availability
             is listed in Execution profiles above.
           </p>
         </footer>

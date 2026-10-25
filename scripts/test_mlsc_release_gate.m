@@ -1,4 +1,4 @@
-function test_mlsc_release_gate(mode)
+function test_mlsc_release_gate(mode, fixture_root)
 %TEST_MLSC_RELEASE_GATE Bounded release-gate tests (T001 seam + T002 validator).
 %   Offline only: synthetic manifests/packages under
 %   scratch/release_gate/validator_fixtures/ (ignored), read-only git
@@ -18,6 +18,8 @@ function test_mlsc_release_gate(mode)
 %   Gate-A, absent native evidence, deployment-path mismatch, foreign
 %   manifest paths) blocks with error id pseudo_CT:MLSCReleaseGate and
 %   an explicit reason.
+%   Focused mode accepts an optional FixtureRoot so task-local outputs can
+%   stay under the caller's allocated scratch directory.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -26,10 +28,13 @@ addpath(fullfile(root_dir, 'src', 'mlsc'), '-begin');
 addpath(fullfile(root_dir, 'scripts'), '-begin');
 if nargin > 0
     if ~ischar(mode) || size(mode, 1) ~= 1 || ...
-            ~strcmp(mode, 'v310_exception')
+            ~(strcmp(mode, 'r2010b_artifact') || strcmp(mode, 'v310_exception'))
         error('pseudo_CT:MLSCReleaseGate', 'Unknown focused release-gate test mode.');
     end
-    local_test_v310_exception(root_dir);
+    if nargin < 2
+        fixture_root = '';
+    end
+    local_test_r2010b_exception(root_dir, fixture_root);
     return;
 end
 
@@ -478,16 +483,15 @@ P = struct('pkg', pkg, 'buildmat', buildmat, 'resmat', resmat, ...
     'record', record, 'deploy', deploy, 'src_fp', src_fp);
 end
 
-function local_test_v310_exception(root_dir)
-gate_root = fullfile(root_dir, 'scratch', 'release_gate');
-if exist(gate_root, 'dir') ~= 7
-    [ok_gate, msg_gate] = mkdir(gate_root);
-    assert(ok_gate, 'Cannot create gate staging dir: %s.', msg_gate);
+function local_test_r2010b_exception(root_dir, fixture_root)
+if isempty(fixture_root)
+    fixture_root = fullfile(root_dir, 'scratch', 'release_gate');
 end
-run_root = fullfile(gate_root, 'validator_v310_exception');
+run_root = fullfile(fixture_root, 'validator_r2010b_exception');
 assert(exist(run_root, 'dir') ~= 7, ...
     'Focused fixture directory already exists; preserving existing scratch data.');
-mkdir(run_root);
+[ok_root, msg_root] = mkdir(run_root);
+assert(ok_root, 'Cannot create focused fixture dir: %s.', msg_root);
 cleanup_root = onCleanup(@() local_cleanup(run_root)); %#ok<NASGU>
 [s_head, o_head] = system(sprintf('git -C "%s" --no-pager rev-parse HEAD 2>&1', root_dir));
 commit = lower(strtrim(o_head));
@@ -495,14 +499,108 @@ assert(s_head == 0 && length(commit) == 40, 'Release-source commit fixture is un
 tree = mlsc_release_gate('release_tree', root_dir, commit);
 
 % These fixtures copy the actual retained package and never execute the
-% scientific binary. They prove only the validator's artifact-byte checks.
+% scientific binary. The available checkout is tagged v3.1.0 (no v3.1.1
+% tag exists); the v3.1.1 pre-tag path binds to a caller-supplied resolvable
+% source commit while preserving the original build provenance.
 package = local_copy_compiled_package(root_dir, run_root, 'exact');
+loaded_build = load(fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), 'build');
+assert(~strcmpi(strtrim(loaded_build.build.source_commit), commit), ...
+    'Pinned payload fixture no longer distinguishes artifact provenance from the release source.');
 [accepted, is_exception] = validate_mlsc_release('prepublication', ...
     'PackageDir', package, ...
     'BuildManifest', fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), ...
-    'ReleaseCommit', commit, 'RepoRoot', root_dir);
-assert(accepted && is_exception, 'Exact R2010b artifact was not accepted by its pinned exception.');
-fprintf('GATE-V310-EXACT PASS: exact retained artifact accepted with separate BuildManifest and without Gate-A.\n');
+    'ReleaseTag', 'v3.1.0', 'ReleaseCommit', commit, 'RepoRoot', root_dir);
+assert(accepted && is_exception, 'Exact R2010b artifact was not accepted with an independently resolved release identity.');
+fprintf('GATE-R2010B-EXACT PASS: exact retained artifact accepted with separate BuildManifest and without Gate-A.\n');
+
+% Before v3.1.1 has a tag, only the exact target version plus an explicit,
+% resolvable release commit may validate this exact retained package.
+[accepted_pretag, is_exception_pretag] = validate_mlsc_release('prepublication', ...
+    'PackageDir', package, ...
+    'BuildManifest', fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), ...
+    'ExpectedTargetVersion', 'v3.1.1', 'ReleaseCommit', commit, ...
+    'RepoRoot', root_dir);
+assert(accepted_pretag && is_exception_pretag, ...
+    'Exact R2010b artifact was not accepted for the explicit v3.1.1 pre-tag target.');
+fprintf('GATE-V311-PRETAG PASS: exact retained package accepted for v3.1.1 with caller-supplied commit.\n');
+
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', package, 'ExpectedTargetVersion', 'v3.1.2', ...
+    'ReleaseCommit', commit, 'RepoRoot', root_dir), ...
+    'only for exact target v3.1.1');
+fprintf('GATE-V311-PRETAG-VERSION PASS: arbitrary target version rejected.\n');
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', package, 'ExpectedTargetVersion', 'v3.1.1', ...
+    'ReleaseTag', 'v3.1.0', 'ReleaseCommit', commit, 'RepoRoot', root_dir), ...
+    'use ReleaseTag when the release tag exists');
+fprintf('GATE-V311-PRETAG-TAG-CONFLICT PASS: expected target cannot replace an existing tag.\n');
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', package, 'ExpectedTargetVersion', 'v3.1.1', ...
+    'RepoRoot', root_dir), 'requires an explicit ReleaseCommit');
+fprintf('GATE-V311-PRETAG-MISSING-COMMIT PASS: missing commit rejected.\n');
+unknown_commit = repmat('f', 1, 40);
+[s_unknown, ~] = system(sprintf( ...
+    'git -C "%s" --no-pager cat-file -e "%s^{commit}" 2>/dev/null', ...
+    root_dir, unknown_commit));
+assert(s_unknown ~= 0, 'Unknown-commit rejection fixture unexpectedly exists.');
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', package, 'ExpectedTargetVersion', 'v3.1.1', ...
+    'ReleaseCommit', unknown_commit, 'RepoRoot', root_dir), ...
+    'tree is unavailable');
+fprintf('GATE-V311-PRETAG-UNKNOWN-COMMIT PASS: unresolvable release commit rejected.\n');
+
+% The tagless target argument cannot be used in postinstall; after the
+% v3.1.0 tag, the same actual deployment must pass only with tag semantics.
+deploy = local_stage_compiled_deployment(package, run_root, 'exact-v310-deploy');
+deploy_build = fullfile(deploy, 'mlsc_current_build.mat');
+deploy_resources = fullfile(deploy, 'mlsc_current_resources.mat');
+local_expect_block(@() validate_mlsc_release('postinstall', ...
+    'DeployRoot', deploy, 'BuildManifest', deploy_build, ...
+    'ResourceManifest', deploy_resources, 'ExpectedTargetVersion', 'v3.1.1', ...
+    'ReleaseCommit', commit, 'RepoRoot', root_dir), 'prepublication-only');
+assert(validate_mlsc_release('postinstall', ...
+    'DeployRoot', deploy, 'BuildManifest', deploy_build, ...
+    'ResourceManifest', deploy_resources, 'ReleaseTag', 'v3.1.0', ...
+    'ReleaseCommit', commit, 'RepoRoot', root_dir), ...
+    'The exact R2010b deployment did not pass postinstall with the actual v3.1.0 tag.');
+fprintf('GATE-R2010B-POSTINSTALL PASS: pre-tag target rejected; actual tag+commit accepted.\n');
+
+% A future v3.1.1 tag, when present, must accept the same exact pinned bytes
+% through the final actual ReleaseTag+ReleaseCommit route.
+[s_v311, o_v311] = system(sprintf( ...
+    'git -C "%s" --no-pager rev-parse --verify "refs/tags/v3.1.1^{commit}" 2>&1', ...
+    root_dir));
+if s_v311 == 0
+    commit_v311 = lower(strtrim(o_v311));
+    [accepted_v311, is_exception_v311] = validate_mlsc_release('prepublication', ...
+        'PackageDir', package, ...
+        'BuildManifest', fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), ...
+        'ReleaseTag', 'v3.1.1', 'ReleaseCommit', commit_v311, 'RepoRoot', root_dir);
+    assert(accepted_v311 && is_exception_v311, ...
+        'Exact R2010b artifact was not accepted for the explicitly pinned v3.1.1 tag.');
+    fprintf('GATE-V311-EXACT PASS: unchanged pinned R2010b payload accepted for v3.1.1.\n');
+else
+    fprintf('GATE-V311-EXACT SKIP: v3.1.1 tag is absent in this v3.1.0 checkout.\n');
+end
+
+% A real tag and a different, resolvable commit must still fail commit==tag.
+[s_parent, o_parent] = system(sprintf( ...
+    'git -C "%s" --no-pager rev-parse --verify "v3.1.0~1^{commit}" 2>&1', ...
+    root_dir));
+wrong_tag_commit = lower(strtrim(o_parent));
+assert(s_parent == 0 && length(wrong_tag_commit) == 40, ...
+    'Could not resolve a distinct prior commit for the tag-mismatch check.');
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', package, 'ReleaseTag', 'v3.1.0', ...
+    'ReleaseCommit', wrong_tag_commit, 'RepoRoot', root_dir), ...
+    'does not match tag v3.1.0');
+fprintf('GATE-R2010B-TAG-COMMIT-MISMATCH PASS: mismatched tag/commit rejected.\n');
+
+% The exception is an explicit two-tag compatibility, not a version wildcard.
+local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', package, 'ReleaseTag', 'v3.1.2', 'RepoRoot', root_dir), ...
+    'only release tags v3.1.0 or v3.1.1');
+fprintf('GATE-R2010B-TAG-SCOPE PASS: unsupported release version rejected.\n');
 
 % Supplying the anchored MAT separately must not bless a mismatched copy in
 % the staged package; the package's own build manifest is part of the pin.
@@ -515,8 +613,9 @@ fclose(fid);
 local_expect_block(@() validate_mlsc_release('prepublication', ...
     'PackageDir', mismatched_manifest, ...
     'BuildManifest', fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), ...
-    'ReleaseCommit', commit, 'RepoRoot', root_dir), 'packaged build manifest');
-fprintf('GATE-V310-BUILD-MANIFEST PASS: external anchored MAT cannot bless modified packaged MAT.\n');
+    'ExpectedTargetVersion', 'v3.1.1', 'ReleaseCommit', commit, ...
+    'RepoRoot', root_dir), 'packaged build manifest');
+fprintf('GATE-R2010B-BUILD-MANIFEST PASS: external anchored MAT cannot bless modified packaged MAT.\n');
 
 missing_manifest = local_copy_compiled_package(root_dir, run_root, ...
     'missing-build-manifest');
@@ -524,8 +623,9 @@ delete(fullfile(missing_manifest, 'mlsc_current_build.mat'));
 local_expect_block(@() validate_mlsc_release('prepublication', ...
     'PackageDir', missing_manifest, ...
     'BuildManifest', fullfile(root_dir, 'compiled', 'mlsc_current_build.mat'), ...
-    'ReleaseCommit', commit, 'RepoRoot', root_dir), 'packaged build manifest');
-fprintf('GATE-V310-MISSING-BUILD-MANIFEST PASS: external anchored MAT cannot replace packaged MAT.\n');
+    'ExpectedTargetVersion', 'v3.1.1', 'ReleaseCommit', commit, ...
+    'RepoRoot', root_dir), 'packaged build manifest');
+fprintf('GATE-R2010B-MISSING-BUILD-MANIFEST PASS: external anchored MAT cannot replace packaged MAT.\n');
 
 tampered = local_copy_compiled_package(root_dir, run_root, 'tampered');
 fid = fopen(fullfile(tampered, 'payload_build', 'mlsc_current_payload'), 'a');
@@ -533,15 +633,17 @@ assert(fid ~= -1, 'Could not tamper with the isolated scratch copy.');
 fwrite(fid, '# tampered');
 fclose(fid);
 local_expect_block(@() validate_mlsc_release('prepublication', ...
-    'PackageDir', tampered, 'ReleaseCommit', commit, 'RepoRoot', root_dir), 'executable');
-fprintf('GATE-V310-TAMPER PASS: modified executable bytes rejected.\n');
+    'PackageDir', tampered, 'ExpectedTargetVersion', 'v3.1.1', ...
+    'ReleaseCommit', commit, 'RepoRoot', root_dir), 'executable');
+fprintf('GATE-R2010B-TAMPER PASS: modified executable bytes rejected.\n');
 
 missing = local_copy_compiled_package(root_dir, run_root, 'missing');
 delete(fullfile(missing, 'payload_build', 'mccExcludedFiles.log'));
 local_expect_block(@() validate_mlsc_release('prepublication', ...
-    'PackageDir', missing, 'ReleaseCommit', commit, 'RepoRoot', root_dir), ...
+    'PackageDir', missing, 'ExpectedTargetVersion', 'v3.1.1', ...
+    'ReleaseCommit', commit, 'RepoRoot', root_dir), ...
     'mccExcludedFiles.log is missing');
-fprintf('GATE-V310-MISSING PASS: missing inventoried payload rejected.\n');
+fprintf('GATE-R2010B-MISSING PASS: missing inventoried payload rejected.\n');
 
 % Reuse the established R2026a fixture to prove the normal path still
 % reaches its strict runtime gate instead of entering the exception. The
@@ -550,10 +652,14 @@ fprintf('GATE-V310-MISSING PASS: missing inventoried payload rejected.\n');
 pinned = mlsc_current_validate('pinned_mcr_root');
 strict = local_make_valid_package(run_root, 'normal-strict', commit, '', tree, pinned);
 local_expect_block(@() validate_mlsc_release('prepublication', ...
+    'PackageDir', strict.pkg, 'ExpectedTargetVersion', 'v3.1.1', ...
+    'ReleaseCommit', commit, 'GateARecord', strict.record, 'RepoRoot', root_dir), ...
+    'only for the exact pinned R2010b artifact');
+local_expect_block(@() validate_mlsc_release('prepublication', ...
     'PackageDir', strict.pkg, 'ReleaseCommit', commit, ...
     'GateARecord', strict.record, 'RepoRoot', root_dir), ...
     'Build release is incompatible');
-fprintf('GATE-V310-STRICT PASS: R2026a candidate did not enter the exception and remained runtime-gated.\n');
+fprintf('GATE-R2010B-STRICT PASS: R2026a candidate did not enter the exception and remained runtime-gated.\n');
 end
 
 function package = local_copy_compiled_package(root_dir, run_root, case_name)
@@ -570,6 +676,38 @@ for kk = 1:numel(entries)
     end
     [ok_copy, msg_copy] = copyfile(fullfile(source, name), fullfile(package, name));
     assert(ok_copy, 'Could not copy retained package into scratch: %s.', msg_copy);
+end
+end
+
+function deploy = local_stage_compiled_deployment(package, run_root, case_name)
+case_root = fullfile(run_root, case_name);
+mkdir(case_root);
+deploy = fullfile(case_root, 'deploy');
+mkdir(deploy);
+loaded = load(fullfile(package, 'mlsc_current_build.mat'), 'build');
+assert(isfield(loaded, 'build') && isfield(loaded.build, 'packaged_files'), ...
+    'Retained build manifest has no package inventory.');
+for kk = 1:numel(loaded.build.packaged_files)
+    rel_here = loaded.build.packaged_files{kk};
+    deploy_rel = local_deploy_rel(rel_here);
+    src_here = fullfile(package, strrep(rel_here, '/', filesep));
+    dst_here = fullfile(deploy, strrep(deploy_rel, '/', filesep));
+    [parent_here, ~, ~] = fileparts(dst_here);
+    if exist(parent_here, 'dir') ~= 7
+        mkdir(parent_here);
+    end
+    [ok_copy, msg_copy] = copyfile(src_here, dst_here);
+    assert(ok_copy, 'Retained package deployment staging failed: %s.', msg_copy);
+end
+for kk = 1:2
+    if kk == 1
+        name_here = 'mlsc_current_build.mat';
+    else
+        name_here = 'mlsc_current_resources.mat';
+    end
+    [ok_copy, msg_copy] = copyfile(fullfile(package, name_here), ...
+        fullfile(deploy, name_here));
+    assert(ok_copy, 'Retained package manifest staging failed: %s.', msg_copy);
 end
 end
 
