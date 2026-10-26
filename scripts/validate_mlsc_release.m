@@ -6,10 +6,14 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %   verifies a deployment copy AFTER installation at its exact runtime
 %   path. Any missing or mismatched evidence BLOCKS with an explicit
 %   reason (error id pseudo_CT:MLSCReleaseGate); success returns true.
+%   OK = VALIDATE_MLSC_RELEASE('working-preview', 'PackageDir', DIR)
+%   validates only the exact retained R2010b payload inventory for a
+%   nonpublishable working-source extraction preview. It does not bind
+%   release source identity and is never publication evidence.
 %
 %   Name-value arguments (character rows; R2010b-safe idioms):
 %     'PackageDir'    Staged candidate root: payload_build/ plus the
-%                     build/resource manifests (prepublication only).
+%                     build/resource manifests (prepublication or preview).
 %     'BuildManifest' Build manifest .mat (variable build). Defaults to
 %                     <PackageDir>/mlsc_current_build.mat in prepublication;
 %                     required explicitly in postinstall.
@@ -17,23 +21,24 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %                     Resource manifest .mat (variable resources). Defaults
 %                     to <PackageDir>/mlsc_current_resources.mat in
 %                     prepublication; required explicitly in postinstall.
-%     'ReleaseTag'    Expected release tag (e.g. v2.8.5). Resolved
+%     'ReleaseTag'    Expected release tag (e.g. v2.8.5 or v3.2.0-rc1). Resolved
 %                     read-only against RepoRoot (commit==tag enforced).
 %     'ReleaseCommit' Expected 40-hex release commit (required when no
 %                     tag is given; cross-checked with the tag otherwise).
 %     'ExpectedTargetVersion'
-%                     Prepublication-only exact target v3.1.1 when its
-%                     release tag does not yet exist. Requires an explicit
-%                     ReleaseCommit and is accepted only for the exact
-%                     pinned R2010b artifact/package. Once tagged, use the
-%                     actual ReleaseTag and ReleaseCommit instead.
+%                     Prepublication-only exact pre-tag target v3.1.1 or
+%                     v3.2.0-rc1. Requires an explicit ReleaseCommit and is
+%                     accepted only for the exact pinned R2010b package.
+%                     For v3.2.0-rc1, the target tag must not exist; once
+%                     tagged, use the actual ReleaseTag and ReleaseCommit.
 %     'ExpectedFingerprint'
 %                     Optional out-of-band source fingerprint the manifest
 %                     must carry (wrong hash blocks).
 %     'GateARecord'   Finalized Gate-A record .mat (variable gate_a,
 %                     schema pseudo-CT.mlsc-current-gate-a/v1) binding this
 %                     exact candidate. Required except for the exact-pinned
-%                     R2010b artifact when targeting v3.1.0 or v3.1.1.
+%                     R2010b artifact when targeting v3.1.0, v3.1.1, or
+%                     the exact candidate v3.2.0-rc1.
 %     'DeployRoot'    Exact production runtime root of the deployment
 %                     copy (postinstall only; prepublication rejects it).
 %                     The layout is pinned by the mlsc-current profile:
@@ -83,10 +88,11 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %   One-time provenance exception: the original R2010b/Compiler 4.14
 %   artifact is recognized only by its exact build-manifest, executable,
 %   and launcher SHA-256 anchors plus the recorded runtime identity. The
-%   exception is permitted for exact release tags v3.1.0/v3.1.1; while
-%   v3.1.1 is untagged, prepublication alone may use ExpectedTargetVersion
-%   v3.1.1 with an explicit ReleaseCommit. Postinstall always requires the
-%   actual tag.
+%   exception is permitted for exact release tags v3.1.0/v3.1.1 and
+%   v3.2.0-rc1. While v3.1.1 is untagged, prepublication alone may use
+%   ExpectedTargetVersion v3.1.1 with an explicit ReleaseCommit. The exact
+%   v3.2.0-rc1 pre-tag path likewise requires an explicit ReleaseCommit and
+%   an absent target tag. Postinstall always requires the actual tag.
 %   The artifact's source_commit must be valid and its source-provenance
 %   fingerprint is preserved verbatim, but that dirty-source fingerprint
 %   is not independently reconstructed. Release-source commit/tag/tree
@@ -115,13 +121,16 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %   release tooling runs under modern MATLAB).
 
 if nargin < 1 || ~ischar(action) || size(action, 1) ~= 1
-    error('pseudo_CT:MLSCReleaseGate', 'A validation action (prepublication|postinstall) is required.');
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'A validation action (prepublication|postinstall|working-preview) is required.');
 end
 action = lower(strtrim(action));
 is_pre = strcmp(action, 'prepublication');
 is_post = strcmp(action, 'postinstall');
-if ~is_pre && ~is_post
-    error('pseudo_CT:MLSCReleaseGate', 'Unknown validation action: %s (want prepublication|postinstall).', action);
+is_preview = strcmp(action, 'working-preview');
+if ~is_pre && ~is_post && ~is_preview
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Unknown validation action: %s (want prepublication|postinstall|working-preview).', action);
 end
 ok = false;
 provenance_exception = false;
@@ -195,9 +204,11 @@ if ~isempty(expected_target_version)
         error('pseudo_CT:MLSCReleaseGate', ...
             'ExpectedTargetVersion is prepublication-only; postinstall requires the actual release tag semantics.');
     end
-    if ~strcmp(expected_target_version, 'v3.1.1')
+    if ~strcmp(expected_target_version, 'v3.1.1') && ...
+            ~strcmp(expected_target_version, 'v3.2.0-rc1')
         error('pseudo_CT:MLSCReleaseGate', ...
-            'ExpectedTargetVersion is available only for exact target v3.1.1; unsupported version blocks publication.');
+            ['ExpectedTargetVersion is available only for exact targets ', ...
+            'v3.1.1 or v3.2.0-rc1; unsupported version blocks publication.']);
     end
     if ~isempty(release_tag)
         error('pseudo_CT:MLSCReleaseGate', ...
@@ -205,8 +216,60 @@ if ~isempty(expected_target_version)
     end
     if isempty(release_commit)
         error('pseudo_CT:MLSCReleaseGate', ...
-            'ExpectedTargetVersion v3.1.1 requires an explicit ReleaseCommit while no tag exists.');
+            'ExpectedTargetVersion %s requires an explicit ReleaseCommit while no tag exists.', ...
+            expected_target_version);
     end
+    if strcmp(expected_target_version, 'v3.2.0-rc1')
+        local_require_pre_tag_target_untagged(repo_root, expected_target_version);
+    end
+end
+
+% Working-source preview validation is intentionally not a publication
+% gate. It validates only the exact retained payload and its complete byte
+% inventory; the archive source remains uncommitted and unbound.
+if is_preview
+    if isempty(package_dir)
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'PackageDir is required for a working preview; missing package blocks verification.');
+    end
+    if ~isempty(release_tag) || ~isempty(release_commit) || ...
+            ~isempty(expected_target_version) || ~isempty(gate_a_record) || ...
+            ~isempty(deploy_root)
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Working-preview validation does not accept release, Gate-A, or deployment identity.');
+    end
+    if exist(package_dir, 'dir') ~= 7
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Staged package directory is missing: %s.', package_dir);
+    end
+    if isempty(build_manifest)
+        build_manifest = fullfile(package_dir, 'mlsc_current_build.mat');
+    elseif ~strcmp(local_strip_sep(build_manifest), ...
+            local_strip_sep(fullfile(package_dir, 'mlsc_current_build.mat')))
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Working-preview validation requires the packaged build manifest; foreign manifest blocks verification.');
+    end
+    if isempty(resource_manifest)
+        resource_manifest = fullfile(package_dir, 'mlsc_current_resources.mat');
+    elseif ~strcmp(local_strip_sep(resource_manifest), ...
+            local_strip_sep(fullfile(package_dir, 'mlsc_current_resources.mat')))
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Working-preview validation requires the packaged resource manifest; foreign manifest blocks verification.');
+    end
+    local_require_r2010b_package_manifest(package_dir);
+    build = local_load_manifest(build_manifest, 'build', 'pseudo-CT.mlsc-current-build/v1');
+    local_load_manifest(resource_manifest, 'resources', 'pseudo-CT.mlsc-current-resources/v1');
+    provenance_exception = local_is_r2010b_exception(build_manifest, build);
+    if ~provenance_exception
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Working-preview validation accepts only the exact pinned R2010b artifact; candidate mismatch blocks verification.');
+    end
+    local_check_r2010b_source_provenance(build, '');
+    local_check_package(package_dir, build, true);
+    fprintf(['WORKING-PREVIEW PAYLOAD PASS: exact pinned R2010b payload inventory verified; ', ...
+        'source identity is unbound and this is not publication evidence.\n']);
+    ok = true;
+    return;
 end
 
 if is_pre && ~isempty(deploy_root)
@@ -248,16 +311,17 @@ end
 % The loaded manifest must then also carry the expected runtime identity
 % and runner/executable anchors before the exception branch is selected.
 exception_manifest_digest = local_r2010b_manifest_digest(build_manifest);
-prepublication_v311_target = is_pre && isempty(release_tag) && ...
-    strcmp(expected_target_version, 'v3.1.1') && ~isempty(release_commit);
+prepublication_target = is_pre && isempty(release_tag) && ...
+    ~isempty(expected_target_version) && ~isempty(release_commit);
 if ~isempty(expected_target_version) && ~exception_manifest_digest
     error('pseudo_CT:MLSCReleaseGate', ...
         'ExpectedTargetVersion is permitted only for the exact pinned R2010b artifact; other packages require a real release tag.');
 end
 if exception_manifest_digest && ~local_is_r2010b_compatible_tag(release_tag) && ...
-        ~prepublication_v311_target
+        ~prepublication_target
     error('pseudo_CT:MLSCReleaseGate', ...
-        'The pinned R2010b artifact may target only release tags v3.1.0 or v3.1.1; unsupported version blocks publication.');
+        ['The pinned R2010b artifact may target only release tags v3.1.0, ', ...
+        'v3.1.1, or v3.2.0-rc1; unsupported version blocks publication.']);
 end
 if isempty(gate_a_record) && ~exception_manifest_digest
     error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
@@ -435,8 +499,26 @@ matched = strcmpi(manifest_sha, ...
 end
 
 function matched = local_is_r2010b_compatible_tag(release_tag)
-%LOCAL_IS_R2010B_COMPATIBLE_TAG Allow only the two explicitly approved tags.
-matched = strcmp(release_tag, 'v3.1.0') || strcmp(release_tag, 'v3.1.1');
+%LOCAL_IS_R2010B_COMPATIBLE_TAG Allow only the explicitly approved tags.
+matched = strcmp(release_tag, 'v3.1.0') || strcmp(release_tag, 'v3.1.1') || ...
+    strcmp(release_tag, 'v3.2.0-rc1');
+end
+
+function local_require_pre_tag_target_untagged(repo_root, target_version)
+%LOCAL_REQUIRE_PRE_TAG_TARGET_UNTAGGED Require the exact target tag to be absent.
+[status, output] = system(sprintf( ...
+    'git -C "%s" --no-pager show-ref --verify --quiet "refs/tags/%s" 2>&1', ...
+    strtrim(repo_root), target_version));
+if status == 0
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'ExpectedTargetVersion %s is no longer pre-tag; use ReleaseTag and ReleaseCommit.', ...
+        target_version);
+end
+if status ~= 1
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Cannot verify that pre-tag target %s is untagged: %s', ...
+        target_version, strtrim(output));
+end
 end
 
 function local_require_r2010b_package_manifest(package_dir)

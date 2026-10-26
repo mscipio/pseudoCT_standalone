@@ -9,7 +9,6 @@ scripts export-ignore
 .gitattributes export-ignore
 deprecated export-ignore
 deprecated/Makefile export-ignore
-docs export-ignore
 docs/AGENTS.md export-ignore
 docs/TODO.md export-ignore
 aria.json export-ignore

@@ -12,6 +12,15 @@ run_pseudo_CT
 
 ## External installations
 
+The v3.2.0-rc1 standalone archive extracts to `pseudoCT_standalone-3.2.0-rc1/`. Add that extracted installation root to the MATLAB path and run `run_pseudo_CT`; the selector source and bundled MLSC compiled files resolve from that root, with the compiled payload under `compiled/`. Opening the selector does not require a `/usr/pubsw/shared` symlink or a shared installation. This archive does not bundle all scientific processing resources; the separately provisioned resources below are still required when running profiles that use them.
+
+The v3.1.1 archive had a layout limitation: its files were wrapped under `source/`, so the extracted archive root was not the installation root expected by `run_pseudo_CT` and `src/`. The v3.2.0-rc1 archive fixes that layout by placing the launcher, `src/`, `docs/`, and bundled `compiled/` payload directly under `pseudoCT_standalone-3.2.0-rc1/`.
+
+```matlab
+addpath('/path/to/pseudoCT_standalone-3.2.0-rc1')
+run_pseudo_CT
+```
+
 This repository is not a self-contained software installation. MATLAB and compatible, separately provisioned resources are required:
 
 - SPM8 and the pseudoCT atlas images and SPM batch templates (`spm_root`, `atlas_root`).

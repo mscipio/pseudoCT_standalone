@@ -1,4 +1,4 @@
-function test_mlsc_release_assembly(mode)
+function test_mlsc_release_assembly(mode, fixture_root)
 %TEST_MLSC_RELEASE_ASSEMBLY Bounded assembly tests (synthetic, no mcc/science).
 %   Offline only: synthetic staged packages under
 %   scratch/release_gate/assembly_fixtures/ (ignored), read-only git
@@ -7,12 +7,16 @@ function test_mlsc_release_assembly(mode)
 %   the gate helper, and the publication validator run, all with fixture
 %   manifests), no science, no SSH/Slurm, no publish/deploy, no tag, and
 %   no worktree creation. Covers: valid fixtures assemble (archive under
-%   scratch/ with a single versioned prefix, required members, hashes
+%   scratch/ with a single versioned standalone root, required members, hashes
 %   recomputed from the actual archive bytes); each negative (missing
 %   package, dist/ as source, wrong commit, tampered packaged file,
 %   missing Gate-A record, source-version mismatch, slash tag refused as
 %   a non-file-safe label) blocks with error id
 %   pseudo_CT:MLSCReleaseGate and an explicit reason.
+%   Focused mode 'working_preview' checks the exact v3.2.0-rc1 root using
+%   only the pinned R2010b payload and marks its unbound source nonpublishable.
+%   Focused mode 'pretag_target' forwards the exact rc1 target to validation
+%   and proves assembly uses the committed source tree, never dirty files.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -21,10 +25,18 @@ addpath(fullfile(root_dir, 'src', 'mlsc'), '-begin');
 addpath(fullfile(root_dir, 'scripts'), '-begin');
 if nargin > 0
     if ~ischar(mode) || size(mode, 1) ~= 1 || ...
-            ~strcmp(mode, 'v310_exception')
+            ~(strcmp(mode, 'working_preview') || strcmp(mode, 'pretag_target'))
         error('pseudo_CT:MLSCReleaseGate', 'Unknown focused release-assembly test mode.');
     end
-    local_test_v310_exception(root_dir);
+    if strcmp(mode, 'working_preview')
+        local_test_working_preview(root_dir);
+    else
+        if nargin < 2 || ~ischar(fixture_root) || isempty(fixture_root)
+            error('pseudo_CT:MLSCReleaseGate', ...
+                'Focused pretag_target mode requires the caller-allocated FixtureRoot.');
+        end
+        local_test_pretag_target(root_dir, fixture_root);
+    end
     return;
 end
 
@@ -64,11 +76,7 @@ assert(~isempty(strfind(archive, [filesep 'scratch' filesep])), 'Archive is not 
 assert(isempty(strfind(archive, [filesep 'dist' filesep])), 'Archive must never use dist/.');
 info_arc = dir(archive);
 assert(info_arc(1).bytes > 0, 'Assembly archive is empty.');
-archive_sha = mlsc_release_gate('sha256_file', archive);
-assert(mlsc_release_gate('is_valid_sha256', archive_sha), 'Archive SHA-256 unavailable.');
-[s_members, o_members] = system(sprintf('tar -tzf ''%s'' 2>&1', archive));
-assert(s_members == 0, 'Archive listing failed.');
-members = local_lines(o_members);
+[members, archive_sha] = local_archive_members(archive);
 prefixes = {};
 for kk = 1:numel(members)
     tok = regexp(members{kk}, '^([^/]+)/', 'tokens', 'once');
@@ -76,13 +84,10 @@ for kk = 1:numel(members)
     prefixes{end + 1, 1} = tok{1}; %#ok<AGROW>
 end
 assert(isequal(unique(prefixes), {prefixes{1}}), 'Archive carries more than one top level.');
-assert(~isempty(strfind(prefixes{1}, 'pseudoCT_mlsc-current-')), 'Archive prefix is not versioned.');
-required = {'source/CHANGELOG.md'; 'compiled/payload_build/run_mlsc_current_payload.sh'; ...
-    'compiled/mlsc_current_build.mat'; 'MCR_COMPAT.txt'; 'RELEASE_PROVENANCE.txt'};
-for kk = 1:numel(required)
-    assert(any(strcmp(members, [prefixes{1} '/' required{kk}])), ...
-        'Archive is missing required member %s.', required{kk});
-end
+assert(strncmp(prefixes{1}, 'pseudoCT_standalone-', length('pseudoCT_standalone-')), ...
+    'Archive prefix is not a standalone installation root.');
+assert(mlsc_release_gate('is_valid_sha256', archive_sha), 'Archive SHA-256 unavailable.');
+local_assert_standalone_layout(members, prefixes{1});
 fprintf('ASSEMBLY-A0 PASS: valid fixtures assemble with verified archive contents.\n');
 
 % N1: missing staged package blocks.
@@ -246,36 +251,103 @@ save(record, 'gate_a');
 P = struct('pkg', pkg, 'buildmat', buildmat, 'resmat', resmat, 'record', record);
 end
 
-function local_test_v310_exception(root_dir)
+function local_test_working_preview(root_dir)
 gate_root = fullfile(root_dir, 'scratch', 'release_gate');
 if exist(gate_root, 'dir') ~= 7
     [ok_gate, msg_gate] = mkdir(gate_root);
     assert(ok_gate, 'Cannot create gate staging dir: %s.', msg_gate);
 end
-run_root = fullfile(gate_root, 'assembly_v310_exception');
+run_root = fullfile(gate_root, 'assembly_working_preview');
 assert(exist(run_root, 'dir') ~= 7, ...
     'Focused assembly directory already exists; preserving existing scratch data.');
 mkdir(run_root);
 cleanup_root = onCleanup(@() local_cleanup(run_root)); %#ok<NASGU>
 
+package = local_copy_compiled_package(root_dir, run_root);
+output_dir = fullfile(run_root, 'assembly');
+archive = assemble_mlsc_release('PackageDir', package, ...
+    'ReleaseTag', 'v3.2.0-rc1', 'SourceVersion', '3.2.0', ...
+    'SourceMode', 'working-preview', 'OutputDir', output_dir, 'RepoRoot', root_dir);
+assert(ischar(archive) && exist(archive, 'file') == 2, ...
+    'Exact R2010b working preview did not produce its scratch-only verification archive.');
+assert(~isempty(strfind(archive, [filesep 'scratch' filesep])), ...
+    'Focused archive escaped the worktree scratch tree.');
+[members, archive_sha] = local_archive_members(archive);
+assert(mlsc_release_gate('is_valid_sha256', archive_sha), 'Working-preview archive SHA-256 unavailable.');
+expected_prefix = 'pseudoCT_standalone-3.2.0-rc1';
+local_assert_standalone_layout(members, expected_prefix);
+assert(any(strcmp(members, [expected_prefix '/NONPUBLISHABLE_WORKING_SOURCE.txt'])), ...
+    'Working-preview archive lacks its nonpublishable marker.');
+fprintf(['ASSEMBLY-WORKING-PREVIEW PASS: exact root identity and archive structure verified; ', ...
+    'source identity remains unbound.\n']);
+end
+
+function local_test_pretag_target(root_dir, fixture_root)
+run_root = fullfile(fixture_root, 'assembly_pretag_target');
+assert(exist(run_root, 'dir') ~= 7, ...
+    'Focused pre-tag assembly directory already exists; preserving existing scratch data.');
+[ok_root, msg_root] = mkdir(run_root);
+assert(ok_root, 'Cannot create pre-tag assembly fixture dir: %s.', msg_root);
+cleanup_root = onCleanup(@() local_cleanup(run_root)); %#ok<NASGU>
+
+[s_tag, ~] = system(sprintf( ...
+    'git -C "%s" --no-pager rev-parse --verify "refs/tags/v3.2.0-rc1^{commit}" 2>&1', ...
+    root_dir));
+if s_tag == 0
+    fprintf('ASSEMBLY-PRETAG SKIP: v3.2.0-rc1 is tagged; the actual-tag route applies.\n');
+    return;
+end
 [s_head, o_head] = system(sprintf('git -C "%s" --no-pager rev-parse HEAD 2>&1', root_dir));
 commit = lower(strtrim(o_head));
 assert(s_head == 0 && length(commit) == 40, 'Release-source commit fixture is unavailable.');
 [s_cl, o_cl] = system(sprintf('git -C "%s" --no-pager show %s:CHANGELOG.md 2>&1', ...
     root_dir, commit));
-assert(s_cl == 0, 'HEAD CHANGELOG fixture unreadable.');
-head_version = strtrim(strtok(strtrim(o_cl), char(10)));
+assert(s_cl == 0, 'Committed CHANGELOG fixture unreadable.');
+committed_version = strtrim(strtok(strtrim(o_cl), char(10)));
 
 package = local_copy_compiled_package(root_dir, run_root);
 output_dir = fullfile(run_root, 'assembly');
-archive = assemble_mlsc_release('PackageDir', package, ...
-    'ReleaseCommit', commit, 'SourceVersion', head_version, ...
-    'OutputDir', output_dir, 'RepoRoot', root_dir);
-assert(ischar(archive) && exist(archive, 'file') == 2, ...
-    'Exact R2010b package assembly did not produce its scratch-only verification archive.');
-assert(~isempty(strfind(archive, [filesep 'scratch' filesep])), ...
-    'Focused archive escaped the worktree scratch tree.');
-fprintf('ASSEMBLY-V310-EXACT PASS: archive extraction verified the exact retained package.\n');
+local_expect_block(@() assemble_mlsc_release('PackageDir', package, ...
+    'ExpectedTargetVersion', 'v3.2.0-rc1', 'SourceVersion', '3.2.0', ...
+    'SourceMode', 'committed', 'OutputDir', output_dir, 'RepoRoot', root_dir), ...
+    'requires an explicit ReleaseCommit');
+if strcmp(committed_version, '3.2.0')
+    archive = assemble_mlsc_release('PackageDir', package, ...
+        'ExpectedTargetVersion', 'v3.2.0-rc1', 'ReleaseCommit', commit, ...
+        'SourceVersion', '3.2.0', 'SourceMode', 'committed', ...
+        'OutputDir', output_dir, 'RepoRoot', root_dir);
+    assert(ischar(archive) && exist(archive, 'file') == 2, ...
+        'Committed rc1 pre-tag target did not produce its archive.');
+    expected_prefix = 'pseudoCT_standalone-3.2.0-rc1';
+    [members, archive_sha] = local_archive_members(archive);
+    assert(mlsc_release_gate('is_valid_sha256', archive_sha), ...
+        'Committed rc1 archive SHA-256 unavailable.');
+    local_assert_standalone_layout(members, expected_prefix);
+    assert(any(strcmp(members, [expected_prefix '/RELEASE_PROVENANCE.txt'])), ...
+        'Committed rc1 archive lacks its provenance record.');
+    assert(~any(strcmp(members, [expected_prefix '/NONPUBLISHABLE_WORKING_SOURCE.txt'])), ...
+        'Committed rc1 archive carries a working-preview marker.');
+    [s_provenance, provenance] = system(sprintf( ...
+        'tar -xOf ''%s'' ''%s/RELEASE_PROVENANCE.txt'' 2>&1', archive, expected_prefix));
+    assert(s_provenance == 0 && ...
+        ~isempty(strfind(provenance, 'source_mode committed')) && ...
+        ~isempty(strfind(provenance, ['release_commit ' commit])) && ...
+        ~isempty(strfind(provenance, 'expected_target_version v3.2.0-rc1')), ...
+        'Committed rc1 archive provenance does not bind the expected target and source commit.');
+    fprintf('ASSEMBLY-PRETAG PASS: rc1 archive assembled from committed source %s.\n', commit);
+else
+    local_expect_block(@() assemble_mlsc_release('PackageDir', package, ...
+        'ExpectedTargetVersion', 'v3.2.0-rc1', 'ReleaseCommit', commit, ...
+        'SourceVersion', '3.2.0', 'SourceMode', 'committed', ...
+        'OutputDir', output_dir, 'RepoRoot', root_dir), ...
+        'does not match SourceVersion');
+    archives = dir(fullfile(output_dir, '*.tar.gz'));
+    assert(isempty(archives), ...
+        'Assembler emitted an rc1 archive from a commit with a different source version.');
+    fprintf(['ASSEMBLY-PRETAG-SOURCE PASS: expected target forwarded; committed source %s ', ...
+        'has CHANGELOG %s, so rc1 archive correctly remains blocked.\n'], ...
+        commit, committed_version);
+end
 end
 
 function package = local_copy_compiled_package(root_dir, run_root)
@@ -319,6 +391,43 @@ for kk = 1:numel(parts)
     t = strtrim(parts{kk});
     if ~isempty(t)
         lines{end + 1, 1} = t; %#ok<AGROW>
+    end
+end
+end
+
+function [members, archive_sha] = local_archive_members(archive)
+[status, output] = system(sprintf('tar -tzf ''%s'' 2>&1', archive));
+assert(status == 0, 'Archive listing failed.');
+members = local_lines(output);
+archive_sha = mlsc_release_gate('sha256_file', archive);
+end
+
+function local_assert_standalone_layout(members, prefix)
+root_prefix = [prefix '/'];
+required = {'CHANGELOG.md'; 'run_pseudo_CT.m'; 'src/config/profiles/mlsc_current.m'; ...
+    'docs/installation.md'; 'compiled/payload_build/run_mlsc_current_payload.sh'; ...
+    'compiled/payload_build/mlsc_current_payload'; 'compiled/mlsc_current_build.mat'; ...
+    'compiled/mlsc_current_resources.mat'; 'MCR_COMPAT.txt'; 'RELEASE_PROVENANCE.txt'};
+for kk = 1:numel(required)
+    assert(any(strcmp(members, [root_prefix required{kk}])), ...
+        'Archive is missing root-layout member %s.', required{kk});
+end
+for kk = 1:numel(members)
+    entry = members{kk};
+    assert(strncmp(entry, root_prefix, length(root_prefix)), ...
+        'Archive member escapes the expected installation root: %s.', entry);
+    if strncmp(entry, [root_prefix 'source/'], length([root_prefix 'source/'])) || ...
+            strcmp(entry, [root_prefix 'source'])
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Archive contains the obsolete source/ wrapper: %s.', entry);
+    end
+    relative = entry(length(root_prefix) + 1:end);
+    path_parts = ['/' relative '/'];
+    if ~isempty(strfind(path_parts, '/pseudoCT_mlsc/')) || ...
+            ~isempty(strfind(path_parts, '/pseudoCT_mlsc_current/')) || ...
+            ~isempty(strfind(path_parts, '/pseudoCT_mlsc-current/'))
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Archive contains a separate MLSC installation: %s.', entry);
     end
 end
 end

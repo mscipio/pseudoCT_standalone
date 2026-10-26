@@ -1,10 +1,13 @@
 function archive_path = assemble_mlsc_release(varargin)
-%ASSEMBLE_MLSC_RELEASE Assemble a versioned MLSC CURRENT release archive (no mcc, no science).
+%ASSEMBLE_MLSC_RELEASE Assemble a versioned standalone release archive (no mcc, no science).
 %   ARCHIVE = ASSEMBLE_MLSC_RELEASE('PackageDir', DIR, 'ReleaseTag', TAG,
 %   'ReleaseCommit', COMMIT, 'GateARecord', PATH, 'OutputDir', DIR,
-%   'SourceVersion', VER, 'RepoRoot', DIR) stages a validated
-%   release-candidate package plus the versioned source tree plus MCR
-%   compat/provenance evidence into a versioned .tar.gz under scratch/.
+%   'SourceVersion', VER, 'ExpectedTargetVersion', TARGET,
+%   'SourceMode', MODE, 'RepoRoot', DIR) stages a
+%   validated compiled package and complete standalone installation root,
+%   plus MCR compat/provenance evidence, into a versioned .tar.gz under
+%   scratch/. SourceMode is 'committed' (default, bound to the exact Git
+%   commit) or 'working-preview' (nonpublishable working-tree snapshot).
 %
 %   Why this exists (package-assembly demonstration, evidence-backed):
 %   no existing mechanism assembles a release archive containing the
@@ -17,8 +20,8 @@ function archive_path = assemble_mlsc_release(varargin)
 %   (docs/mlsc_current_release_gate.md section 6) states "no tarball",
 %   and dist/ is ignored/untracked so git archive can never carry the
 %   compiled payload. This script is therefore the smallest assembly
-%   mechanism: versioned source (git-archive-equivalent tree honoring
-%   the committed .gitattributes export-ignore policy) + compiled dist
+%   mechanism: versioned standalone source root (git-archive-equivalent
+%   tree honoring the committed .gitattributes export-ignore policy) + compiled dist
 %   (payload_build, build/resource manifests, companions) + MCR compat
 %   info + release provenance, verified from the actual archive bytes.
 %
@@ -26,16 +29,20 @@ function archive_path = assemble_mlsc_release(varargin)
 %     'PackageDir'    Staged release-candidate package root: payload_build/
 %                     plus build/resource manifests (required; must live
 %                     under <repo>/scratch/ -- dist/ is never a source).
-%     'ReleaseTag'    Expected release tag (e.g. v3.0.0-rc.1). Resolved
+%     'ReleaseTag'    Expected release tag (e.g. v3.2.0-rc1). Resolved
 %                     read-only against RepoRoot (commit==tag enforced by
 %                     the shared gate helper). The tag must ALSO be
 %                     file-safe (no '/'): the gate tag charset admits '/',
 %                     the archive label charset does not.
 %     'ReleaseCommit' Expected 40-hex release commit (required when no
 %                     tag is given; cross-checked with the tag otherwise).
+%     'ExpectedTargetVersion'
+%                     Exact pre-tag target v3.2.0-rc1. Requires an explicit
+%                     resolvable ReleaseCommit and committed source; the
+%                     committed tree, not the working tree, is archived.
 %     'GateARecord'   Finalized Gate-A record binding this exact
 %                     candidate (required except for the one exact,
-%                     code-pinned pseudoCT_standalone v3.1.0 artifact;
+%                     code-pinned R2010b artifact;
 %                     never minted here).
 %     'OutputDir'     Archive destination (default
 %                     <repo>/scratch/release_gate/<label>/). Must live
@@ -43,21 +50,27 @@ function archive_path = assemble_mlsc_release(varargin)
 %                     tarball paths are rejected.
 %     'SourceVersion' Expected CHANGELOG line-1 version (default derived
 %                     from the tag: leading 'v' stripped, '-rc*' suffix
-%                     stripped, e.g. v3.0.0-rc.1 -> 3.0.0). Required when
-%                     no tag is given; an explicit value with a tag must
-%                     equal the derived one. The staged source tree's
-%                     CHANGELOG.md line 1 must equal it.
+%                     stripped, e.g. v3.2.0-rc1 -> 3.2.0). Required when
+%                     neither a tag nor ExpectedTargetVersion is given;
+%                     an explicit value must equal the tag/target-derived
+%                     version. The assembled source tree's CHANGELOG.md
+%                     line 1 must equal it.
+%     'SourceMode'    'committed' (default) binds the archive source to the
+%                     resolved ReleaseTag/ReleaseCommit. 'working-preview'
+%                     snapshots the current working source without claiming
+%                     a commit identity, marks the archive nonpublishable,
+%                     and validates only the exact pinned R2010b payload.
 %     'RepoRoot'      Git repository used for tag/tree/archive resolution
 %                     (default: this repository root).
 %
 %   Contract (no weakening): prepublication validation runs FIRST via
-%   scripts/validate_mlsc_release.m. Normal candidates require the same
+%   scripts/validate_mlsc_release.m for committed-source archives. Normal candidates require the same
 %   Gate-A record; only the exact one-time R2010b artifact may omit it.
 %   Missing/stale/mismatched/incomplete staged evidence blocks before
 %   anything is archived. The shared src/mlsc/mlsc_release_gate.m helper
 %   resolves commit/tree, hashes files, and recomputes the packaged
 %   inventory. After archiving, the ACTUAL archive bytes are inspected:
-%   single top-level prefix, required members present, export-ignored
+%   single top-level prefix, standalone installation files present, export-ignored
 %   paths absent, and every packaged SHA-256 recomputed from an archive
 %   extraction, including exact exception-manifest and inventory size/hash
 %   checks. Compiled artifacts stay out of git: outputs live under
@@ -82,9 +95,11 @@ end
 package_dir = '';
 release_tag = '';
 release_commit = '';
+expected_target_version = '';
 gate_a_record = '';
 out_dir_arg = '';
 source_version = '';
+source_mode = 'committed';
 repo_root = repo_guess;
 ii = 1;
 while ii <= numel(varargin)
@@ -106,12 +121,16 @@ while ii <= numel(varargin)
             release_tag = strtrim(val_here);
         case 'releasecommit'
             release_commit = strtrim(val_here);
+        case 'expectedtargetversion'
+            expected_target_version = strtrim(val_here);
         case 'gatearecord'
             gate_a_record = strtrim(val_here);
         case 'outputdir'
             out_dir_arg = strtrim(val_here);
         case 'sourceversion'
             source_version = strtrim(val_here);
+        case 'sourcemode'
+            source_mode = lower(strtrim(val_here));
         case 'reporoot'
             repo_root = strtrim(val_here);
         otherwise
@@ -123,8 +142,42 @@ end
 if isempty(package_dir)
     error('pseudo_CT:MLSCReleaseGate', 'PackageDir is required; missing staged package blocks assembly.');
 end
-if isempty(release_tag) && isempty(release_commit)
+if ~isempty(expected_target_version)
+    if ~strcmp(expected_target_version, 'v3.2.0-rc1')
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'ExpectedTargetVersion is available only for exact target v3.2.0-rc1.');
+    end
+    if ~strcmp(source_mode, 'committed')
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'ExpectedTargetVersion requires committed source; working previews are not release candidates.');
+    end
+    if ~isempty(release_tag)
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'ExpectedTargetVersion is pre-tag only; use ReleaseTag when the target tag exists.');
+    end
+    if isempty(release_commit)
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'ExpectedTargetVersion v3.2.0-rc1 requires an explicit ReleaseCommit.');
+    end
+end
+if ~strcmp(source_mode, 'committed') && ~strcmp(source_mode, 'working-preview')
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'SourceMode must be committed or working-preview; unknown source mode blocks assembly.');
+end
+if strcmp(source_mode, 'committed') && isempty(release_tag) && isempty(release_commit)
     error('pseudo_CT:MLSCReleaseGate', 'ReleaseTag or ReleaseCommit is required; missing release identity blocks assembly.');
+end
+if strcmp(source_mode, 'working-preview') && isempty(release_tag)
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Working-preview assembly requires a ReleaseTag for its nonpublishable candidate label.');
+end
+if strcmp(source_mode, 'working-preview') && ~isempty(release_commit)
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'ReleaseCommit must be omitted for a working preview; the preview is not bound to a commit.');
+end
+if strcmp(source_mode, 'working-preview') && ~isempty(gate_a_record)
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'GateARecord is not accepted for a working preview; the preview does not bind release evidence.');
 end
 
 % Path guards FIRST (fail closed before any git/validation work).
@@ -134,7 +187,7 @@ local_require_scratch_tree(repo_root, package_dir, 'PackageDir');
 local_reject_dist_source(package_dir, 'PackageDir');
 
 % Label + expected source version. The archive label charset is the
-% worktree-label rule (no '/'): v3.0.0-rc.1 satisfies both the gate tag
+% worktree-label rule (no '/'): v3.2.0-rc1 satisfies both the gate tag
 % charset and this label rule; a tag carrying '/' is refused here with
 % an explicit reason instead of producing an ambiguous file name.
 if ~isempty(release_tag)
@@ -152,6 +205,16 @@ if ~isempty(release_tag)
             'SourceVersion %s does not match the tag-derived version %s; version mismatch blocks assembly.', ...
             source_version, derived_version);
     end
+elseif ~isempty(expected_target_version)
+    label = expected_target_version;
+    derived_version = local_version_from_tag(expected_target_version);
+    if isempty(source_version)
+        source_version = derived_version;
+    elseif ~strcmp(source_version, derived_version)
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'SourceVersion %s does not match target-derived version %s; version mismatch blocks assembly.', ...
+            source_version, derived_version);
+    end
 else
     if isempty(source_version)
         error('pseudo_CT:MLSCReleaseGate', ...
@@ -164,7 +227,12 @@ else
         label = 'commit-unknown';
     end
 end
-prefix = ['pseudoCT_mlsc-current-' label];
+archive_label = label;
+if ( ~isempty(release_tag) || ~isempty(expected_target_version) ) && ...
+        (archive_label(1) == 'v' || archive_label(1) == 'V')
+    archive_label = archive_label(2:end);
+end
+prefix = ['pseudoCT_standalone-' archive_label];
 
 if isempty(out_dir_arg)
     out_dir_arg = fullfile(repo_root, 'scratch', 'release_gate', label);
@@ -176,26 +244,48 @@ if strcmp(local_canonical(out_dir_arg), local_canonical(package_dir))
         'OutputDir must not equal PackageDir; refusing to archive a package into itself.');
 end
 
-% Shared exact-source resolution (commit==tag enforced; tree recomputed).
-exp_commit = mlsc_release_gate('resolve_commit', repo_root, release_tag, release_commit);
-release_tree_hash = mlsc_release_gate('release_tree', repo_root, exp_commit);
-fprintf('ASSEMBLY_IDENTITY label=%s commit=%s tree=%s source_version=%s\n', ...
-    label, exp_commit, release_tree_hash, source_version);
-
-% Gate contract without weakening: the publication validator must PASS
-% on the staged package before anything is archived. Its second output
-% only identifies the exact pinned one-time R2010b provenance exception.
-if ~isempty(release_tag)
-    validator_args = {'PackageDir', package_dir, 'ReleaseTag', release_tag, ...
-        'ReleaseCommit', exp_commit, 'RepoRoot', repo_root};
+% Validate the compiled candidate and bind release source identity only for
+% the publishable committed-source mode. A working preview is explicitly
+% nonpublishable and cannot be mistaken for the final committed archive.
+if strcmp(source_mode, 'working-preview')
+    exp_commit = 'not-bound-working-source-preview';
+    release_tree_hash = 'not-computed-working-source-preview';
+    exception_artifact = validate_mlsc_release('working-preview', ...
+        'PackageDir', package_dir);
+    fprintf('ASSEMBLY_IDENTITY source_mode=working-preview tag=%s commit=unbound tree=uncomputed source_version=%s\n', ...
+        release_tag, source_version);
 else
-    validator_args = {'PackageDir', package_dir, 'ReleaseCommit', exp_commit, ...
-        'RepoRoot', repo_root};
+    % Shared exact-source resolution (commit==tag enforced; tree recomputed).
+    exp_commit = mlsc_release_gate('resolve_commit', repo_root, release_tag, release_commit);
+    release_tree_hash = mlsc_release_gate('release_tree', repo_root, exp_commit);
+    if isempty(expected_target_version)
+        fprintf('ASSEMBLY_IDENTITY source_mode=committed label=%s commit=%s tree=%s source_version=%s\n', ...
+            label, exp_commit, release_tree_hash, source_version);
+    else
+        fprintf(['ASSEMBLY_IDENTITY source_mode=committed label=%s expected_target=%s ', ...
+            'commit=%s tree=%s source_version=%s\n'], ...
+            label, expected_target_version, exp_commit, release_tree_hash, source_version);
+    end
+
+    % Gate contract without weakening: the publication validator must PASS
+    % on the staged package before anything is archived. Its second output
+    % only identifies the exact pinned one-time R2010b provenance exception.
+    if ~isempty(release_tag)
+        validator_args = {'PackageDir', package_dir, 'ReleaseTag', release_tag, ...
+            'ReleaseCommit', exp_commit, 'RepoRoot', repo_root};
+    else
+        validator_args = {'PackageDir', package_dir, 'ReleaseCommit', exp_commit, ...
+            'RepoRoot', repo_root};
+    end
+    if ~isempty(gate_a_record)
+        validator_args = [validator_args, {'GateARecord', gate_a_record}]; %#ok<AGROW>
+    end
+    if ~isempty(expected_target_version)
+        validator_args = [validator_args, ...
+            {'ExpectedTargetVersion', expected_target_version}]; %#ok<AGROW>
+    end
+    [~, exception_artifact] = validate_mlsc_release('prepublication', validator_args{:});
 end
-if ~isempty(gate_a_record)
-    validator_args = [validator_args, {'GateARecord', gate_a_record}]; %#ok<AGROW>
-end
-[~, exception_artifact] = validate_mlsc_release('prepublication', validator_args{:});
 
 build = local_load_build(package_dir);
 
@@ -217,30 +307,47 @@ mkdir(stage_root);
 mkdir(verify_root);
 cleanup_tmp = onCleanup(@() local_cleanup_dirs(stage_root, verify_root)); %#ok<NASGU>
 asm_root = fullfile(stage_root, prefix);
-source_stage = fullfile(asm_root, 'source');
+source_stage = asm_root;
 compiled_stage = fullfile(asm_root, 'compiled');
 mkdir(asm_root);
-mkdir(source_stage);
-mkdir(compiled_stage);
 
-% Versioned source: git-archive-equivalent tree of the exact release
-% commit (honors the committed .gitattributes export-ignore policy).
-src_tar = fullfile(stage_root, 'source.tar');
-[~, ~] = system(sprintf('rm -f %s 2>/dev/null', local_shell_quote(src_tar)));
-[s_arc, ~] = system(sprintf('git -C %s --no-pager archive --format=tar -o %s %s 2>&1', ...
-    local_shell_quote(repo_root), local_shell_quote(src_tar), exp_commit));
-if s_arc ~= 0 || exist(src_tar, 'file') ~= 2
-    error('pseudo_CT:MLSCReleaseGate', ...
-        'Versioned source archive of commit %s is unavailable; missing source blocks assembly.', exp_commit);
+% Archive source directly at the installation root so run_pseudo_CT.m and
+% src/ resolve from the extraction. The publishable path comes only from
+% git archive of the resolved commit; the preview path is a filtered copy
+% of the working source and is conspicuously marked nonpublishable.
+if strcmp(source_mode, 'working-preview')
+    local_copy_working_source(repo_root, source_stage);
+    local_write_text(fullfile(asm_root, 'NONPUBLISHABLE_WORKING_SOURCE.txt'), ...
+        {'This is a nonpublishable working-source preview.'; ...
+        'It is not bound to a final release commit or tag.'; ...
+        'Use SourceMode=committed after human acceptance to assemble a release archive.'});
+    fprintf('ASSEMBLY_SOURCE staged nonpublishable working-source preview.\n');
+else
+    src_tar = fullfile(stage_root, 'source.tar');
+    [~, ~] = system(sprintf('rm -f %s 2>/dev/null', local_shell_quote(src_tar)));
+    [s_arc, ~] = system(sprintf('git -C %s --no-pager archive --format=tar -o %s %s 2>&1', ...
+        local_shell_quote(repo_root), local_shell_quote(src_tar), exp_commit));
+    if s_arc ~= 0 || exist(src_tar, 'file') ~= 2
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Versioned source archive of commit %s is unavailable; missing source blocks assembly.', exp_commit);
+    end
+    [s_unt, ~] = system(sprintf('tar -xf %s -C %s 2>&1', ...
+        local_shell_quote(src_tar), local_shell_quote(source_stage)));
+    if s_unt ~= 0
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Versioned source extraction failed; incomplete source blocks assembly.');
+    end
+    delete(src_tar);
+    fprintf('ASSEMBLY_SOURCE staged committed source tree of %s.\n', exp_commit);
 end
-[s_unt, ~] = system(sprintf('tar -xf %s -C %s 2>&1', ...
-    local_shell_quote(src_tar), local_shell_quote(source_stage)));
-if s_unt ~= 0
-    error('pseudo_CT:MLSCReleaseGate', ...
-        'Versioned source extraction failed; incomplete source blocks assembly.');
+
+if exist(compiled_stage, 'dir') ~= 7
+    [ok_compiled, msg_compiled] = mkdir(compiled_stage);
+    if ~ok_compiled
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Cannot create compiled installation directory: %s.', msg_compiled);
+    end
 end
-delete(src_tar);
-fprintf('ASSEMBLY_SOURCE staged versioned source tree of %s.\n', exp_commit);
 
 % Compiled dist: byte copy of the validated staged package.
 local_copy_tree(package_dir, compiled_stage);
@@ -250,7 +357,7 @@ fprintf('ASSEMBLY_COMPILED staged validated package from %s.\n', package_dir);
 local_write_text(fullfile(asm_root, 'MCR_COMPAT.txt'), local_compat_text(build, exception_artifact));
 local_write_text(fullfile(asm_root, 'RELEASE_PROVENANCE.txt'), ...
     local_provenance_text(label, release_tag, exp_commit, release_tree_hash, ...
-    source_version, build, exception_artifact));
+    source_version, build, exception_artifact, source_mode, expected_target_version));
 
 % Version coherence against the STAGED source (fail fast, before tar).
 staged_changelog = fullfile(source_stage, 'CHANGELOG.md');
@@ -288,7 +395,7 @@ members = local_lines(list_out);
 if isempty(members)
     error('pseudo_CT:MLSCReleaseGate', 'Release archive member list is empty; incomplete archive blocks assembly.');
 end
-local_check_members(members, prefix);
+local_check_members(members, prefix, strcmp(source_mode, 'working-preview'));
 [s_ext, ~] = system(sprintf('tar -xzf %s -C %s 2>&1', ...
     local_shell_quote(archive_path), local_shell_quote(verify_root)));
 if s_ext ~= 0
@@ -298,6 +405,9 @@ local_check_hashes(fullfile(verify_root, prefix), build, exception_artifact);
 
 archive_sha = mlsc_release_gate('sha256_file', archive_path);
 fprintf('ASSEMBLY_SUCCESS archive=%s sha256=%s members=%d\n', archive_path, archive_sha, numel(members));
+if strcmp(source_mode, 'working-preview')
+    fprintf('ASSEMBLY_NONPUBLISHABLE working-source preview only; do not publish or tag this archive.\n');
+end
 end
 
 function local_require_scratch_tree(repo_root, path_here, label)
@@ -449,7 +559,7 @@ for kk = 1:numel(build.required_toolboxes)
 end
 end
 
-function lines = local_provenance_text(label, tag, commit, tree, version, build, exception_artifact)
+function lines = local_provenance_text(label, tag, commit, tree, version, build, exception_artifact, source_mode, expected_target_version)
 stamp = '';
 try
     [~, out] = system('date -u +%Y-%m-%dT%H:%M:%SZ 2>&1');
@@ -458,15 +568,21 @@ catch %#ok<CTCH>
 end
 lines = {'# Release provenance (generated at assembly; build manifest is authority for hashes)'; ...
     sprintf('assembly_label %s', label); ...
+    sprintf('source_mode %s', source_mode); ...
     sprintf('release_tag %s', tag); ...
     sprintf('release_commit %s', commit); ...
     sprintf('release_tree %s', tree); ...
     sprintf('source_version %s', version); ...
     sprintf('assembled_utc %s', stamp)};
+if ~isempty(expected_target_version)
+    lines{end + 1, 1} = sprintf('expected_target_version %s', ... %#ok<AGROW>
+        expected_target_version);
+end
 if isfield(build, 'source_provenance_fingerprint') && ischar(build.source_provenance_fingerprint)
     lines{end + 1, 1} = sprintf('source_provenance_fingerprint %s', ... %#ok<AGROW>
         build.source_provenance_fingerprint);
 end
+
 if isfield(build, 'packaged_files_fingerprint') && ischar(build.packaged_files_fingerprint)
     lines{end + 1, 1} = sprintf('packaged_files_fingerprint %s', ... %#ok<AGROW>
         strtrim(build.packaged_files_fingerprint));
@@ -489,6 +605,78 @@ if exception_artifact
     lines{end + 1, 1} = 'dataset_att_map_sha256 1517efbe3fbb8e0f4df3fb3b2a4e40c387ba09fbcbac326496fe47cf8a6981ff'; %#ok<AGROW>
     lines{end + 1, 1} = 'dataset_matching_profiles local-current, local-legacy, mlsc-legacy, mlsc-current-r2010b'; %#ok<AGROW>
     lines{end + 1, 1} = 'dataset_scientific_acceptance scope_limited_to_user-reported_dataset_and_outputs'; %#ok<AGROW>
+end
+end
+
+function local_copy_working_source(repo_root, destination)
+%LOCAL_COPY_WORKING_SOURCE Copy tracked and nonignored source, honoring export-ignore.
+command = sprintf('git -C %s --no-pager ls-files --cached --others --exclude-standard 2>&1', ...
+    local_shell_quote(repo_root));
+[status, output] = system(command);
+if status ~= 0
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Cannot enumerate working source files; incomplete preview blocks assembly: %s', strtrim(output));
+end
+paths = local_lines(output);
+for kk = 1:numel(paths)
+    rel = strtrim(paths{kk});
+    if isempty(rel) || rel(1) == '/' || ~isempty(strfind(rel, '..'))
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Working source contains an unsafe path %s; preview blocks assembly.', rel);
+    end
+    attr_command = sprintf('git -C %s --no-pager check-attr export-ignore -- %s 2>&1', ...
+        local_shell_quote(repo_root), local_shell_quote(rel));
+    [attr_status, attr_output] = system(attr_command);
+    if attr_status ~= 0
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Cannot resolve export-ignore policy for %s; preview blocks assembly.', rel);
+    end
+    ignored = ~isempty(strfind(attr_output, ': export-ignore: set'));
+    parts = strsplit(rel, '/');
+    prefix = '';
+    for jj = 1:numel(parts) - 1
+        if isempty(prefix)
+            prefix = parts{jj};
+        else
+            prefix = [prefix '/' parts{jj}]; %#ok<AGROW>
+        end
+        parent_command = sprintf('git -C %s --no-pager check-attr export-ignore -- %s 2>&1', ...
+            local_shell_quote(repo_root), local_shell_quote(prefix));
+        [parent_status, parent_output] = system(parent_command);
+        if parent_status ~= 0
+            error('pseudo_CT:MLSCReleaseGate', ...
+                'Cannot resolve export-ignore policy for %s; preview blocks assembly.', prefix);
+        end
+        if ~isempty(strfind(parent_output, ': export-ignore: set'))
+            ignored = true;
+            break;
+        end
+    end
+    src = fullfile(repo_root, strrep(rel, '/', filesep));
+    dst = fullfile(destination, strrep(rel, '/', filesep));
+    if ignored
+        if exist(dst, 'file') == 2
+            delete(dst);
+        end
+        continue;
+    end
+    if exist(src, 'file') == 2
+        parent = fileparts(dst);
+        if exist(parent, 'dir') ~= 7
+            [ok_parent, msg_parent] = mkdir(parent);
+            if ~ok_parent
+                error('pseudo_CT:MLSCReleaseGate', ...
+                    'Cannot create working-source directory for %s: %s.', rel, msg_parent);
+            end
+        end
+        [ok_copy, msg_copy] = copyfile(src, dst);
+        if ~ok_copy
+            error('pseudo_CT:MLSCReleaseGate', ...
+                'Working-source file %s could not be copied into preview: %s.', rel, msg_copy);
+        end
+    elseif exist(dst, 'file') == 2
+        delete(dst);
+    end
 end
 end
 
@@ -528,7 +716,7 @@ for kk = 1:numel(parts)
 end
 end
 
-function local_check_members(members, prefix)
+function local_check_members(members, prefix, working_preview)
 root_prefix = [prefix '/'];
 for kk = 1:numel(members)
     entry = members{kk};
@@ -548,18 +736,35 @@ for kk = 1:numel(members)
         error('pseudo_CT:MLSCReleaseGate', ...
             'Archive member %s is environmental; stale content blocks assembly.', entry);
     end
-    if ~isempty(strfind(entry, [root_prefix 'source/scripts/'])) || ...
-            ~isempty(strfind(entry, [root_prefix 'source/docs/'])) || ...
-            ~isempty(strfind(entry, [root_prefix 'source/deprecated/']))
+    if strncmp(entry, [root_prefix 'source/'], length([root_prefix 'source/'])) || ...
+            strcmp(entry, [root_prefix 'source'])
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Archive member %s carries the obsolete source/ wrapper; mismatched layout blocks assembly.', entry);
+    end
+    relative = entry(length(root_prefix) + 1:end);
+    path_parts = ['/' relative '/'];
+    if ~isempty(strfind(path_parts, '/pseudoCT_mlsc/')) || ...
+            ~isempty(strfind(path_parts, '/pseudoCT_mlsc_current/')) || ...
+            ~isempty(strfind(path_parts, '/pseudoCT_mlsc-current/'))
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Archive member %s carries a separate MLSC installation; mismatched layout blocks assembly.', entry);
+    end
+    if ~isempty(strfind(entry, [root_prefix 'scripts/'])) || ...
+            ~isempty(strfind(entry, [root_prefix 'docs/AGENTS.md'])) || ...
+            ~isempty(strfind(entry, [root_prefix 'docs/TODO.md'])) || ...
+            ~isempty(strfind(entry, [root_prefix 'deprecated/']))
         error('pseudo_CT:MLSCReleaseGate', ...
             'Archive member %s violates the export-ignore policy; mismatched source blocks assembly.', entry);
     end
 end
-required = {'source/CHANGELOG.md'; 'source/run_pseudo_CT.m'; ...
+required = {'CHANGELOG.md'; 'run_pseudo_CT.m'; 'src/config/profiles/mlsc_current.m'; ...
+    'docs/installation.md'; ...
     'compiled/payload_build/run_mlsc_current_payload.sh'; ...
     'compiled/payload_build/mlsc_current_payload'; ...
     'compiled/mlsc_current_build.mat'; 'compiled/mlsc_current_resources.mat'; ...
     'MCR_COMPAT.txt'; 'RELEASE_PROVENANCE.txt'};
+marker = [root_prefix 'NONPUBLISHABLE_WORKING_SOURCE.txt'];
+has_preview_marker = false;
 for kk = 1:numel(required)
     want = [root_prefix required{kk}];
     found = false;
@@ -573,6 +778,19 @@ for kk = 1:numel(required)
         error('pseudo_CT:MLSCReleaseGate', ...
             'Archive is missing required member %s; incomplete archive blocks assembly.', required{kk});
     end
+end
+for kk = 1:numel(members)
+    if strcmp(members{kk}, marker)
+        has_preview_marker = true;
+        break;
+    end
+end
+if working_preview && ~has_preview_marker
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Working-source preview archive lacks its nonpublishable marker; preview identity blocks assembly.');
+elseif ~working_preview && has_preview_marker
+    error('pseudo_CT:MLSCReleaseGate', ...
+        'Committed release archive carries a nonpublishable working-source marker; source identity blocks assembly.');
 end
 end
 

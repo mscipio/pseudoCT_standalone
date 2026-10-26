@@ -1,4 +1,10 @@
-3.1.1
+3.2.0
+
+## 3.2.0-rc1 — Standalone release archive packaging
+
+- Assembles the source and MLSC compiled payload under one `pseudoCT_standalone-3.2.0-rc1/` installation root so `run_pseudo_CT` and bundled compiled files resolve from an extracted archive. A working-source preview is explicitly marked nonpublishable; release assembly remains bound to the final committed source.
+- Preserves the accepted R2010b compiled files and their exact manifest, executable, launcher, inventory size/SHA-256 checks, and documented provenance limits. No recompilation, scientific processing, shared-install modification, deployment, or startup-validation claim is made.
+- Source version metadata is 3.2.0; the v3.1.1 release history and existing artifact provenance remain unchanged.
 
 ## 3.1.1 — Exact-payload release validation and documentation provenance
 
