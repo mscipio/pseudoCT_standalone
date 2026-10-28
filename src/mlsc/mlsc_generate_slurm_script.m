@@ -118,21 +118,15 @@ lines{end + 1} = '    exit 73';
 lines{end + 1} = 'fi';
 lines{end + 1} = 'mlsc_record_progress ''verify|done''';
 lines{end + 1} = 'mlsc_record_progress ''copy_back|start''';
-lines{end + 1} = 'cp -- "$TMPDIR/att_map.nii" "$shared_temp/att_map.nii"';
+
+% Copy all node-local processing files back to the shared directory.
+lines{end + 1} = 'find "$TMPDIR" -mindepth 1 -maxdepth 1 -exec cp -a -t "$shared_temp" -- {} +';
+
 lines{end + 1} = 'if [ ! -s "$shared_temp/att_map.nii" ]; then';
 lines{end + 1} = '    printf ''Shared att_map.nii copy-back is missing or empty.\n'' >&2';
 lines{end + 1} = '    exit 74';
 lines{end + 1} = 'fi';
-lines{end + 1} = 'copy_optional() {';
-lines{end + 1} = '    if [ -f "$1" ]; then';
-lines{end + 1} = '        cp -- "$1" "$2"';
-lines{end + 1} = '    fi';
-lines{end + 1} = '}';
-lines{end + 1} = 'copy_optional "$TMPDIR/Pseudo_CT_AC_Version.txt" "$shared_temp/Pseudo_CT_AC_Version.txt"';
-lines{end + 1} = 'copy_optional "$TMPDIR/Fusion_MR_Pseudo_CT_validation.tiff" "$shared_temp/Fusion_MR_Pseudo_CT_validation.tiff"';
-if needs_normalization
-    lines{end + 1} = 'copy_optional "$local_normalized" "$shared_temp/$normalized_name"';
-end
+
 lines{end + 1} = 'mlsc_record_progress ''copy_back|done''';
 lines{end + 1} = 'printf ''MLSC node-local processing and verified copy-back completed.\n''';
 
@@ -950,12 +944,8 @@ lines{end + 1} = '    exit 73';
 lines{end + 1} = 'fi';
 lines{end + 1} = 'mlsc_record_progress ''verify|done''';
 lines{end + 1} = 'mlsc_record_progress ''copy_back|start''';
-lines{end + 1} = 'cp -- "$TMPDIR/att_map.nii" "$shared_temp/att_map.nii"';
-lines{end + 1} = 'cp -- "$TMPDIR/Fusion_MR_Pseudo_CT_validation.tiff" "$shared_temp/Fusion_MR_Pseudo_CT_validation.tiff"';
-lines{end + 1} = 'cp -- "$TMPDIR/Pseudo_CT_AC_Version.txt" "$shared_temp/Pseudo_CT_AC_Version.txt"';
-lines{end + 1} = 'cp -- "$TMPDIR/mlsc_current_handoff.mat" "$shared_temp/mlsc_current_handoff.mat"';
-lines{end + 1} = 'cp -- "$TMPDIR/mlsc_current_prepare_evidence.txt" "$shared_temp/mlsc_current_prepare_evidence.txt"';
-lines{end + 1} = 'cp -- "$TMPDIR/mlsc_current_output_verification.txt" "$shared_temp/mlsc_current_output_verification.txt"';
+% Copy all node-local processing files back to the shared directory.
+lines{end + 1} = 'find "$TMPDIR" -mindepth 1 -maxdepth 1 -exec cp -a -t "$shared_temp" -- {} +';
 lines{end + 1} = 'if [ ! -s "$shared_temp/att_map.nii" ]; then';
 lines{end + 1} = '    printf ''Shared att_map.nii copy-back is missing or empty.\n'' >&2';
 lines{end + 1} = '    exit 74';
@@ -980,14 +970,6 @@ lines{end + 1} = 'if [ ! -s "$shared_temp/mlsc_current_output_verification.txt" 
 lines{end + 1} = '    printf ''Shared output verification copy-back is missing or empty.\n'' >&2';
 lines{end + 1} = '    exit 74';
 lines{end + 1} = 'fi';
-lines{end + 1} = 'copy_optional() {';
-lines{end + 1} = '    if [ -f "$1" ]; then';
-lines{end + 1} = '        cp -- "$1" "$2"';
-lines{end + 1} = '    fi';
-lines{end + 1} = '}';
-if needs_normalization
-    lines{end + 1} = 'copy_optional "$TMPDIR/$prepare_expected" "$shared_temp/$prepare_expected"';
-end
 lines{end + 1} = 'mlsc_record_progress ''copy_back|done''';
 lines{end + 1} = 'printf ''MLSC node-local processing and verified copy-back completed.\n''';
 script_text = local_join_lines(lines);

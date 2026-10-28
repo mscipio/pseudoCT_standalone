@@ -93,9 +93,28 @@ for jj=1:size(P, 1)
     pseudo_CT_output('INFO', context, 'Uploading input and submitting Launchpad job.');
     [pathn, fn, extn] = fileparts(deblank(P(jj, :)));
 
-    rand_fold(jj) = randi(10000000, 1);
-    lc_path = strcat(lc_path_parent, num2str(rand_fold(jj)));
-    ssh2_conn = ssh2_command(ssh2_conn, sprintf('mkdir %s', lc_path));
+    % Allocate a new scratch directory exclusively.
+    created = false;
+
+    for attempt = 1:100
+        candidate = randi(10000000, 1);
+        candidate_path = strcat(lc_path_parent, num2str(candidate));
+
+        [ssh2_conn, ~, mkdir_status] = ssh2_command( ...
+            ssh2_conn, sprintf('mkdir %s', candidate_path));
+
+        if ~isempty(mkdir_status) && mkdir_status == 0
+            rand_fold(jj) = candidate;
+            lc_path = candidate_path;
+            created = true;
+            break;
+        end
+    end
+
+    if ~created
+        error('pseudo_CT:LaunchpadScratch', ...
+            'Failed to allocate an exclusive Launchpad scratch directory.');
+    end
     ssh2_conn = scp_put(ssh2_conn, strcat(fn, extn), lc_path, pathn);
 
     lc_fn = strcat(lc_path, '/', fn, extn);
