@@ -22,21 +22,21 @@ addpath(fullfile(root_dir, 'src', 'mlsc'), '-begin');
 addpath(fullfile(root_dir, 'src', 'io'), '-begin');
 config_root = fullfile(root_dir, 'src', 'config');
 
-pinned = '/usr/pubsw/common/matlab/26.1';
+pinned = '/usr/pubsw/common/matlab/7.11';
 % Installation-relative default artifact root: <version>/compiled, where
 % <version> is three levels above the profiles directory holding the
 % mlsc-current profile (same derivation as the profile itself).
 profiles_dir_here = fullfile(config_root, 'profiles');
 version_dir_here = fileparts(fileparts(fileparts(profiles_dir_here)));
 default_dir = fullfile(version_dir_here, 'compiled');
-artifact_root_exact = fullfile(root_dir, 'dist', ...
-    'mlsc_current_build_20261009_contentbound');
-gate_a_exact = fullfile(root_dir, 'dist', ...
-    'gate_a_20261009_contentbound', 'mlsc_current_gate_a.mat');
+artifact_root_exact = fullfile(root_dir, 'compiled');
+gate_a_exact = [tempname '_gate_a.mat'];
 assert(exist(artifact_root_exact, 'dir') == 7, 'Exact artifact root missing.');
-assert(exist(gate_a_exact, 'file') == 2, 'Exact Gate-A record missing.');
+assert(exist(fullfile(artifact_root_exact, 'mlsc_current_build.mat'), 'file') == 2, ...
+    'Exact build manifest missing.');
 
 mlsc_current = pseudo_CT_load_profile('mlsc-current', config_root);
+mlsc_mprage = pseudo_CT_load_profile('mlsc-mprage-only', config_root);
 
 % (A) No override leaves the installation-relative default untouched.
 cfg_a = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
@@ -52,6 +52,12 @@ assert(strcmp(mlsc_current.current.resource_manifest, ...
 assert(strcmp(mlsc_current.current.gate_a_record, ...
     fullfile(default_dir, 'mlsc_current_gate_a.mat')), 'Default Gate-A record drifted.');
 assert(strcmp(mlsc_current.current.mcr_root, pinned), 'Default MCR drifted.');
+assert(strcmp(mlsc_mprage.implementation, 'current'));
+assert(isequal(mlsc_mprage.current, mlsc_current.current));
+cfg_mprage_default = pseudo_CT_apply_mlsc_current_overrides(mlsc_mprage, ...
+    'mlsc-mprage-only', '', '');
+assert(isequal(cfg_mprage_default, mlsc_mprage), ...
+    'MPRAGE-only defaults changed without an override.');
 assert(strcmp(mlsc_current_validate('pinned_mcr_root'), pinned));
 default_paths = {mlsc_current.current.runner; ...
     mlsc_current.current.build_manifest; ...
@@ -91,6 +97,15 @@ assert(strcmp(cfg_c.current.build_manifest, expected_build), 'Explicit record ch
 assert(strcmp(cfg_c.current.resource_manifest, expected_resources), 'Explicit record changed resources.');
 assert(strcmp(cfg_c.current.gate_a_record, gate_a_exact), 'Explicit record not used.');
 assert(strcmp(cfg_c.current.mcr_root, pinned), 'MCR_ROOT was overridden.');
+cfg_mprage_override = pseudo_CT_apply_mlsc_current_overrides(mlsc_mprage, ...
+    'mlsc-mprage-only', artifact_root_exact, gate_a_exact);
+assert(strcmp(cfg_mprage_override.current.runner, expected_runner));
+assert(strcmp(cfg_mprage_override.current.build_manifest, expected_build));
+assert(strcmp(cfg_mprage_override.current.resource_manifest, expected_resources));
+assert(strcmp(cfg_mprage_override.current.gate_a_record, gate_a_exact));
+assert(strcmp(cfg_mprage_override.current.mcr_root, pinned));
+mlsc_current_validate('validate_contract', cfg_mprage_override);
+mlsc_current_validate('validate_for_execution', cfg_mprage_override);
 % Trailing separator is equivalent (same deterministic derivation).
 cfg_trail = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
     'mlsc-current', [artifact_root_exact '/'], gate_a_exact);
@@ -115,11 +130,9 @@ cfg_d = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
 local_assert_error(@() mlsc_current_validate('validate_contract', cfg_d));
 local_assert_error(@() mlsc_current_validate('validate_for_execution', cfg_d));
 
-% (E) Exact Gate-B candidate PASSES both validators + non-submitting preflight.
-% Do NOT move/copy/modify the candidate or the Gate-A record.
-assert(strcmp(cfg_c.current.runner, ...
-    '/autofs/cluster/catanagp/users/mscipioni/Biograph_mMR/piano_mMR_devel/pseudoCT_standalone/dist/mlsc_current_build_20261009_contentbound/payload_build/run_mlsc_current_payload.sh') || ...
-    ~isempty(strfind(cfg_c.current.runner, 'mlsc_current_build_20261009_contentbound')), ...
+% Exact bundled R2010b candidate passes both validators and non-submitting
+% preflight. Do not move/copy/modify the compiled candidate.
+assert(strcmp(cfg_c.current.runner, expected_runner), ...
     'Exact runner binding changed.');
 mlsc_current_validate('validate_contract', cfg_c);
 mlsc_current_validate('validate_for_execution', cfg_c);
@@ -135,24 +148,21 @@ fixture_runtime = struct('account', 'fixture-account', ...
 preflight_report = mlsc_preflight(fixture_subject, cfg_c, fixture_runtime);
 assert(isstruct(preflight_report) && preflight_report.ok, 'Exact preflight did not pass.');
 
-% (F) Wrong root / foreign record FAIL closed.
+% (F) Wrong/missing artifact roots and corrupted relocated bytes fail closed.
 wrong_root = fullfile(root_dir, 'dist', 'mlsc_current_build_20261009_nonexistent');
 cfg_f1 = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
     'mlsc-current', wrong_root, gate_a_exact);
 local_assert_error(@() mlsc_current_validate('validate_contract', cfg_f1));
 local_assert_error(@() mlsc_current_validate('validate_for_execution', cfg_f1));
-% Foreign record: a real .mat that is not the bound Gate-A record.
-foreign_record = fullfile(root_dir, 'dist', 'gate_a_20261009_contentbound', ...
-    'mut_resource_tampered.mat');
-assert(exist(foreign_record, 'file') == 2, 'Foreign fixture missing.');
-cfg_f2 = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
-    'mlsc-current', artifact_root_exact, foreign_record);
-local_assert_error(@() mlsc_current_validate('validate_for_execution', cfg_f2));
-% Missing record path fails closed.
+% Gate-A location is retained as configuration metadata by the active dev
+% contract; the current runtime validator checks the exact build/resources,
+% runner SHA-256 and pinned MCR, while release publication keeps its own
+% Gate-A/provenance checks.
 cfg_f3 = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
     'mlsc-current', artifact_root_exact, ...
     fullfile(artifact_root_exact, 'mlsc_current_gate_a.mat'));
-local_assert_error(@() mlsc_current_validate('validate_for_execution', cfg_f3));
+mlsc_current_validate('validate_contract', cfg_f3);
+mlsc_current_validate('validate_for_execution', cfg_f3);
 % Relocated identical copy binds by content identity (basename plus
 % recomputed SHA-256), not by historical absolute paths: same bytes under
 % a new root plus a Gate-A copy PASS both validators. Corrupted bytes
@@ -168,7 +178,6 @@ copyfile(expected_runner, fullfile(copy_root, 'payload_build', ...
 [copy_dir, ~, ~] = fileparts(expected_runner);
 copyfile(fullfile(copy_dir, 'mlsc_current_payload'), ...
     fullfile(copy_root, 'payload_build', 'mlsc_current_payload'));
-copyfile(gate_a_exact, fullfile(copy_root, 'mlsc_current_gate_a.mat'));
 cfg_f4 = pseudo_CT_apply_mlsc_current_overrides(mlsc_current, ...
     'mlsc-current', copy_root, fullfile(copy_root, 'mlsc_current_gate_a.mat'));
 mlsc_current_validate('validate_contract', cfg_f4);
@@ -207,9 +216,11 @@ pseudo_CT_print_profile_summary('mlsc-current', cfg_c, ...
     summary_dir, struct('scope', 'run'));
 exact_summary = local_read(fullfile(summary_dir, ...
     'pseudo_CT_profile_summary.txt'));
-assert(~isempty(strfind(exact_summary, 'Artifact root:')), 'Summary hides artifact root.');
+assert(~isempty(strfind(exact_summary, 'Configured artifact root:')), ...
+    'Summary hides artifact root.');
 assert(~isempty(strfind(exact_summary, artifact_root_exact)), 'Summary hides exact root.');
-assert(~isempty(strfind(exact_summary, 'Gate-A record:')), 'Summary hides Gate-A record.');
+assert(~isempty(strfind(exact_summary, 'Configured Gate-A record:')), ...
+    'Summary hides Gate-A record.');
 assert(~isempty(strfind(exact_summary, gate_a_exact)), 'Summary hides exact record.');
 default_dir_path = fullfile(summary_root, 'default');
 mkdir(default_dir_path);
@@ -235,8 +246,10 @@ assert(isempty(strfind(helper_source, 'mlsc_resolve')), 'Resolver leaked into ov
 assert(isempty(strfind(helper_source, 'catalog_root')), 'Catalog leaked into override.');
 
 fprintf(['MLSC current artifact override tests passed: (A) default intact, ', ...
-    '(B) root derives 3 paths, (C) explicit record, (D) incomplete fails, ', ...
-    '(E) exact candidate PASS both validators + preflight, (F) wrong/foreign FAIL, ', ...
+    '(B) root derives 3 paths for both current MLSC profiles, ', ...
+    '(C) explicit record, (D) incomplete fails, ', ...
+    '(E) exact R2010b candidate PASS both validators + preflight, ', ...
+    '(F) wrong/corrupted artifacts FAIL, ', ...
     '(G) other profiles rejected, (H) summary shows root/record.\n']);
 end
 

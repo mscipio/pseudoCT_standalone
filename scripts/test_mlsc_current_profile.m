@@ -7,15 +7,15 @@ function test_mlsc_current_profile()
 %     3) mlsc-current is mlsc/current
 %     4) mlsc-legacy is mlsc/legacy
 %     5) mlsc alias resolves deterministically to mlsc-legacy (not mlsc-current)
-%     6) mlsc-mprage-only stays legacy
+%     6) mlsc-mprage-only shares the current artifact contract
 %     7) local-mprage-only keeps its existing intent
-%     8) default remains local-current
-%     9) routine selector defaults to Local MATLAB and exposes historical
-%        Aether choices while keeping the gated MLSC-current candidate hidden
+%     8) default remains mlsc-current
+%     9) routine selector defaults to MLSC-current and exposes historical
+%        Aether choices
 %    10) deprecated profiles stay out of the primary selector
 %    11) mlsc-current pins MATLAB R2010b root 7.11 with MCR 7.14
 %    12) current-specific fields with no legacy leak (namespaces separate)
-%    13) fail-closed pending Gate A (maintainer-loadable, not routine-selectable)
+%    13) missing current artifact fails closed before dispatch
 %    14) legacy invocation unchanged
 %    15) no ambiguity (single coherent artifact layout, no catalog/resolver)
 %
@@ -79,11 +79,17 @@ aliased = pseudo_CT_load_profile('mlsc', config_root);
 assert(isequal(aliased, mlsc_legacy));
 assert(~isequal(aliased, mlsc_current));
 
-% 6) mlsc-mprage-only stays legacy.
+% 6) MLSC MPRAGE-only reuses the current artifact/scheduler contract.
 assert(strcmp(mlsc_mprage.mode, 'mlsc'));
-assert(strcmp(mlsc_mprage.implementation, 'legacy-v2'));
-assert(strcmp(mlsc_mprage.compatibility_profile, 'mlsc'));
-assert(~isfield(mlsc_mprage, 'current'));
+assert(strcmp(mlsc_mprage.implementation, 'current'));
+assert(strcmp(mlsc_mprage.compatibility_profile, 'mlsc-current'));
+assert(isfield(mlsc_mprage, 'current'));
+assert(~isfield(mlsc_mprage, 'legacy'));
+assert(isequal(mlsc_mprage.current, mlsc_current.current));
+assert(isequal(mlsc_mprage.mlsc, mlsc_current.mlsc));
+assert(strcmp(mlsc_mprage.io_policy.reference, 'none'));
+assert(strcmp(mlsc_mprage.io_policy.output, 'nifti-only'));
+assert(strcmp(mlsc_mprage.io_policy.gui, 'mprage-only'));
 
 % 7) local-mprage-only keeps its existing intent.
 assert(strcmp(local_mprage.mode, 'local'));
@@ -93,25 +99,25 @@ assert(strcmp(local_mprage.io_policy.output, 'nifti-only'));
 assert(strcmp(local_mprage.io_policy.gui, 'mprage-only'));
 assert(strcmp(local_mprage.compatibility_profile, 'local-current'));
 
-% 8-9) Routine selector defaults local-current; MLSC Current stays
-% maintainer-loadable but is not a routine option.
+% 8-9) Routine selector keeps mlsc-current as the default while retaining
+% historical Aether options.
 [ordered, default_index] = pseudo_CT_prepare_routine_profile_choices(config_root);
-assert(strcmp(ordered(default_index).name, 'local-current'));
+assert(strcmp(ordered(default_index).name, 'mlsc-current'));
 assert(ismember('mlsc-current', names));
-assert(~ismember('mlsc-current', {ordered.name}));
+assert(ismember('mlsc-current', {ordered.name}));
 recommended = ordered(strcmp({ordered.group}, 'recommended'));
 specialized = ordered(strcmp({ordered.group}, 'specialized'));
 assert(length(recommended) == 1);
 assert(length(specialized) == 6);
 assert(strcmp(recommended(1).name, 'local-current'));
 assert(isequal(sort({specialized.name}), sort({'local-legacy', ...
-    'mlsc-legacy', 'launchpad-legacy', 'local-mprage-only', ...
-    'mlsc-mprage-only', 'devel'})));
+    'mlsc-current', 'mlsc-legacy', 'launchpad-legacy', ...
+    'local-mprage-only', 'mlsc-mprage-only'})));
 assert(strcmp(recommended(1).display_name, 'Local MATLAB - This Computer'));
 assert(strcmp(local_legacy.presentation.display_name, 'Aether - Local'));
 assert(strcmp(mlsc_legacy.presentation.display_name, 'Aether - MLSC'));
 assert(strcmp(mlsc_current.presentation.group, 'specialized'));
-assert(~mlsc_current.presentation.recommended);
+assert(mlsc_current.presentation.recommended);
 assert(isempty(strfind(mlsc_current.presentation.display_name, 'v3')));
 assert(isempty(strfind(lower(mlsc_current.presentation.display_name), ...
     'pseudoct3')));
@@ -193,9 +199,9 @@ assert(strcmp(mlsc_current.current.runner, expected_runner));
 expected_gate = fullfile(build_dir, 'mlsc_current_gate_a.mat');
 assert(strcmp(mlsc_current.current.gate_a_record, expected_gate));
 % Defaults anchor at the installed version directory derived from the
-% profile location (profiles dir, four levels up), never /usr/pubsw.
+% profile location (profiles dir, three levels up), never /usr/pubsw.
 profiles_dir_here = fullfile(config_root, 'profiles');
-version_dir_here = fileparts(fileparts(fileparts(fileparts(profiles_dir_here))));
+version_dir_here = fileparts(fileparts(fileparts(profiles_dir_here)));
 assert(strcmp(build_dir, fullfile(version_dir_here, 'compiled')));
 default_paths = {mlsc_current.current.runner; ...
     mlsc_current.current.build_manifest; ...
@@ -224,7 +230,8 @@ assert(isempty(strfind(current_lines, 'latest')));
 assert(isempty(strfind(current_lines, '/current')));
 assert(isempty(strfind(current_lines, '26.1')));
 
-% 13) Fail-closed pending Gate A: selectable/configurable, execution blocked.
+% 13) The shipped current artifact validates; an unavailable runner fails
+% closed before preflight/dispatch with no legacy payload fallback.
 fixture_root = tempname;
 mkdir(fixture_root);
 fixture_cleanup = onCleanup(@() local_cleanup(fixture_root)); %#ok<NASGU>
@@ -234,12 +241,16 @@ subject = struct('subject_id', 't005-fixture', ...
     'shared_input', fixture_input, 'shared_temp', fixture_root);
 runtime = struct('account', 'fixture-account', ...
     'script_path', fullfile(fixture_root, 'job.sh'));
-local_assert_error_id(@() mlsc_preflight(subject, mlsc_current, runtime), ...
+assert(mlsc_current_validate('validate_contract', mlsc_current));
+assert(mlsc_current_validate('validate_for_execution', mlsc_current));
+missing_current = mlsc_current;
+missing_current.current.runner = fullfile(fixture_root, 'missing-runner.sh');
+local_assert_error_id(@() mlsc_preflight(subject, missing_current, runtime), ...
     'pseudo_CT:MLSCCurrentRunner');
-local_assert_error(@() mlsc_current_validate('validate_contract', ...
-    mlsc_current));
+local_assert_error_id(@() mlsc_current_validate('validate_contract', ...
+    missing_current), 'pseudo_CT:MLSCCurrentRunner');
 local_assert_error_id(@() mlsc_current_validate('validate_for_execution', ...
-    mlsc_current), 'pseudo_CT:MLSCCurrentRunner');
+    missing_current), 'pseudo_CT:MLSCCurrentRunner');
 
 % Setup accepts the scheduler-only current shape with fixtures, and
 % rejects a fake legacy field without touching the artifact gate.
@@ -262,11 +273,13 @@ pseudo_CT_print_profile_summary('mlsc-current', mlsc_current, ...
     summary_dir, struct('scope', 'run'));
 current_summary = local_read(fullfile(summary_dir, ...
     'pseudo_CT_profile_summary.txt'));
-assert(~isempty(strfind(current_summary, 'Implementation:     current')));
-assert(~isempty(strfind(current_summary, pinned)));
-assert(~isempty(strfind(current_summary, 'pending Gate-A verification')));
 assert(~isempty(strfind(current_summary, ...
-    'fails preflight pending artifact')));
+    'Selected implementation (configured): current')));
+assert(~isempty(strfind(current_summary, pinned)));
+assert(~isempty(strfind(current_summary, ...
+    '--- MLSC Current Artifact (configured; not execution evidence) ---')));
+assert(~isempty(strfind(current_summary, ...
+    'Configured status:  Candidate is gated; runtime validation/execution not confirmed here.')));
 assert(~isempty(strfind(current_summary, build_dir)), ...
     'Summary hides resolved artifact root.');
 legacy_dir = fullfile(fixture_root, 'legacy-summary');
@@ -282,7 +295,7 @@ assert(isempty(strfind(legacy_summary, 'MLSC Current Artifact')));
 legacy_check = local_legacy_invocation(root_dir);
 
 fprintf(['MLSC current profile tests passed: 2x2 identity, mlsc alias, ', ...
-    'default local-current, Aether history options, gated current hidden, ', ...
+    'default mlsc-current, shared MPRAGE-only current artifact, Aether history options, ', ...
     'deprecated excluded, pinned R2010b root 7.11 / MCR 7.14, ', ...
     'current-only contract, fail-closed Gate A, legacy unchanged, ', ...
     'single layout. Legacy check: %s\n'], legacy_check);
@@ -310,7 +323,7 @@ elseif strcmp(kind, 'legacy_field')
          'config.mlsc.runner = ''/fixture/fake-runner.sh'';']);
 elseif strcmp(kind, 'legacy_block')
     source = strrep(source, ...
-        '% Installation-relative Gate-A artifact directory (staged layout).', ...
+        '% Installation-relative Gate-A artifact directory (flat version layout).', ...
         ['config.legacy.runner = ''/fixture/fake-runner.sh'';' char(10) ...
          '% Installation-relative Gate-A artifact directory (staged layout).']);
 elseif strcmp(kind, 'empty_runner')

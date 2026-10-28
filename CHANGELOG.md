@@ -1,5 +1,11 @@
 3.2.0
 
+## 3.2.0-rc2 — MLSC MPRAGE-only current artifact correction
+
+- Routes `mlsc-mprage-only` through the same current-lineage MLSC artifact and scheduler contract as `mlsc-current`, while retaining its MPRAGE-only, no-UMAP, NIfTI-only policies. Artifact-root and Gate-A-record overrides are accepted for both current MLSC profiles; missing or invalid artifacts still fail closed with no Aether fallback.
+- Extends the exact v3.2.0-rc2 assembler/validator identity to the unchanged retained R2010b compiled payload. Provenance, package inventory, size, and SHA-256 checks are unchanged; no rebuild or scientific processing was performed.
+- Updates operator and installation documentation. Source version metadata remains 3.2.0; no production deployment is claimed.
+
 ## 3.2.0-rc1 — Standalone release archive packaging
 
 - Assembles the source and MLSC compiled payload under one `pseudoCT_standalone-3.2.0-rc1/` installation root so `run_pseudo_CT` and bundled compiled files resolve from an extracted archive. A working-source preview is explicitly marked nonpublishable; release assembly remains bound to the final committed source.

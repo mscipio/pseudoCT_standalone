@@ -12,12 +12,12 @@ run_pseudo_CT
 
 ## External installations
 
-The v3.2.0-rc1 standalone archive extracts to `pseudoCT_standalone-3.2.0-rc1/`. Add that extracted installation root to the MATLAB path and run `run_pseudo_CT`; the selector source and bundled MLSC compiled files resolve from that root, with the compiled payload under `compiled/`. Opening the selector does not require a `/usr/pubsw/shared` symlink or a shared installation. This archive does not bundle all scientific processing resources; the separately provisioned resources below are still required when running profiles that use them.
+The v3.2.0-rc2 standalone archive candidate uses the installation root `pseudoCT_standalone-3.2.0-rc2/`. Add the extracted installation root to the MATLAB path and run `run_pseudo_CT`; the selector source and bundled MLSC compiled files resolve from that root, with the compiled payload under `compiled/`. Opening the selector does not require a `/usr/pubsw/shared` symlink or a shared installation. This candidate does not bundle all scientific processing resources; the separately provisioned resources below are still required when running profiles that use them. v3.2.0-rc2 is a source/profile correction, not a new compiled scientific payload, and no deployment is claimed.
 
-The v3.1.1 archive had a layout limitation: its files were wrapped under `source/`, so the extracted archive root was not the installation root expected by `run_pseudo_CT` and `src/`. The v3.2.0-rc1 archive fixes that layout by placing the launcher, `src/`, `docs/`, and bundled `compiled/` payload directly under `pseudoCT_standalone-3.2.0-rc1/`.
+The v3.1.1 archive had a layout limitation: its files were wrapped under `source/`, so the extracted archive root was not the installation root expected by `run_pseudo_CT` and `src/`. The v3.2.0-rc1 archive fixed that layout by placing the launcher, `src/`, `docs/`, and bundled `compiled/` payload directly under its version root; the rc2 candidate retains this layout under `pseudoCT_standalone-3.2.0-rc2/`.
 
 ```matlab
-addpath('/path/to/pseudoCT_standalone-3.2.0-rc1')
+addpath('/path/to/pseudoCT_standalone-3.2.0-rc2')
 run_pseudo_CT
 ```
 
@@ -47,7 +47,7 @@ The selector groups choices under **Standard Processing**, **MPRAGE-only Process
 | Legacy Processing | `mlsc-legacy` | PseudoCT v2 (Aether) — MLSC | Run the original v2 pipeline on MLSC for comparison with older studies. |
 | Legacy Processing | `launchpad-legacy` | PseudoCT v2 (Aether) — Launchpad | Run the original v2 pipeline on Launchpad for comparison with older studies. |
 
-The two MPRAGE-only profiles use MPRAGE only, require no UMAP, and produce NIfTI only. All three legacy Aether profiles remain selectable under Legacy Processing for historical compatibility; each requires a MATLAB R2010b host, and site resources for `launchpad-legacy` may be unavailable. Missing or invalid MLSC runtime/artifact requirements fail closed; selection does not silently fall back to Local or a historical profile.
+The two MPRAGE-only profiles use MPRAGE only, require no UMAP, and produce NIfTI only. `mlsc-mprage-only` uses the current-lineage R2010b compiled artifact and the same artifact-root/Gate-A override contract as `mlsc-current`; only the input, output, and GUI policies differ. Missing or invalid current MLSC runtime/artifact requirements fail closed and never select a legacy Aether backend. All three legacy Aether profiles remain selectable under Legacy Processing for historical compatibility; each requires a MATLAB R2010b host, and site resources for `launchpad-legacy` may be unavailable.
 
 The deprecated `mlsc` alias maps to `mlsc-legacy`; the deprecated `launchpad` alias is rejected. Use the canonical `launchpad-legacy` key, not that alias.
 
@@ -57,7 +57,7 @@ The standard workflow uses MPRAGE and its UMAP reference and produces NIfTI and 
 
 The profile summary preserves the canonical profile ID even when it also shows a display name. Submitter MATLAB and configured scientific paths/settings are distinct from executor facts. “Selected … (configured),” configured paths, scheduler requests, and configured PCA order describe settings—not proof of execution. The pre-dispatch summary does not confirm the actual executor/runtime or runtime options. Requested aliasing/recentering are listed separately from confirmation; because no per-stage confirmation is recorded, those operations are “Not confirmed.” Actual MLSC scheduler and local-finalization outcomes appear only when current-run lifecycle evidence is available. Executor host, CPU, runtime, and build remain unknown unless an actual record proves them; “Not confirmed”/“Not recorded” is not evidence of absence or success. The accepted job 10515471 documents its supplied R2010b Compiler 4.14/MCR 7.14 runtime and output finalization, but does not establish unreported host, CPU, or build details. Executor-side provenance reporting is implemented on a best-effort basis; live sidecar delivery has not been independently confirmed.
 
-PseudoCT v3 — MLSC resolves its bundled files from the installed version's `<version>/compiled/` directory. Explicit artifact-root/record overrides are advanced options for controlled setups; missing or invalid bundle files fail closed without substituting another profile.
+Both current MLSC profiles resolve their shared bundled files from the installed version's `<version>/compiled/` directory. Explicit artifact-root/record overrides are advanced options for controlled setups; missing or invalid bundle files fail closed without substituting another profile or implementation.
 
 ## Inputs and outputs
 

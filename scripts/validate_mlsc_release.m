@@ -21,15 +21,16 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %                     Resource manifest .mat (variable resources). Defaults
 %                     to <PackageDir>/mlsc_current_resources.mat in
 %                     prepublication; required explicitly in postinstall.
-%     'ReleaseTag'    Expected release tag (e.g. v2.8.5 or v3.2.0-rc1). Resolved
+%     'ReleaseTag'    Expected release tag (e.g. v2.8.5 or v3.2.0-rc2). Resolved
 %                     read-only against RepoRoot (commit==tag enforced).
 %     'ReleaseCommit' Expected 40-hex release commit (required when no
 %                     tag is given; cross-checked with the tag otherwise).
 %     'ExpectedTargetVersion'
-%                     Prepublication-only exact pre-tag target v3.1.1 or
-%                     v3.2.0-rc1. Requires an explicit ReleaseCommit and is
-%                     accepted only for the exact pinned R2010b package.
-%                     For v3.2.0-rc1, the target tag must not exist; once
+%                     Prepublication-only exact pre-tag target v3.1.1,
+%                     v3.2.0-rc1, or v3.2.0-rc2. Requires an explicit
+%                     ReleaseCommit and is accepted only for the exact
+%                     pinned R2010b package. The v3.2.0-rc1/rc2 target tag
+%                     must not exist; once
 %                     tagged, use the actual ReleaseTag and ReleaseCommit.
 %     'ExpectedFingerprint'
 %                     Optional out-of-band source fingerprint the manifest
@@ -38,7 +39,7 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %                     schema pseudo-CT.mlsc-current-gate-a/v1) binding this
 %                     exact candidate. Required except for the exact-pinned
 %                     R2010b artifact when targeting v3.1.0, v3.1.1, or
-%                     the exact candidate v3.2.0-rc1.
+%                     exact candidates v3.2.0-rc1 and v3.2.0-rc2.
 %     'DeployRoot'    Exact production runtime root of the deployment
 %                     copy (postinstall only; prepublication rejects it).
 %                     The layout is pinned by the mlsc-current profile:
@@ -89,9 +90,9 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %   artifact is recognized only by its exact build-manifest, executable,
 %   and launcher SHA-256 anchors plus the recorded runtime identity. The
 %   exception is permitted for exact release tags v3.1.0/v3.1.1 and
-%   v3.2.0-rc1. While v3.1.1 is untagged, prepublication alone may use
+%   v3.2.0-rc1/rc2. While v3.1.1 is untagged, prepublication alone may use
 %   ExpectedTargetVersion v3.1.1 with an explicit ReleaseCommit. The exact
-%   v3.2.0-rc1 pre-tag path likewise requires an explicit ReleaseCommit and
+%   v3.2.0-rc1/rc2 pre-tag path likewise requires an explicit ReleaseCommit and
 %   an absent target tag. Postinstall always requires the actual tag.
 %   The artifact's source_commit must be valid and its source-provenance
 %   fingerprint is preserved verbatim, but that dirty-source fingerprint
@@ -205,10 +206,12 @@ if ~isempty(expected_target_version)
             'ExpectedTargetVersion is prepublication-only; postinstall requires the actual release tag semantics.');
     end
     if ~strcmp(expected_target_version, 'v3.1.1') && ...
-            ~strcmp(expected_target_version, 'v3.2.0-rc1')
+            ~strcmp(expected_target_version, 'v3.2.0-rc1') && ...
+            ~strcmp(expected_target_version, 'v3.2.0-rc2')
         error('pseudo_CT:MLSCReleaseGate', ...
             ['ExpectedTargetVersion is available only for exact targets ', ...
-            'v3.1.1 or v3.2.0-rc1; unsupported version blocks publication.']);
+            'v3.1.1, v3.2.0-rc1, or v3.2.0-rc2; ', ...
+            'unsupported version blocks publication.']);
     end
     if ~isempty(release_tag)
         error('pseudo_CT:MLSCReleaseGate', ...
@@ -219,7 +222,8 @@ if ~isempty(expected_target_version)
             'ExpectedTargetVersion %s requires an explicit ReleaseCommit while no tag exists.', ...
             expected_target_version);
     end
-    if strcmp(expected_target_version, 'v3.2.0-rc1')
+    if strcmp(expected_target_version, 'v3.2.0-rc1') || ...
+            strcmp(expected_target_version, 'v3.2.0-rc2')
         local_require_pre_tag_target_untagged(repo_root, expected_target_version);
     end
 end
@@ -321,7 +325,8 @@ if exception_manifest_digest && ~local_is_r2010b_compatible_tag(release_tag) && 
         ~prepublication_target
     error('pseudo_CT:MLSCReleaseGate', ...
         ['The pinned R2010b artifact may target only release tags v3.1.0, ', ...
-        'v3.1.1, or v3.2.0-rc1; unsupported version blocks publication.']);
+        'v3.1.1, v3.2.0-rc1, or v3.2.0-rc2; ', ...
+        'unsupported version blocks publication.']);
 end
 if isempty(gate_a_record) && ~exception_manifest_digest
     error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
@@ -501,7 +506,7 @@ end
 function matched = local_is_r2010b_compatible_tag(release_tag)
 %LOCAL_IS_R2010B_COMPATIBLE_TAG Allow only the explicitly approved tags.
 matched = strcmp(release_tag, 'v3.1.0') || strcmp(release_tag, 'v3.1.1') || ...
-    strcmp(release_tag, 'v3.2.0-rc1');
+    strcmp(release_tag, 'v3.2.0-rc1') || strcmp(release_tag, 'v3.2.0-rc2');
 end
 
 function local_require_pre_tag_target_untagged(repo_root, target_version)

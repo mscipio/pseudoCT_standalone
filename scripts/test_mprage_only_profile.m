@@ -7,6 +7,18 @@ addpath(fullfile(root_dir, 'src', 'core'));
 addpath(fullfile(root_dir, 'src', 'io'));
 addpath(fullfile(root_dir, 'src', 'ui'));
 
+config_root = fullfile(root_dir, 'src', 'config');
+mlsc_current = pseudo_CT_load_profile('mlsc-current', config_root);
+mlsc_mprage_only = pseudo_CT_load_profile('mlsc-mprage-only', config_root);
+assert(strcmp(mlsc_mprage_only.mode, 'mlsc'));
+assert(strcmp(mlsc_mprage_only.implementation, 'current'));
+assert(strcmp(mlsc_mprage_only.compatibility_profile, 'mlsc-current'));
+assert(strcmp(mlsc_mprage_only.io_policy.reference, 'none'));
+assert(strcmp(mlsc_mprage_only.io_policy.output, 'nifti-only'));
+assert(strcmp(mlsc_mprage_only.io_policy.gui, 'mprage-only'));
+assert(isequal(mlsc_mprage_only.current, mlsc_current.current));
+assert(~isfield(mlsc_mprage_only, 'legacy'));
+
 test_dir = tempname;
 mkdir(test_dir);
 cleanup = onCleanup(@() local_cleanup(test_dir)); %#ok<NASGU>

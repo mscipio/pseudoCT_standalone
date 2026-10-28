@@ -29,7 +29,7 @@ function archive_path = assemble_mlsc_release(varargin)
 %     'PackageDir'    Staged release-candidate package root: payload_build/
 %                     plus build/resource manifests (required; must live
 %                     under <repo>/scratch/ -- dist/ is never a source).
-%     'ReleaseTag'    Expected release tag (e.g. v3.2.0-rc1). Resolved
+%     'ReleaseTag'    Expected release tag (e.g. v3.2.0-rc2). Resolved
 %                     read-only against RepoRoot (commit==tag enforced by
 %                     the shared gate helper). The tag must ALSO be
 %                     file-safe (no '/'): the gate tag charset admits '/',
@@ -37,7 +37,7 @@ function archive_path = assemble_mlsc_release(varargin)
 %     'ReleaseCommit' Expected 40-hex release commit (required when no
 %                     tag is given; cross-checked with the tag otherwise).
 %     'ExpectedTargetVersion'
-%                     Exact pre-tag target v3.2.0-rc1. Requires an explicit
+%                     Exact pre-tag target v3.2.0-rc1 or v3.2.0-rc2. Requires an explicit
 %                     resolvable ReleaseCommit and committed source; the
 %                     committed tree, not the working tree, is archived.
 %     'GateARecord'   Finalized Gate-A record binding this exact
@@ -50,7 +50,7 @@ function archive_path = assemble_mlsc_release(varargin)
 %                     tarball paths are rejected.
 %     'SourceVersion' Expected CHANGELOG line-1 version (default derived
 %                     from the tag: leading 'v' stripped, '-rc*' suffix
-%                     stripped, e.g. v3.2.0-rc1 -> 3.2.0). Required when
+%                     stripped, e.g. v3.2.0-rc2 -> 3.2.0). Required when
 %                     neither a tag nor ExpectedTargetVersion is given;
 %                     an explicit value must equal the tag/target-derived
 %                     version. The assembled source tree's CHANGELOG.md
@@ -143,9 +143,11 @@ if isempty(package_dir)
     error('pseudo_CT:MLSCReleaseGate', 'PackageDir is required; missing staged package blocks assembly.');
 end
 if ~isempty(expected_target_version)
-    if ~strcmp(expected_target_version, 'v3.2.0-rc1')
+    if ~strcmp(expected_target_version, 'v3.2.0-rc1') && ...
+            ~strcmp(expected_target_version, 'v3.2.0-rc2')
         error('pseudo_CT:MLSCReleaseGate', ...
-            'ExpectedTargetVersion is available only for exact target v3.2.0-rc1.');
+            ['ExpectedTargetVersion is available only for exact targets ', ...
+            'v3.2.0-rc1 or v3.2.0-rc2.']);
     end
     if ~strcmp(source_mode, 'committed')
         error('pseudo_CT:MLSCReleaseGate', ...
@@ -157,7 +159,8 @@ if ~isempty(expected_target_version)
     end
     if isempty(release_commit)
         error('pseudo_CT:MLSCReleaseGate', ...
-            'ExpectedTargetVersion v3.2.0-rc1 requires an explicit ReleaseCommit.');
+            'ExpectedTargetVersion %s requires an explicit ReleaseCommit.', ...
+            expected_target_version);
     end
 end
 if ~strcmp(source_mode, 'committed') && ~strcmp(source_mode, 'working-preview')
@@ -187,7 +190,7 @@ local_require_scratch_tree(repo_root, package_dir, 'PackageDir');
 local_reject_dist_source(package_dir, 'PackageDir');
 
 % Label + expected source version. The archive label charset is the
-% worktree-label rule (no '/'): v3.2.0-rc1 satisfies both the gate tag
+% worktree-label rule (no '/'): v3.2.0-rc2 satisfies both the gate tag
 % charset and this label rule; a tag carrying '/' is refused here with
 % an explicit reason instead of producing an ambiguous file name.
 if ~isempty(release_tag)

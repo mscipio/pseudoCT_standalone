@@ -2,12 +2,13 @@ function config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, a
 %PSEUDO_CT_APPLY_MLSC_CURRENT_OVERRIDES Operator artifact override (T009 Option A).
 %   CONFIG = PSEUDO_CT_APPLY_MLSC_CURRENT_OVERRIDES(CONFIG, PROFILE_NAME,
 %   ARTIFACT_ROOT, GATE_A_RECORD) applies the explicit public
-%   run_pseudo_CT name-value overrides for operator-selected mlsc-current
+%   run_pseudo_CT name-value overrides for operator-selected current MLSC
+%   profiles (mlsc-current and mlsc-mprage-only)
 %   artifacts. This is the real public config path in the normal
 %   run_pseudo_CT(...) workflow (not an internal mutation/debug/test seam,
 %   env backdoor, or validation bypass).
 %
-%   Supported overrides (mlsc-current only):
+%   Supported overrides (current MLSC profiles only):
 %     ARTIFACT_ROOT  - absolute directory deterministically supplying the
 %                      T007 build-layout files:
 %                        <root>/payload_build/run_mlsc_current_payload.sh
@@ -29,9 +30,9 @@ function config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, a
 %   Default behavior is unchanged: with both overrides omitted the profile
 %   canonical /usr/pubsw paths are returned untouched.
 %
-%   Only mlsc-current (mode 'mlsc', implementation 'current') may consume
-%   these options; any other profile/implementation with non-empty overrides
-%   fails clearly. MCR_ROOT is never overridden and remains the pinned
+%   Only mlsc-current and mlsc-mprage-only (mode 'mlsc', implementation
+%   'current') may consume these options; any other profile/implementation
+%   with non-empty overrides fails clearly. MCR_ROOT is never overridden and remains the pinned
 %   /usr/pubsw/common/matlab/26.1 (T014 authority); there is no catalog or
 %   resolver. Validation is unchanged: this function only selects which
 %   exact paths populate config.current.runner/build_manifest/
@@ -67,6 +68,9 @@ end
 is_current = false;
 try
     is_current = isstruct(config) && numel(config) == 1 && ...
+        ischar(profile_name) && ...
+        (strcmp(profile_name, 'mlsc-current') || ...
+         strcmp(profile_name, 'mlsc-mprage-only')) && ...
         isfield(config, 'mode') && ischar(config.mode) && ...
         strcmp(config.mode, 'mlsc') && ...
         isfield(config, 'implementation') && ...
@@ -79,8 +83,9 @@ end
 if ~is_current
     error('run_pseudo_CT:InvalidMlscCurrentOverride', ...
         ['mlsc_current_artifact_root/gate_a_record overrides are ', ...
-         'supported only for profile ''mlsc-current'' (mode mlsc, ', ...
-         'implementation current); profile ''%s'' is incompatible.'], ...
+         'supported only for profiles ''mlsc-current'' and ', ...
+         '''mlsc-mprage-only'' (mode mlsc, implementation current); ', ...
+         'profile ''%s'' is incompatible.'], ...
         profile_name);
 end
 if ~isempty(artifact_root)

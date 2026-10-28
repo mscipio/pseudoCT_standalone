@@ -112,9 +112,14 @@ assert(~strcmp(ordered_profiles(default_index).name, 'launchpad-legacy'));
 assert(strcmp(mlsc_mprage.io_policy.reference, 'none'));
 assert(strcmp(mlsc_mprage.io_policy.output, 'nifti-only'));
 assert(strcmp(mlsc_mprage.io_policy.gui, 'mprage-only'));
-assert(strcmp(mlsc_mprage.compatibility_profile, 'mlsc'));
+assert(strcmp(mlsc_mprage.compatibility_profile, 'mlsc-current'));
 assert(strcmp(mlsc_mprage.presentation.group, 'specialized'));
 assert(~mlsc_mprage.presentation.recommended);
+assert(strcmp(mlsc_mprage.mode, 'mlsc'));
+assert(strcmp(mlsc_mprage.implementation, 'current'));
+assert(isfield(mlsc_mprage, 'current') && ~isfield(mlsc_mprage, 'legacy'));
+assert(isequal(mlsc_mprage.current, ...
+    configs{local_config_index(names, 'mlsc-current')}.current));
 % T013 narrow correction: active MPRAGE-only wording names the modality
 % (specialized/not-recommended is already covered by group/recommended).
 assert(~isempty(strfind(lower(mlsc_mprage.presentation.description), ...
@@ -124,16 +129,17 @@ assert(~isfield(mlsc_mprage, 'launchpad'));
 assert(isfield(mlsc, 'mlsc') && isfield(mlsc_mprage, 'mlsc'));
 assert(strcmp(mlsc.mlsc.host, 'mlsc.nmr.mgh.harvard.edu'));
 assert(strcmp(mlsc.mlsc.shell, '/bin/bash'));
-assert(strcmp(mlsc.mlsc.runner, mlsc_mprage.mlsc.runner));
-assert(strcmp(mlsc.mlsc.defaults_mat, mlsc_mprage.mlsc.defaults_mat));
-assert(strcmp(mlsc.mlsc.batch_templates, mlsc_mprage.mlsc.batch_templates));
-assert(strcmp(mlsc.mlsc.freesurfer_env, mlsc_mprage.mlsc.freesurfer_env));
+mlsc_current_config = configs{local_config_index(names, 'mlsc-current')};
+assert(~isfield(mlsc_current_config.mlsc, 'runner'));
+assert(~isfield(mlsc_mprage.mlsc, 'runner'));
+assert(strcmp(mlsc_current_config.mlsc.freesurfer_env, ...
+    mlsc_mprage.mlsc.freesurfer_env));
 assert(strcmp(mlsc.normalization.host, mlsc.mlsc.host));
 assert(strcmp(mlsc.normalization.cluster, 'Yes'));
 assert(isequal(mlsc.pca_order, {'remote'}));
 assert(strcmp(mlsc_mprage.normalization.host, mlsc_mprage.mlsc.host));
 assert(strcmp(mlsc_mprage.normalization.cluster, 'Yes'));
-assert(isequal(mlsc_mprage.pca_order, {'remote'}));
+assert(isequal(mlsc_mprage.pca_order, {'callable_pca'; 'repo_legacy'}));
 
 % Resource setup follows the selected mode only. The fixture intentionally
 % leaves unrelated mode resources absent, so validating every backend would
@@ -176,7 +182,7 @@ assert(strcmp(temporary_ordered(temporary_default).name, 'local-current'));
 assert(isequal(local_without_policy(local_mprage), ...
     local_without_policy(local)));
 assert(isequal(local_without_policy(mlsc_mprage), ...
-    local_without_policy(mlsc)));
+    local_without_policy(mlsc_current_config)));
 
 unknown_failed = false;
 try
@@ -459,12 +465,18 @@ for ii = 1:length(configs)
     assert(ismember(configs{ii}.implementation, {'current'; 'legacy-v2'}));
     assert(~strcmp(configs{ii}.mode, 'legacy'));
     assert(~strcmp(configs{ii}.implementation, 'mlsc'));
-    % T005 narrow update: exactly one mlsc+current cell (mlsc-current).
+    % Current MLSC artifact contract is shared by standard and MPRAGE-only.
     if strcmp(configs{ii}.implementation, 'current') && ...
             strcmp(configs{ii}.mode, 'mlsc')
-        assert(strcmp(profiles(ii).name, 'mlsc-current'));
+        assert(ismember(profiles(ii).name, ...
+            {'mlsc-current'; 'mlsc-mprage-only'}));
     end
 end
+current_mlsc_names = {profiles(cellfun(@(cfg) ...
+    strcmp(cfg.mode, 'mlsc') && strcmp(cfg.implementation, 'current'), ...
+    configs)).name};
+assert(isequal(sort(current_mlsc_names(:)), ...
+    sort({'mlsc-current'; 'mlsc-mprage-only'})));
 local_current_cfg = configs{local_config_index(names, 'local-current')};
 local_legacy_cfg = configs{local_config_index(names, 'local-legacy')};
 mlsc_current_cfg = configs{local_config_index(names, 'mlsc-current')};
