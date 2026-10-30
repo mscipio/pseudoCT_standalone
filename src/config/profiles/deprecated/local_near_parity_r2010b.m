@@ -1,16 +1,18 @@
 function config = local_near_parity_r2010b()
 %LOCAL_NEAR_PARITY_R2010B Local profile for MATLAB R2010b parity work.
 
+dependency_paths = pseudo_CT_dependency_paths();
+
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'local';
 % SPM installation used by this profile.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-dan';
+config.spm_root = dependency_paths.spm8_dan_root;
 % Atlas images and SPM batch templates used by the pipeline.
-config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
+config.atlas_root = dependency_paths.atlas_root;
 % Standalone DICOM-to-NIfTI converter (sibling repository).
-config.d2n_root = '/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest';
+config.d2n_root = dependency_paths.d2n_root;
 % Standalone nose/back aliasing correction (external standalone app).
-config.aliasing_root = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest';
+config.aliasing_root = dependency_paths.aliasing_root;
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'Yes';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.

@@ -1,0 +1,118 @@
+#!/bin/sh
+
+# Stable command-line bridge for the versioned R2010b stdin bootstrap.
+set -u
+
+fail() {
+    printf 'pseudoct-headless: %s\n' "$1" >&2
+    exit "$2"
+}
+
+if [ "$#" -ne 2 ]; then
+    fail 'usage: pseudoct-headless REQUEST.mat RESULT.mat' 64
+fi
+
+# Resolve invocation through PATH and symlinked launchers before locating the
+# installation root. The installation can then be moved without editing this
+# file or depending on the caller's current directory.
+case "$0" in
+    */*) launcher=$0 ;;
+    *) launcher=$(command -v "$0") || fail 'cannot resolve launcher path' 70 ;;
+esac
+launcher=$(readlink -f -- "$launcher") || fail 'cannot resolve launcher path' 70
+launcher_dir=$(CDPATH= cd -P -- "$(dirname -- "$launcher")" 2>/dev/null && pwd -P) ||
+    fail 'cannot resolve installation root' 70
+install_root=$(CDPATH= cd -P -- "$launcher_dir/.." 2>/dev/null && pwd -P) ||
+    fail 'cannot resolve installation root' 70
+
+caller_dir=$(pwd -P) || fail 'cannot resolve caller directory' 70
+case "$1" in
+    /*) request_input=$1 ;;
+    *) request_input=$caller_dir/$1 ;;
+esac
+case "$2" in
+    /*) result_input=$2 ;;
+    *) result_input=$caller_dir/$2 ;;
+esac
+newline='
+'
+case "$request_input" in
+    *"$newline"*) fail 'request path cannot contain a newline' 65 ;;
+esac
+case "$result_input" in
+    *"$newline"*) fail 'result path cannot contain a newline' 66 ;;
+esac
+
+request_path=$(readlink -f -- "$request_input") ||
+    fail 'request MAT file is unavailable or unreadable' 65
+[ -f "$request_path" ] && [ -r "$request_path" ] ||
+    fail 'request MAT file is unavailable or unreadable' 65
+
+# -m canonicalizes a not-yet-created output and resolves existing parent and
+# target symlinks, allowing reliable same-file checks without creating files.
+result_path=$(readlink -m -- "$result_input") ||
+    fail 'result path is invalid' 66
+[ -n "$result_path" ] && [ ! -d "$result_path" ] ||
+    fail 'result path must name a file' 66
+result_parent=$(dirname -- "$result_path")
+[ -d "$result_parent" ] && [ -w "$result_parent" ] && [ -x "$result_parent" ] ||
+    fail 'result parent is not a writable directory' 66
+if [ -e "$result_path" ] && [ ! -w "$result_path" ]; then
+    fail 'existing result file is not writable' 66
+fi
+[ "$request_path" != "$result_path" ] ||
+    fail 'request and result paths must differ' 66
+
+matlab_bin=${PSEUDOCT_MATLAB:-/usr/pubsw/common/matlab/7.11/bin/matlab}
+case "$matlab_bin" in
+    */*) ;;
+    *) matlab_bin=$(command -v "$matlab_bin") ||
+        fail 'MATLAB executable is unavailable; set PSEUDOCT_MATLAB to its path' 69 ;;
+esac
+matlab_bin=$(readlink -f -- "$matlab_bin") ||
+    fail 'MATLAB executable is unavailable; set PSEUDOCT_MATLAB to its path' 69
+[ -x "$matlab_bin" ] || fail 'MATLAB executable is unavailable; set PSEUDOCT_MATLAB to its path' 69
+[ -f "$install_root/src/cli/pseudoct_headless_cli_r2010b.m" ] ||
+    fail 'versioned MATLAB bootstrap is unavailable' 70
+
+# Only request/result paths are added to the MATLAB environment. Credentials
+# remain in the external one-use MAT handoff referenced by the request.
+PSEUDOCT_REQUEST_MAT=$request_path
+PSEUDOCT_RESULT_MAT=$result_path
+export PSEUDOCT_REQUEST_MAT PSEUDOCT_RESULT_MAT
+cd -P -- "$install_root" || fail 'cannot enter installation root' 70
+
+# Keep this fixed: no paths or request values are interpolated into MATLAB
+# source or command-line expressions. The bootstrap keeps the JVM enabled.
+"$matlab_bin" -nodesktop -nosplash -nodisplay >/dev/null 2>&1 <<'MATLAB'
+try
+    run(fullfile(pwd, 'src', 'cli', 'pseudoct_headless_cli_r2010b.m'));
+catch
+    exit(70);
+end
+exit(70);
+MATLAB
+matlab_status=$?
+
+case "$matlab_status" in
+    0)
+        printf 'pseudoct-headless: dispatcher returned; inspect result fields\n'
+        exit 0
+        ;;
+    2)
+        printf 'pseudoct-headless: request rejected; inspect result fields\n' >&2
+        exit 2
+        ;;
+    3)
+        printf 'pseudoct-headless: operation failed; inspect result fields\n' >&2
+        exit 3
+        ;;
+    70)
+        printf 'pseudoct-headless: MATLAB dispatch/runtime failure\n' >&2
+        exit 70
+        ;;
+    *)
+        printf 'pseudoct-headless: MATLAB startup failed or exited unexpectedly\n' >&2
+        exit 70
+        ;;
+esac

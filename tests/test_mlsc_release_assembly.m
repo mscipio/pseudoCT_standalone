@@ -1,0 +1,421 @@
+function test_mlsc_release_assembly(mode, fixture_root)
+%TEST_MLSC_RELEASE_ASSEMBLY Bounded assembly tests (synthetic, no mcc/science).
+%   Offline only: synthetic staged packages under
+%   scratch/release_gate/assembly_fixtures/ (ignored), read-only git
+%   commit/tree/archive resolution against HEAD, disk reads of the pinned
+%   MCR identity. The compiler is unreachable (only the assembly script,
+%   the gate helper, and the publication validator run, all with fixture
+%   manifests), no science, no SSH/Slurm, no publish/deploy, no tag, and
+%   no worktree creation. Covers: valid fixtures assemble (archive under
+%   scratch/ with a single versioned standalone root, required members, hashes
+%   recomputed from the actual archive bytes); each negative (missing
+%   package, dist/ as source, wrong commit, tampered packaged file,
+%   source-version mismatch, slash tag refused as
+%   a non-file-safe label) blocks with error id
+%   pseudo_CT:MLSCReleaseGate and an explicit reason.
+%   Focused mode 'working_preview' checks the exact v3.2.0-rc2 root using
+%   only the pinned R2010b payload and marks its unbound source nonpublishable.
+%   Focused mode 'pretag_target' forwards the exact rc2 target to validation
+%   and proves assembly uses the committed source tree, never dirty files.
+%
+%   Minimum supported MATLAB: R2010b.
+
+root_dir = fileparts(fileparts(mfilename('fullpath')));
+addpath(fullfile(root_dir, 'src', 'backends', 'mlsc'), '-begin');
+addpath(fullfile(root_dir, 'scripts'), '-begin');
+if nargin > 0
+    if ~ischar(mode) || size(mode, 1) ~= 1 || ...
+            ~(strcmp(mode, 'working_preview') || strcmp(mode, 'pretag_target'))
+        error('pseudo_CT:MLSCReleaseGate', 'Unknown focused release-assembly test mode.');
+    end
+    if strcmp(mode, 'working_preview')
+        local_test_working_preview(root_dir);
+    else
+        if nargin < 2 || ~ischar(fixture_root) || isempty(fixture_root)
+            error('pseudo_CT:MLSCReleaseGate', ...
+                'Focused pretag_target mode requires the caller-allocated FixtureRoot.');
+        end
+        local_test_pretag_target(root_dir, fixture_root);
+    end
+    return;
+end
+
+gate_root = fullfile(root_dir, 'scratch', 'release_gate');
+if exist(gate_root, 'dir') ~= 7
+    [ok_gate, msg_gate] = mkdir(gate_root);
+    assert(ok_gate, 'Cannot create gate staging dir: %s.', msg_gate);
+end
+run_root = fullfile(gate_root, 'assembly_fixtures');
+if exist(run_root, 'dir') == 7
+    rmdir(run_root, 's');
+end
+mkdir(run_root);
+cleanup_root = onCleanup(@() local_cleanup(run_root)); %#ok<NASGU>
+
+pinned = mlsc_current_validate('pinned_mcr_root');
+assert(strcmp(pinned, '/usr/pubsw/common/matlab/26.1'), 'Pinned MCR_ROOT drifted.');
+assert(exist(pinned, 'dir') == 7, 'Pinned MCR_ROOT unavailable for assembly fixtures.');
+
+[s_head, o_head] = system(sprintf('git -C "%s" --no-pager rev-parse HEAD 2>&1', root_dir));
+commit = lower(strtrim(o_head));
+assert(s_head == 0 && length(commit) == 40, 'HEAD fixture unresolvable.');
+tree = mlsc_release_gate('release_tree', root_dir, commit);
+[s_cl, o_cl] = system(sprintf('git -C "%s" --no-pager show %s:CHANGELOG.md 2>&1', root_dir, commit));
+assert(s_cl == 0, 'HEAD CHANGELOG fixture unreadable.');
+head_version = strtrim(strtok(strtrim(o_cl), char(10)));
+assert(~isempty(regexp(head_version, '^[0-9]+\.[0-9]+\.[0-9]+$', 'once')), 'HEAD version shape unexpected.');
+
+% A0: valid fixtures assemble; archive contents verified from the bytes.
+A = local_make_valid_package(run_root, 'case-pass', commit, tree, pinned);
+out_here = fullfile(run_root, 'case-pass', 'assembly');
+archive = assemble_mlsc_release('PackageDir', A.pkg, 'ReleaseCommit', commit, ...
+    'SourceVersion', head_version, ...
+    'OutputDir', out_here, 'RepoRoot', root_dir);
+assert(ischar(archive) && exist(archive, 'file') == 2, 'Assembly archive missing.');
+assert(~isempty(strfind(archive, [filesep 'scratch' filesep])), 'Archive is not under scratch/.');
+assert(isempty(strfind(archive, [filesep 'dist' filesep])), 'Archive must never use dist/.');
+info_arc = dir(archive);
+assert(info_arc(1).bytes > 0, 'Assembly archive is empty.');
+[members, archive_sha] = local_archive_members(archive);
+prefixes = {};
+for kk = 1:numel(members)
+    tok = regexp(members{kk}, '^([^/]+)/', 'tokens', 'once');
+    assert(~isempty(tok), 'Archive member escapes the versioned prefix.');
+    prefixes{end + 1, 1} = tok{1}; %#ok<AGROW>
+end
+assert(isequal(unique(prefixes), {prefixes{1}}), 'Archive carries more than one top level.');
+assert(strncmp(prefixes{1}, 'pseudoCT_standalone-', length('pseudoCT_standalone-')), ...
+    'Archive prefix is not a standalone installation root.');
+assert(mlsc_release_gate('is_valid_sha256', archive_sha), 'Archive SHA-256 unavailable.');
+local_assert_standalone_layout(members, prefixes{1});
+fprintf('ASSEMBLY-A0 PASS: valid fixtures assemble with verified archive contents.\n');
+
+% N1: missing staged package blocks.
+local_expect_block(@() assemble_mlsc_release('PackageDir', ...
+    fullfile(run_root, 'case-n1', 'absent-package'), 'ReleaseCommit', commit, ...
+    'SourceVersion', head_version, ...
+    'OutputDir', fullfile(run_root, 'case-n1', 'assembly'), 'RepoRoot', root_dir), 'missing');
+fprintf('ASSEMBLY-N1 PASS: missing package blocks.\n');
+
+% N2: dist/ is never an assembly source (even though the directory exists).
+Q = local_make_valid_package(run_root, 'case-n2', commit, tree, pinned);
+local_expect_block(@() assemble_mlsc_release('PackageDir', ...
+    fullfile(root_dir, 'dist', 'mlsc_current_build'), 'ReleaseCommit', commit, ...
+    'SourceVersion', head_version, ...
+    'OutputDir', fullfile(run_root, 'case-n2', 'assembly'), 'RepoRoot', root_dir), 'dist/');
+fprintf('ASSEMBLY-N2 PASS: dist/ as source rejected.\n');
+
+% N3: wrong commit blocks (validator propagates, no weakening).
+Q = local_make_valid_package(run_root, 'case-n3', commit, tree, pinned);
+loaded = load(Q.buildmat);
+build = loaded.build;
+build.source_commit = repmat('b', 1, 40);
+save(Q.buildmat, 'build');
+local_expect_block(@() assemble_mlsc_release('PackageDir', Q.pkg, ...
+    'ReleaseCommit', commit, 'SourceVersion', head_version, ...
+    'OutputDir', fullfile(run_root, 'case-n3', 'assembly'), 'RepoRoot', root_dir), 'source_commit');
+fprintf('ASSEMBLY-N3 PASS: wrong commit blocks.\n');
+
+% N4: tampered packaged file blocks (package-vs-build diff propagates).
+Q = local_make_valid_package(run_root, 'case-n4', commit, tree, pinned);
+fid = fopen(fullfile(Q.pkg, 'payload_build', 'readme.txt'), 'a');
+assert(fid ~= -1, 'Tamper fixture failed.');
+fwrite(fid, 'tampered');
+fclose(fid);
+local_expect_block(@() assemble_mlsc_release('PackageDir', Q.pkg, ...
+    'ReleaseCommit', commit, 'SourceVersion', head_version, ...
+    'OutputDir', fullfile(run_root, 'case-n4', 'assembly'), 'RepoRoot', root_dir), 'readme.txt');
+fprintf('ASSEMBLY-N4 PASS: tampered packaged file blocks.\n');
+
+% N5: source-version mismatch blocks (staged CHANGELOG vs expectation).
+Q = local_make_valid_package(run_root, 'case-n6', commit, tree, pinned);
+local_expect_block(@() assemble_mlsc_release('PackageDir', Q.pkg, ...
+    'ReleaseCommit', commit, 'SourceVersion', '9.9.9', ...
+    'OutputDir', fullfile(run_root, 'case-n6', 'assembly'), 'RepoRoot', root_dir), 'SourceVersion');
+fprintf('ASSEMBLY-N6 PASS: source-version mismatch blocks.\n');
+
+% N6: slash tag refused as a non-file-safe archive label.
+Q = local_make_valid_package(run_root, 'case-n7', commit, tree, pinned);
+local_expect_block(@() assemble_mlsc_release('PackageDir', Q.pkg, ...
+    'ReleaseTag', 'v2.8.4/x', ...
+    'OutputDir', fullfile(run_root, 'case-n7', 'assembly'), 'RepoRoot', root_dir), 'file-safe');
+fprintf('ASSEMBLY-N6 PASS: slash tag refused as archive label.\n');
+
+fprintf('=== MLSC release-assembly tests passed: 1 positive + 6 negative ===\n');
+end
+
+function P = local_make_valid_package(root_dir, case_name, commit, tree, pinned)
+case_root = fullfile(root_dir, case_name);
+mkdir(case_root);
+pkg = fullfile(case_root, 'package');
+mkdir(pkg);
+bd = fullfile(pkg, 'payload_build');
+mkdir(bd);
+runner = fullfile(bd, 'run_mlsc_current_payload.sh');
+exe = fullfile(bd, 'mlsc_current_payload');
+readme = fullfile(bd, 'readme.txt');
+local_write(runner, ['#!/bin/sh' char(10) '# assembly fixture runner ' case_name char(10)]);
+local_write(exe, ['assembly-fixture-executable-bytes-' case_name]);
+local_write(readme, ['assembly fixture readme ' case_name]);
+runner_sha = local_sha_hex(runner);
+exe_sha = local_sha_hex(exe);
+resources = struct();
+resources.schema = 'pseudo-CT.mlsc-current-resources/v1';
+resources.manifest_version = 1;
+resources.atlas_dir = fullfile(case_root, 'Batch_atlas');
+resmat = fullfile(pkg, 'mlsc_current_resources.mat');
+save(resmat, 'resources');
+res_sha = local_sha_hex(resmat);
+[pfiles, psums, pfp] = mlsc_release_gate('inventory_dir', pkg, ...
+    {'mlsc_current_build.mat', 'mlsc_current_build.txt'});
+src_fp = local_sha_hex(readme);
+build = struct();
+build.schema = 'pseudo-CT.mlsc-current-build/v1';
+build.manifest_version = 1;
+build.runner = runner;
+build.mcr_root = pinned;
+build.release = 'R2026a';
+build.update_minimum = 2;
+build.mcr_version = [26 1];
+build.arch = 'glnxa64';
+build.generation = '26.1';
+build.runner_checksum = runner_sha;
+build.source_commit = commit;
+build.source_provenance_fingerprint = src_fp;
+build.required_outputs = {'att_map.nii'; 'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
+build.build_mode = 'release-candidate';
+build.release_tag = '';
+build.release_commit = commit;
+build.release_tree = tree;
+build.packaged_files = pfiles;
+build.packaged_checksums = psums;
+build.packaged_files_fingerprint = pfp;
+build.resource_fingerprint = res_sha;
+build.executable_fingerprint = exe_sha;
+build.compiler_identity = 'MATLAB Compiler 26.1 (R2026a)';
+build.required_toolboxes = {'Image_Toolbox'; 'Statistics_Toolbox'; 'Compiler'};
+build.runner_contract = 'run_mlsc_current_payload.sh <MCR_ROOT> <phase> <job_manifest> <resource_manifest>';
+buildmat = fullfile(pkg, 'mlsc_current_build.mat');
+save(buildmat, 'build');
+P = struct('pkg', pkg, 'buildmat', buildmat, 'resmat', resmat);
+end
+
+function local_test_working_preview(root_dir)
+gate_root = fullfile(root_dir, 'scratch', 'release_gate');
+if exist(gate_root, 'dir') ~= 7
+    [ok_gate, msg_gate] = mkdir(gate_root);
+    assert(ok_gate, 'Cannot create gate staging dir: %s.', msg_gate);
+end
+run_root = fullfile(gate_root, 'assembly_working_preview');
+assert(exist(run_root, 'dir') ~= 7, ...
+    'Focused assembly directory already exists; preserving existing scratch data.');
+mkdir(run_root);
+cleanup_root = onCleanup(@() local_cleanup(run_root)); %#ok<NASGU>
+
+package = local_copy_compiled_package(root_dir, run_root);
+output_dir = fullfile(run_root, 'assembly');
+archive = assemble_mlsc_release('PackageDir', package, ...
+    'ReleaseTag', 'v3.2.0-rc2', 'SourceVersion', '3.2.0', ...
+    'SourceMode', 'working-preview', 'OutputDir', output_dir, 'RepoRoot', root_dir);
+assert(ischar(archive) && exist(archive, 'file') == 2, ...
+    'Exact R2010b working preview did not produce its scratch-only verification archive.');
+assert(~isempty(strfind(archive, [filesep 'scratch' filesep])), ...
+    'Focused archive escaped the worktree scratch tree.');
+[members, archive_sha] = local_archive_members(archive);
+assert(mlsc_release_gate('is_valid_sha256', archive_sha), 'Working-preview archive SHA-256 unavailable.');
+expected_prefix = 'pseudoCT_standalone-3.2.0-rc2';
+local_assert_standalone_layout(members, expected_prefix);
+assert(any(strcmp(members, [expected_prefix '/NONPUBLISHABLE_WORKING_SOURCE.txt'])), ...
+    'Working-preview archive lacks its nonpublishable marker.');
+fprintf(['ASSEMBLY-WORKING-PREVIEW PASS: exact root identity and archive structure verified; ', ...
+    'source identity remains unbound.\n']);
+end
+
+function local_test_pretag_target(root_dir, fixture_root)
+run_root = fullfile(fixture_root, 'assembly_pretag_target');
+assert(exist(run_root, 'dir') ~= 7, ...
+    'Focused pre-tag assembly directory already exists; preserving existing scratch data.');
+[ok_root, msg_root] = mkdir(run_root);
+assert(ok_root, 'Cannot create pre-tag assembly fixture dir: %s.', msg_root);
+cleanup_root = onCleanup(@() local_cleanup(run_root)); %#ok<NASGU>
+
+[s_tag, ~] = system(sprintf( ...
+    'git -C "%s" --no-pager rev-parse --verify "refs/tags/v3.2.0-rc2^{commit}" 2>&1', ...
+    root_dir));
+if s_tag == 0
+    fprintf('ASSEMBLY-PRETAG SKIP: v3.2.0-rc2 is tagged; the actual-tag route applies.\n');
+    return;
+end
+[s_head, o_head] = system(sprintf('git -C "%s" --no-pager rev-parse HEAD 2>&1', root_dir));
+commit = lower(strtrim(o_head));
+assert(s_head == 0 && length(commit) == 40, 'Release-source commit fixture is unavailable.');
+[s_cl, o_cl] = system(sprintf('git -C "%s" --no-pager show %s:CHANGELOG.md 2>&1', ...
+    root_dir, commit));
+assert(s_cl == 0, 'Committed CHANGELOG fixture unreadable.');
+committed_version = strtrim(strtok(strtrim(o_cl), char(10)));
+
+package = local_copy_compiled_package(root_dir, run_root);
+output_dir = fullfile(run_root, 'assembly');
+local_expect_block(@() assemble_mlsc_release('PackageDir', package, ...
+    'ExpectedTargetVersion', 'v3.2.0-rc2', 'SourceVersion', '3.2.0', ...
+    'SourceMode', 'committed', 'OutputDir', output_dir, 'RepoRoot', root_dir), ...
+    'requires an explicit ReleaseCommit');
+if strcmp(committed_version, '3.2.0')
+    archive = assemble_mlsc_release('PackageDir', package, ...
+        'ExpectedTargetVersion', 'v3.2.0-rc2', 'ReleaseCommit', commit, ...
+        'SourceVersion', '3.2.0', 'SourceMode', 'committed', ...
+        'OutputDir', output_dir, 'RepoRoot', root_dir);
+    assert(ischar(archive) && exist(archive, 'file') == 2, ...
+        'Committed rc2 pre-tag target did not produce its archive.');
+    expected_prefix = 'pseudoCT_standalone-3.2.0-rc2';
+    [members, archive_sha] = local_archive_members(archive);
+    assert(mlsc_release_gate('is_valid_sha256', archive_sha), ...
+        'Committed rc2 archive SHA-256 unavailable.');
+    local_assert_standalone_layout(members, expected_prefix);
+    assert(any(strcmp(members, [expected_prefix '/RELEASE_PROVENANCE.txt'])), ...
+        'Committed rc1 archive lacks its provenance record.');
+    assert(~any(strcmp(members, [expected_prefix '/NONPUBLISHABLE_WORKING_SOURCE.txt'])), ...
+        'Committed rc1 archive carries a working-preview marker.');
+    [s_provenance, provenance] = system(sprintf( ...
+        'tar -xOf ''%s'' ''%s/RELEASE_PROVENANCE.txt'' 2>&1', archive, expected_prefix));
+    assert(s_provenance == 0 && ...
+        ~isempty(strfind(provenance, 'source_mode committed')) && ...
+        ~isempty(strfind(provenance, ['release_commit ' commit])) && ...
+        ~isempty(strfind(provenance, 'expected_target_version v3.2.0-rc2')), ...
+        'Committed rc2 archive provenance does not bind the expected target and source commit.');
+    fprintf('ASSEMBLY-PRETAG PASS: rc2 archive assembled from committed source %s.\n', commit);
+else
+    local_expect_block(@() assemble_mlsc_release('PackageDir', package, ...
+        'ExpectedTargetVersion', 'v3.2.0-rc2', 'ReleaseCommit', commit, ...
+        'SourceVersion', '3.2.0', 'SourceMode', 'committed', ...
+        'OutputDir', output_dir, 'RepoRoot', root_dir), ...
+        'does not match SourceVersion');
+    archives = dir(fullfile(output_dir, '*.tar.gz'));
+    assert(isempty(archives), ...
+        'Assembler emitted an rc2 archive from a commit with a different source version.');
+    fprintf(['ASSEMBLY-PRETAG-SOURCE PASS: expected target forwarded; committed source %s ', ...
+        'has CHANGELOG %s, so rc1 archive correctly remains blocked.\n'], ...
+        commit, committed_version);
+end
+end
+
+function package = local_copy_compiled_package(root_dir, run_root)
+package = fullfile(run_root, 'package');
+mkdir(package);
+source = fullfile(root_dir, 'compiled', 'current');
+entries = dir(source);
+for kk = 1:numel(entries)
+    name = entries(kk).name;
+    if strcmp(name, '.') || strcmp(name, '..')
+        continue;
+    end
+    [ok_copy, msg_copy] = copyfile(fullfile(source, name), fullfile(package, name));
+    assert(ok_copy, 'Could not copy retained package into scratch: %s.', msg_copy);
+end
+end
+
+function local_expect_block(thunk, reason_substr)
+failed = false;
+actual_id = '';
+actual_msg = '';
+try
+    thunk();
+catch ME
+    failed = true;
+    actual_id = ME.identifier;
+    actual_msg = ME.message;
+end
+assert(failed, 'Fail-closed assembly did not reject.');
+assert(strcmp(actual_id, 'pseudo_CT:MLSCReleaseGate'), 'Unexpected failure identifier: %s.', actual_id);
+assert(~isempty(strfind(actual_msg, reason_substr)), 'Assembly reason missing "%s": %s.', reason_substr, actual_msg);
+end
+
+function lines = local_lines(txt)
+lines = {};
+if isempty(txt)
+    return;
+end
+parts = strsplit(strtrim(txt), char(10));
+for kk = 1:numel(parts)
+    t = strtrim(parts{kk});
+    if ~isempty(t)
+        lines{end + 1, 1} = t; %#ok<AGROW>
+    end
+end
+end
+
+function [members, archive_sha] = local_archive_members(archive)
+[status, output] = system(sprintf('tar -tzf ''%s'' 2>&1', archive));
+assert(status == 0, 'Archive listing failed.');
+members = local_lines(output);
+archive_sha = mlsc_release_gate('sha256_file', archive);
+end
+
+function local_assert_standalone_layout(members, prefix)
+root_prefix = [prefix '/'];
+required = {'CHANGELOG.md'; 'run_pseudo_CT.m'; 'src/config/profiles/mlsc_current.m'; ...
+    'docs/installation.md'; ...
+    'compiled/current/payload_build/run_mlsc_current_payload.sh'; ...
+    'compiled/current/payload_build/mlsc_current_payload'; ...
+    'compiled/current/mlsc_current_build.mat'; ...
+    'compiled/current/mlsc_current_resources.mat'; ...
+    'MCR_COMPAT.txt'; 'RELEASE_PROVENANCE.txt'};
+for kk = 1:numel(required)
+    assert(any(strcmp(members, [root_prefix required{kk}])), ...
+        'Archive is missing root-layout member %s.', required{kk});
+end
+for kk = 1:numel(members)
+    entry = members{kk};
+    assert(strncmp(entry, root_prefix, length(root_prefix)), ...
+        'Archive member escapes the expected installation root: %s.', entry);
+    if strncmp(entry, [root_prefix 'source/'], length([root_prefix 'source/'])) || ...
+            strcmp(entry, [root_prefix 'source'])
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Archive contains the obsolete source/ wrapper: %s.', entry);
+    end
+    relative = entry(length(root_prefix) + 1:end);
+    path_parts = ['/' relative '/'];
+    if ~isempty(strfind(path_parts, '/pseudoCT_mlsc/')) || ...
+            ~isempty(strfind(path_parts, '/pseudoCT_mlsc_current/')) || ...
+            ~isempty(strfind(path_parts, '/pseudoCT_mlsc-current/'))
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Archive contains a separate MLSC installation: %s.', entry);
+    end
+end
+end
+
+function hex = local_sha_hex(path_name)
+fid = fopen(path_name, 'r');
+assert(fid ~= -1, 'Hash fixture could not be read.');
+raw = fread(fid, inf, '*uint8')';
+fclose(fid);
+try
+    digest = java.security.MessageDigest.getInstance('SHA-256');
+    digest.update(raw);
+    bytes = typecast(digest.digest(), 'uint8');
+    hex = lower(reshape(dec2hex(bytes, 2)', 1, []));
+    assert(length(hex) == 64, 'SHA fixture failed.');
+    return;
+catch %#ok<CTCH>
+end
+single_quote = char(39);
+q = [single_quote strrep(path_name, single_quote, [single_quote '"' single_quote '"' single_quote]) single_quote];
+[status, out] = system(['sha256sum ' q ' 2>/dev/null']);
+assert(status == 0, 'SHA fixture unavailable.');
+tok = regexp(strtrim(out), '^([0-9a-fA-F]{64})(?![0-9a-fA-F])', 'tokens', 'once');
+assert(~isempty(tok), 'SHA fixture parse failed.');
+hex = lower(strtrim(tok{1}));
+end
+
+function local_write(path_name, text)
+fid = fopen(path_name, 'w');
+assert(fid ~= -1, 'Fixture could not be created.');
+fwrite(fid, text);
+fclose(fid);
+end
+
+function local_cleanup(directory)
+if exist(directory, 'dir') == 7
+    rmdir(directory, 's');
+end
+end

@@ -1,19 +1,21 @@
 function config = mlsc_legacy()
 %MLSC_LEGACY Historical MLSC profile using the legacy v2.0 compiled implementation.
 
+dependency_paths = pseudo_CT_dependency_paths();
+
 % Select the local processing path or the remote MLSC path.
 config.mode = 'mlsc';
-% Implementation lineage: 'current' is source MATLAB, 'legacy-v2' is the
-% compiled Aether backend.
+% Implementation lineage: 'current' selects the compiled current payload;
+% 'legacy-v2' selects the historical compiled Aether backend.
 config.implementation = 'legacy-v2';
 % SPM installation used by local finalization support code.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
+config.spm_root = dependency_paths.spm_root;
 % Atlas images and SPM batch templates used by local finalization.
-config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
+config.atlas_root = dependency_paths.atlas_root;
 % Standalone DICOM-to-NIfTI converter (sibling repository).
-config.d2n_root = '/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest';
+config.d2n_root = dependency_paths.d2n_root;
 % Standalone nose/back aliasing correction (external standalone app).
-config.aliasing_root = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest';
+config.aliasing_root = dependency_paths.aliasing_root;
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'Yes';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
@@ -60,13 +62,13 @@ config.normalization.host_folder = '';
 % MLSC SSH host.
 config.mlsc.host = 'mlsc.nmr.mgh.harvard.edu';
 % Unchanged compiled runner script.
-config.mlsc.runner = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/run_Pseudo_CT_launchpad.sh';
+config.mlsc.runner = dependency_paths.legacy_runner;
 % MATLAB Compiler Runtime root used by the compiled backend.
 config.mlsc.mcr_root = '/usr/pubsw/common/matlab/7.11/';
 % Defaults MAT file passed to the compiled backend.
-config.mlsc.defaults_mat = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/default_pseudo_CT_package_deployed.mat';
+config.mlsc.defaults_mat = dependency_paths.legacy_defaults;
 % Atlas and SPM batch templates passed to the compiled backend.
-config.mlsc.batch_templates = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/Batch_atlas';
+config.mlsc.batch_templates = dependency_paths.legacy_batch_templates;
 % Explicit shell and FreeSurfer environment used by Slurm jobs.
 config.mlsc.shell = '/bin/bash';
 config.mlsc.freesurfer_env = '/usr/local/freesurfer/nmr-stable53-env';
@@ -84,13 +86,13 @@ config.mlsc.time = '02:00:00';
 % attenuation-map filename. No host, Slurm, partition, nodes, tasks,
 % memory, time, or shell-orchestration values are carried here.
 % Unchanged compiled runner script.
-config.legacy.runner = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/run_Pseudo_CT_launchpad.sh';
+config.legacy.runner = dependency_paths.legacy_runner;
 % MATLAB Compiler Runtime root used by the compiled backend.
 config.legacy.mcr_root = '/usr/pubsw/common/matlab/7.11/';
 % Defaults MAT file passed to the compiled backend.
-config.legacy.defaults_mat = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/default_pseudo_CT_package_deployed.mat';
+config.legacy.defaults_mat = dependency_paths.legacy_defaults;
 % Atlas and SPM batch templates passed to the compiled backend.
-config.legacy.batch_templates = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/Batch_atlas';
+config.legacy.batch_templates = dependency_paths.legacy_batch_templates;
 % Required attenuation-map filename produced by the compiled backend.
 config.legacy.att_map = 'att_map.nii';
 end

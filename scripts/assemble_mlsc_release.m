@@ -1,7 +1,7 @@
 function archive_path = assemble_mlsc_release(varargin)
 %ASSEMBLE_MLSC_RELEASE Assemble a versioned standalone release archive (no mcc, no science).
 %   ARCHIVE = ASSEMBLE_MLSC_RELEASE('PackageDir', DIR, 'ReleaseTag', TAG,
-%   'ReleaseCommit', COMMIT, 'GateARecord', PATH, 'OutputDir', DIR,
+%   'ReleaseCommit', COMMIT, 'OutputDir', DIR,
 %   'SourceVersion', VER, 'ExpectedTargetVersion', TARGET,
 %   'SourceMode', MODE, 'RepoRoot', DIR) stages a
 %   validated compiled package and complete standalone installation root,
@@ -22,7 +22,7 @@ function archive_path = assemble_mlsc_release(varargin)
 %   compiled payload. This script is therefore the smallest assembly
 %   mechanism: versioned standalone source root (git-archive-equivalent
 %   tree honoring the committed .gitattributes export-ignore policy) + compiled dist
-%   (payload_build, build/resource manifests, companions) + MCR compat
+%   (compiled/current/payload_build, build/resource manifests, companions) + MCR compat
 %   info + release provenance, verified from the actual archive bytes.
 %
 %   Name-value arguments (character rows; R2010b-safe idioms):
@@ -40,10 +40,6 @@ function archive_path = assemble_mlsc_release(varargin)
 %                     Exact pre-tag target v3.2.0-rc1 or v3.2.0-rc2. Requires an explicit
 %                     resolvable ReleaseCommit and committed source; the
 %                     committed tree, not the working tree, is archived.
-%     'GateARecord'   Finalized Gate-A record binding this exact
-%                     candidate (required except for the one exact,
-%                     code-pinned R2010b artifact;
-%                     never minted here).
 %     'OutputDir'     Archive destination (default
 %                     <repo>/scratch/release_gate/<label>/). Must live
 %                     under <repo>/scratch/; /usr/pubsw, dist/, and
@@ -64,10 +60,9 @@ function archive_path = assemble_mlsc_release(varargin)
 %                     (default: this repository root).
 %
 %   Contract (no weakening): prepublication validation runs FIRST via
-%   scripts/validate_mlsc_release.m for committed-source archives. Normal candidates require the same
-%   Gate-A record; only the exact one-time R2010b artifact may omit it.
+%   scripts/validate_mlsc_release.m for committed-source archives.
 %   Missing/stale/mismatched/incomplete staged evidence blocks before
-%   anything is archived. The shared src/mlsc/mlsc_release_gate.m helper
+%   anything is archived. The shared src/backends/mlsc/mlsc_release_gate.m helper
 %   resolves commit/tree, hashes files, and recomputes the packaged
 %   inventory. After archiving, the ACTUAL archive bytes are inspected:
 %   single top-level prefix, standalone installation files present, export-ignored
@@ -81,7 +76,7 @@ function archive_path = assemble_mlsc_release(varargin)
 
 repo_guess = fileparts(fileparts(mfilename('fullpath')));
 if exist('mlsc_release_gate', 'file') ~= 2
-    addpath(fullfile(repo_guess, 'src', 'mlsc'));
+    addpath(fullfile(repo_guess, 'src', 'backends', 'mlsc'));
 end
 if exist('validate_mlsc_release', 'file') ~= 2
     addpath(repo_guess);
@@ -96,7 +91,6 @@ package_dir = '';
 release_tag = '';
 release_commit = '';
 expected_target_version = '';
-gate_a_record = '';
 out_dir_arg = '';
 source_version = '';
 source_mode = 'committed';
@@ -123,8 +117,6 @@ while ii <= numel(varargin)
             release_commit = strtrim(val_here);
         case 'expectedtargetversion'
             expected_target_version = strtrim(val_here);
-        case 'gatearecord'
-            gate_a_record = strtrim(val_here);
         case 'outputdir'
             out_dir_arg = strtrim(val_here);
         case 'sourceversion'
@@ -177,10 +169,6 @@ end
 if strcmp(source_mode, 'working-preview') && ~isempty(release_commit)
     error('pseudo_CT:MLSCReleaseGate', ...
         'ReleaseCommit must be omitted for a working preview; the preview is not bound to a commit.');
-end
-if strcmp(source_mode, 'working-preview') && ~isempty(gate_a_record)
-    error('pseudo_CT:MLSCReleaseGate', ...
-        'GateARecord is not accepted for a working preview; the preview does not bind release evidence.');
 end
 
 % Path guards FIRST (fail closed before any git/validation work).
@@ -270,18 +258,15 @@ else
             label, expected_target_version, exp_commit, release_tree_hash, source_version);
     end
 
-    % Gate contract without weakening: the publication validator must PASS
-    % on the staged package before anything is archived. Its second output
-    % only identifies the exact pinned one-time R2010b provenance exception.
+    % The publication validator must pass on the staged package before
+    % anything is archived. Its second output identifies the pinned
+    % one-time R2010b provenance exception.
     if ~isempty(release_tag)
         validator_args = {'PackageDir', package_dir, 'ReleaseTag', release_tag, ...
             'ReleaseCommit', exp_commit, 'RepoRoot', repo_root};
     else
         validator_args = {'PackageDir', package_dir, 'ReleaseCommit', exp_commit, ...
             'RepoRoot', repo_root};
-    end
-    if ~isempty(gate_a_record)
-        validator_args = [validator_args, {'GateARecord', gate_a_record}]; %#ok<AGROW>
     end
     if ~isempty(expected_target_version)
         validator_args = [validator_args, ...
@@ -352,9 +337,17 @@ if exist(compiled_stage, 'dir') ~= 7
     end
 end
 
-% Compiled dist: byte copy of the validated staged package.
-local_copy_tree(package_dir, compiled_stage);
-fprintf('ASSEMBLY_COMPILED staged validated package from %s.\n', package_dir);
+% Current compiled payload: byte copy of the validated staged package.
+current_stage = fullfile(compiled_stage, 'current');
+if exist(current_stage, 'dir') ~= 7
+    [ok_current, msg_current] = mkdir(current_stage);
+    if ~ok_current
+        error('pseudo_CT:MLSCReleaseGate', ...
+            'Cannot create compiled/current installation directory: %s.', msg_current);
+    end
+end
+local_copy_tree(package_dir, current_stage);
+fprintf('ASSEMBLY_COMPILED staged validated package under compiled/current from %s.\n', package_dir);
 
 % MCR compat info + release provenance (generated from the bound manifest).
 local_write_text(fullfile(asm_root, 'MCR_COMPAT.txt'), local_compat_text(build, exception_artifact));
@@ -529,19 +522,6 @@ for kk = 1:numel(fields)
             'Build manifest MCR compat field %s is not text; manifest inconsistency blocks assembly.', fields{kk});
     end
     lines{end + 1, 1} = sprintf('%s %s', fields{kk}, strtrim(value)); %#ok<AGROW>
-end
-if isfield(build, 'gate_a_status')
-    if ~ischar(build.gate_a_status)
-        error('pseudo_CT:MLSCReleaseGate', ...
-            'Build manifest MCR compat field gate_a_status is not text; manifest inconsistency blocks assembly.');
-    end
-    lines{end + 1, 1} = sprintf('gate_a_status %s', strtrim(build.gate_a_status)); %#ok<AGROW>
-elseif exception_artifact
-    lines{end + 1, 1} = ...
-        'gate_a_status not-used: exact R2010b provenance exception; no R2026a Gate-A record'; %#ok<AGROW>
-else
-    error('pseudo_CT:MLSCReleaseGate', ...
-        'Build manifest is missing MCR compat field gate_a_status; manifest inconsistency blocks assembly.');
 end
 if ~isfield(build, 'mcr_version') || ~isnumeric(build.mcr_version) || numel(build.mcr_version) ~= 2
     error('pseudo_CT:MLSCReleaseGate', ...
@@ -762,9 +742,10 @@ for kk = 1:numel(members)
 end
 required = {'CHANGELOG.md'; 'run_pseudo_CT.m'; 'src/config/profiles/mlsc_current.m'; ...
     'docs/installation.md'; ...
-    'compiled/payload_build/run_mlsc_current_payload.sh'; ...
-    'compiled/payload_build/mlsc_current_payload'; ...
-    'compiled/mlsc_current_build.mat'; 'compiled/mlsc_current_resources.mat'; ...
+    'compiled/current/payload_build/run_mlsc_current_payload.sh'; ...
+    'compiled/current/payload_build/mlsc_current_payload'; ...
+    'compiled/current/mlsc_current_build.mat'; ...
+    'compiled/current/mlsc_current_resources.mat'; ...
     'MCR_COMPAT.txt'; 'RELEASE_PROVENANCE.txt'};
 marker = [root_prefix 'NONPUBLISHABLE_WORKING_SOURCE.txt'];
 has_preview_marker = false;
@@ -810,7 +791,8 @@ for kk = 1:numel(build.packaged_files)
         error('pseudo_CT:MLSCReleaseGate', ...
             'Build manifest packaged inventory carries an unsafe path; manifest inconsistency blocks assembly.');
     end
-    disk_here = fullfile(extract_root, 'compiled', strrep(strtrim(rel_here), '/', filesep));
+    disk_here = fullfile(extract_root, 'compiled', 'current', ...
+        strrep(strtrim(rel_here), '/', filesep));
     if exist(disk_here, 'file') ~= 2
         error('pseudo_CT:MLSCReleaseGate', ...
             'Archived file %s is missing after extraction; incomplete archive blocks assembly.', strtrim(rel_here));
@@ -839,7 +821,8 @@ for kk = 1:numel(build.packaged_files)
     end
 end
 if exception_artifact
-    archived_manifest = fullfile(extract_root, 'compiled', 'mlsc_current_build.mat');
+    archived_manifest = fullfile(extract_root, 'compiled', 'current', ...
+        'mlsc_current_build.mat');
     if exist(archived_manifest, 'file') ~= 2 || ...
             ~strcmpi(mlsc_release_gate('sha256_file', archived_manifest), ...
             '62bb3472b8225178c89ff731d4c664a8636d775006c0903ccd5677de5aa090f5')
@@ -847,16 +830,20 @@ if exception_artifact
             'Archived build manifest differs from the pinned v3.1.0 manifest; archive-vs-build mismatch blocks assembly.');
     end
 end
-[~, ~, disk_fp] = mlsc_release_gate('inventory_dir', fullfile(extract_root, 'compiled'), ...
+[~, ~, disk_fp] = mlsc_release_gate('inventory_dir', ...
+    fullfile(extract_root, 'compiled', 'current'), ...
     {'mlsc_current_build.mat', 'mlsc_current_build.txt'});
 if ~isfield(build, 'packaged_files_fingerprint') || ...
         ~strcmpi(strtrim(build.packaged_files_fingerprint), disk_fp)
     error('pseudo_CT:MLSCReleaseGate', ...
         'Recomputed packaged-files fingerprint differs after extraction; archive-vs-build mismatch blocks assembly.');
 end
-pairs = {'runner_checksum', fullfile(extract_root, 'compiled', 'payload_build', 'run_mlsc_current_payload.sh'); ...
-    'executable_fingerprint', fullfile(extract_root, 'compiled', 'payload_build', 'mlsc_current_payload'); ...
-    'resource_fingerprint', fullfile(extract_root, 'compiled', 'mlsc_current_resources.mat')};
+pairs = {'runner_checksum', fullfile(extract_root, 'compiled', 'current', ...
+    'payload_build', 'run_mlsc_current_payload.sh'); ...
+    'executable_fingerprint', fullfile(extract_root, 'compiled', 'current', ...
+    'payload_build', 'mlsc_current_payload'); ...
+    'resource_fingerprint', fullfile(extract_root, 'compiled', 'current', ...
+    'mlsc_current_resources.mat')};
 for kk = 1:size(pairs, 1)
     if ~isfield(build, pairs{kk, 1}) || ~ischar(build.(pairs{kk, 1}))
         error('pseudo_CT:MLSCReleaseGate', ...

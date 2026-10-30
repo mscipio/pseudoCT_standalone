@@ -102,13 +102,12 @@ if isfield(config, 'implementation') && ischar(config.implementation) && ...
     lines{end+1} = 'Build identifier is recorded in the build manifest, not in profile configuration; see Execution Provenance.';
     lines{end+1} = sprintf('Configured resource manifest: %s', config.current.resource_manifest);
     lines{end+1} = sprintf('Configured artifact root: %s', local_artifact_root(config));
-    lines{end+1} = sprintf('Configured Gate-A record: %s', local_gate_a_record(config));
     if isfield(config.current, 'required_outputs') && ...
             iscell(config.current.required_outputs)
         lines{end+1} = sprintf('Required outputs:   %s', ...
             local_join_names(config.current.required_outputs));
     end
-    lines{end+1} = 'Configured status:  Candidate is gated; runtime validation/execution not confirmed here.';
+    lines{end+1} = 'Configured status:  Artifact configuration loaded; runtime validation/execution not confirmed here.';
 end
 
 if strcmp(config.mode, 'mlsc') && isfield(config, 'mlsc') && ...
@@ -313,22 +312,6 @@ catch %#ok<CTCH>
 end
 if isempty(value)
     value = '(unknown)';
-end
-end
-
-function value = local_gate_a_record(config)
-%LOCAL_GATE_A_RECORD Resolved Gate-A record for summary display (H).
-value = '(none)';
-try
-    if isstruct(config) && isfield(config, 'current') && ...
-            isstruct(config.current) && ...
-            isfield(config.current, 'gate_a_record') && ...
-            ischar(config.current.gate_a_record) && ...
-            ~isempty(strtrim(config.current.gate_a_record))
-        value = strtrim(config.current.gate_a_record);
-    end
-catch %#ok<CTCH>
-    value = '(none)';
 end
 end
 

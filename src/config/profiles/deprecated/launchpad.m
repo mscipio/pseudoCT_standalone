@@ -1,16 +1,18 @@
 function config = launchpad()
 %LAUNCHPAD Retained source/profile for the unavailable legacy backend.
 
+dependency_paths = pseudo_CT_dependency_paths();
+
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'launchpad';
 % SPM installation used by the local input/output support code.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
+config.spm_root = dependency_paths.spm_root;
 % Atlas images and SPM batch templates used by local support code.
-config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
+config.atlas_root = dependency_paths.atlas_root;
 % Standalone DICOM-to-NIfTI converter (sibling repository).
-config.d2n_root = '/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest';
+config.d2n_root = dependency_paths.d2n_root;
 % Standalone nose/back aliasing correction (external standalone app).
-config.aliasing_root = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest';
+config.aliasing_root = dependency_paths.aliasing_root;
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'Yes';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
@@ -61,13 +63,13 @@ config.normalization.host_folder = '/cluster/scratch/monday/';
 % Launchpad SSH host.
 config.launchpad.host = '172.27.25.134';
 % Compiled Launchpad runner script.
-config.launchpad.runner = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/run_Pseudo_CT_launchpad.sh';
+config.launchpad.runner = dependency_paths.legacy_runner;
 % MATLAB Compiler Runtime root used by the compiled backend.
 config.launchpad.mcr_root = '/usr/pubsw/common/matlab/7.11/';
 % Defaults MAT file passed to the compiled backend.
-config.launchpad.defaults_mat = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/default_pseudo_CT_package_deployed.mat';
+config.launchpad.defaults_mat = dependency_paths.legacy_defaults;
 % Atlas and SPM batch templates passed to the compiled backend.
-config.launchpad.batch_templates = '/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/Batch_atlas';
+config.launchpad.batch_templates = dependency_paths.legacy_batch_templates;
 % PBS queue override; empty uses the subject-count heuristic.
 config.launchpad.queue = '';
 % Remote scratch root for staged subjects.

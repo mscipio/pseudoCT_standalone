@@ -1,7 +1,8 @@
 function config = mlsc_current()
 %MLSC_CURRENT MLSC profile for the current-lineage R2010b compiled payload.
 %   T005 canonical cell (T014 authoritative): mode='mlsc',
-%   implementation='current'. Current science settings match local_current
+%   implementation='current', selecting the compiled/current payload.
+%   Current science settings match local_current
 %   (alias=1, recenter='Yes', zero_background='No', bone=true, fwhm=0,
 %   PCA callable_pca then repo_legacy, standard mMR/UMAP/NIfTI-and-DICOM
 %   policy). config.current carries the neutral pinned artifact contract
@@ -13,26 +14,27 @@ function config = mlsc_current()
 %   Artifact references resolve relative to the installed pseudoCT
 %   version directory derived from this profile's own location at load
 %   time (single coherent installation layout, no second layout).
-%   The v3.0.1 distribution includes the previously finalized Gate-A record
-%   with its unchanged certified artifact. Source-only checkouts without the
-%   packaged artifacts/evidence fail closed at preflight. No catalog, no resolver, no
-%   latest/current-label authority, no MCR 7.11 release fallback, no
+%   Source-only checkouts without the packaged artifacts fail closed at
+%   preflight. No catalog, no resolver, no
+%   mutable-alias/current-label authority, no MCR 7.11 release fallback, no
 %   submitting-MATLAB substitute. No config.legacy and no legacy payload
 %   fields inside config.mlsc.
 
+dependency_paths = pseudo_CT_dependency_paths();
+
 % Select the local processing path or the remote MLSC path.
 config.mode = 'mlsc';
-% Implementation lineage: 'current' is source MATLAB, 'legacy-v2' is the
-% compiled Aether backend.
+% Implementation lineage: 'current' selects the compiled current payload;
+% 'legacy-v2' selects the historical compiled Aether backend.
 config.implementation = 'current';
 % SPM installation used by local finalization support code.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
+config.spm_root = dependency_paths.spm_root;
 % Atlas images and SPM batch templates used by local finalization.
-config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
+config.atlas_root = dependency_paths.atlas_root;
 % Standalone DICOM-to-NIfTI converter (sibling repository).
-config.d2n_root = '/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest';
+config.d2n_root = dependency_paths.d2n_root;
 % Standalone nose/back aliasing correction (external standalone app).
-config.aliasing_root = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest';
+config.aliasing_root = dependency_paths.aliasing_root;
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'Yes';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
@@ -98,20 +100,15 @@ config.mlsc.time = '02:00:00';
 % own location at load time: this file lives in
 % <version>/src/config/profiles/, so the version directory is three
 % levels up and the staged artifact layout keeps the launcher under
-% <version>/compiled/payload_build/ with the build/resource manifests at
-% <version>/compiled/. There is no absolute deployment pin and no silent
+% <version>/compiled/current/payload_build/ with the manifests at
+% <version>/compiled/current/. There is no absolute pin and no silent
 % fallback: absent bundled files fail closed at missing-file validation.
-% The explicit mlsc_current_artifact_root / mlsc_current_gate_a_record
-% overrides win over these defaults. MATLAB_ROOT stays pinned below while
+% The explicit mlsc_current_artifact_root override wins over these defaults.
+% MATLAB_ROOT stays pinned below while
 % the required bundled MCR release remains separately pinned at 7.14. The
 % resolved shared Runtime path belongs only to transient execution
-% context, never to this profile (no runtime_root field). Pending Gate A
-% the referenced files do not exist and execution fails closed; nothing
-% here fabricates Gate-A evidence or weakens validation.
-% Installation-relative Gate-A artifact directory (flat version layout).
-profiles_dir_here = fileparts(mfilename('fullpath'));
-version_dir_here = fileparts(fileparts(fileparts(profiles_dir_here)));
-artifact_dir_here = fullfile(version_dir_here, 'compiled');
+% context, never to this profile (no runtime_root field).
+artifact_dir_here = dependency_paths.current_root;
 % Launcher of the referenced artifact.
 config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
     'run_mlsc_current_payload.sh');
@@ -126,10 +123,4 @@ config.current.resource_manifest = fullfile(artifact_dir_here, ...
 % Required outputs described by the referenced artifact contract.
 config.current.required_outputs = {'att_map.nii'; ...
     'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
-% Gate-A record: separate immutable file binding this exact candidate
-% (minted after a human-authorized Gate-A run; absent until then).
-% Pending now, so execution fails closed at validate_for_execution.
-% Default path is installation-relative like the manifests above.
-config.current.gate_a_record = fullfile(artifact_dir_here, ...
-    'mlsc_current_gate_a.mat');
 end

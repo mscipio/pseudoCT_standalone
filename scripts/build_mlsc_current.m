@@ -2,7 +2,7 @@ function build_mlsc_current(varargin)
 %BUILD_MLSC_CURRENT Build compiled mlsc-current payload (T007, T014 authoritative).
 %   BUILD_MLSC_CURRENT('OutputDir', DIR, 'SpmRoot', DIR, 'AtlasDir', DIR,
 %   'AliasingRoot', DIR, 'McrRoot', DIR) verifies the EXECUTING approved
-%   MATLAB via live introspection and compiles ONLY src/mlsc/
+%   MATLAB via live introspection and compiles ONLY src/science/current/
 %   mlsc_current_payload.m via mcc. Any identity mismatch STOPS with error
 %   (no fallback, no science change).
 %
@@ -32,9 +32,8 @@ function build_mlsc_current(varargin)
 %   plus T007 build-environment provenance (full version/build/update,
 %   Compiler, toolboxes, mcc options, entrypoint, dep/MEX inventory,
 %   files/checksums, executable/resource fingerprints, thread policy).
-%   No Gate-A record is required or consulted in the active dev path (T009
-%   remediation removed the Gate-A execution requirement and the native
-%   pending marker).
+%   Runtime execution validates the configured artifact directly; no
+%   separate certification record is required in the active dev path.
 %
 %   Opt-in release-candidate path (exact-source gate, staged under
 %   scratch/release_gate/): BUILD_MLSC_CURRENT('ReleaseTag', TAG,
@@ -106,14 +105,19 @@ repo_root = fileparts(fileparts(mfilename('fullpath')));
 % this at an isolated clean worktree (see the release gate below).
 src_root = repo_root;
 release_mode = ~isempty(release_tag) || ~isempty(release_commit) || ~isempty(expected_fp);
+if ~release_mode
+    repo_root = local_canonical(repo_root);
+    src_root = repo_root;
+end
 exp_commit = '';
 release_tree_hash = '';
 release_worktree_rel = '';
 
 % Defaults (T014 authoritative inputs; outputs stay under repo dist/).
-dflt_spm = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
-dflt_atlas = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
-dflt_alias = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-0.3.0';
+dflt_spm = fullfile(repo_root, 'external', 'spm8-r6313');
+dflt_atlas = fullfile(repo_root, 'external', 'Batch_atlas');
+dflt_alias = fullfile(repo_root, 'external', 'correct_aliasing-0.4.0');
+dflt_d2n = fullfile(repo_root, 'external', 'dicom2nifti-1.2.5');
 dflt_mcr = '';
 dflt_out = '';
 if isempty(spm_arg), spm_arg = dflt_spm; end
@@ -122,36 +126,163 @@ if isempty(alias_arg), alias_arg = dflt_alias; end
 if isempty(mcr_arg), mcr_arg = dflt_mcr; end
 if isempty(out_dir_arg), out_dir_arg = dflt_out; end
 
-% Require a new destination directly under the canonical repository scratch
-% root before any build output is written. Canonicalization rejects symlink
-% escapes; lexical checks reject traversal even when it resolves back inside.
-scratch_root = local_canonical(fullfile(repo_root, 'scratch'));
-if exist(scratch_root, 'dir') ~= 7
-    [ok_scratch, msg_scratch] = mkdir(scratch_root);
+% Keep the release-candidate output rules unchanged. Ordinary builds use a
+% fresh canonical scratch/YYYY-MM-DD/HHMMSS-title[/candidate] directory.
+scratch_path = fullfile(repo_root, 'scratch');
+if ~release_mode && local_is_symlink(scratch_path)
+    error('pseudo_CT:BuildOutputRejected', 'Scratch root must not be a symlink: %s', scratch_path);
+end
+if exist(scratch_path, 'dir') ~= 7
+    [ok_scratch, msg_scratch] = mkdir(scratch_path);
     if ~ok_scratch
         error('pseudo_CT:BuildOutputRejected', 'Cannot create controlled scratch root: %s', msg_scratch);
     end
-    scratch_root = local_canonical(scratch_root);
 end
-if isempty(out_dir_arg)
-    out_dir_arg = tempname(scratch_root);
+scratch_root = local_canonical(scratch_path);
+if ~release_mode && ~strcmp(scratch_root, scratch_path)
+    error('pseudo_CT:BuildOutputRejected', 'Scratch root must not be a symlink: %s', scratch_path);
 end
-if ~isempty(strfind(out_dir_arg, '..')) || ~isempty(strfind(out_dir_arg, '/usr/pubsw')) || ...
-        ~isempty(strfind(out_dir_arg, '.tar.gz')) || ~isempty(strfind(out_dir_arg, '.tgz'))
-    error('pseudo_CT:BuildOutputRejected', 'Output must be a fresh scratch staging directory: %s', out_dir_arg);
+if release_mode
+    if isempty(out_dir_arg)
+        out_dir_arg = tempname(scratch_root);
+    end
+    if ~isempty(strfind(out_dir_arg, '..')) || ~isempty(strfind(out_dir_arg, '/usr/pubsw')) || ...
+            ~isempty(strfind(out_dir_arg, '.tar.gz')) || ~isempty(strfind(out_dir_arg, '.tgz'))
+        error('pseudo_CT:BuildOutputRejected', 'Output must be a fresh scratch staging directory: %s', out_dir_arg);
+    end
+    canonical_out = local_canonical(out_dir_arg);
+    scratch_prefix = [scratch_root filesep];
+    if ~strncmp(canonical_out, scratch_prefix, length(scratch_prefix)) || ...
+            ~strcmp(fileparts(canonical_out), scratch_root) || ...
+            ~isempty(strfind([filesep canonical_out filesep], [filesep 'compiled' filesep]))
+        error('pseudo_CT:BuildOutputRejected', ...
+            'Output must be a direct, controlled child of scratch (never compiled): %s', canonical_out);
+    end
+    if exist(out_dir_arg, 'file') == 2 || exist(out_dir_arg, 'dir') == 7
+        error('pseudo_CT:BuildOutputRejected', 'Output staging destination already exists: %s', canonical_out);
+    end
+    out_dir_arg = canonical_out;
+else
+    if isempty(out_dir_arg)
+        build_clock = now;
+        day_name = datestr(build_clock, 'yyyy-mm-dd');
+        day_path = fullfile(scratch_root, day_name);
+        if local_is_symlink(day_path)
+            error('pseudo_CT:BuildOutputRejected', 'Dated scratch directory must not be a symlink: %s', day_path);
+        end
+        if exist(day_path, 'dir') ~= 7
+            [ok_day, msg_day] = mkdir(day_path);
+            if ~ok_day
+                error('pseudo_CT:BuildOutputRejected', 'Cannot create dated scratch directory: %s', msg_day);
+            end
+        end
+        if local_is_symlink(day_path) || ~strcmp(local_canonical(day_path), day_path)
+            error('pseudo_CT:BuildOutputRejected', 'Dated scratch directory must not be a symlink: %s', day_path);
+        end
+        [~, unique_name] = fileparts(tempname(day_path));
+        title_name = [datestr(build_clock, 'HHMMSS') '-mlsc-current-' unique_name];
+        title_path = fullfile(day_path, title_name);
+        if local_is_symlink(title_path) || exist(title_path, 'file') == 2 || exist(title_path, 'dir') == 7
+            error('pseudo_CT:BuildOutputRejected', 'Cannot allocate a unique scratch title: %s', title_path);
+        end
+        out_dir_arg = fullfile(day_path, title_name, 'candidate');
+    end
+    if ~isempty(strfind(out_dir_arg, '..')) || ~isempty(strfind(out_dir_arg, '/usr/pubsw')) || ...
+            ~isempty(strfind(out_dir_arg, '.tar.gz')) || ~isempty(strfind(out_dir_arg, '.tgz')) || ...
+            any(out_dir_arg == char(0))
+        error('pseudo_CT:BuildOutputRejected', 'Output must be a fresh dated scratch staging directory: %s', out_dir_arg);
+    end
+    if isempty(out_dir_arg) || out_dir_arg(1) ~= filesep
+        raw_out = fullfile(repo_root, out_dir_arg);
+    else
+        raw_out = out_dir_arg;
+    end
+    while length(raw_out) > 1 && raw_out(end) == filesep
+        raw_out = raw_out(1:end - 1);
+    end
+    canonical_out = local_canonical(raw_out);
+    if ~strcmp(raw_out, canonical_out)
+        error('pseudo_CT:BuildOutputRejected', ...
+            'Output path must be canonical and contain no symlink components: %s', raw_out);
+    end
+    if local_is_symlink(raw_out)
+        error('pseudo_CT:BuildOutputRejected', 'Output path must not be a symlink: %s', raw_out);
+    end
+    scratch_prefix = [scratch_root filesep];
+    if ~strncmp(canonical_out, scratch_prefix, length(scratch_prefix))
+        error('pseudo_CT:BuildOutputRejected', ...
+            'Output must be inside the canonical dated scratch tree: %s', canonical_out);
+    end
+    relative_out = canonical_out(length(scratch_prefix) + 1:end);
+    relative_out = strrep(relative_out, filesep, '/');
+    output_parts = regexp(relative_out, '/', 'split');
+    if numel(output_parts) ~= 2 && numel(output_parts) ~= 3
+        error('pseudo_CT:BuildOutputRejected', ...
+            'Output must be scratch/YYYY-MM-DD/HHMMSS-title[/candidate]: %s', canonical_out);
+    end
+    day_name = output_parts{1};
+    title_name = output_parts{2};
+    if isempty(regexp(day_name, '^[0-9]{4}-[0-9]{2}-[0-9]{2}$', 'once')) || ...
+            isempty(regexp(title_name, '^[0-9]{6}-[A-Za-z0-9][A-Za-z0-9._-]*$', 'once'))
+        error('pseudo_CT:BuildOutputRejected', ...
+            'Output must use canonical date and timestamp-title components: %s', canonical_out);
+    end
+    try
+        date_value = datenum(day_name, 'yyyy-mm-dd');
+        valid_date = strcmp(datestr(date_value, 'yyyy-mm-dd'), day_name);
+    catch %#ok<CTCH>
+        valid_date = false;
+    end
+    title_time = [str2double(title_name(1:2)) str2double(title_name(3:4)) str2double(title_name(5:6))];
+    if ~valid_date || title_time(1) > 23 || title_time(2) > 59 || title_time(3) > 59
+        error('pseudo_CT:BuildOutputRejected', ...
+            'Output date/title timestamp is invalid: %s', canonical_out);
+    end
+    title_dir = fullfile(scratch_root, day_name, title_name);
+    day_path = fullfile(scratch_root, day_name);
+    if local_is_symlink(day_path)
+        error('pseudo_CT:BuildOutputRejected', 'Dated scratch directory must not be a symlink: %s', day_name);
+    end
+    if exist(day_path, 'dir') ~= 7
+        [ok_day, msg_day] = mkdir(day_path);
+        if ~ok_day
+            error('pseudo_CT:BuildOutputRejected', 'Cannot create dated scratch directory: %s', msg_day);
+        end
+    end
+    if local_is_symlink(day_path) || ~strcmp(local_canonical(day_path), day_path)
+        error('pseudo_CT:BuildOutputRejected', 'Dated scratch directory must not be a symlink: %s', day_name);
+    end
+    if numel(output_parts) == 2
+        if local_is_symlink(canonical_out) || exist(canonical_out, 'file') == 2 || ...
+                exist(canonical_out, 'dir') == 7
+            error('pseudo_CT:BuildOutputRejected', 'Output staging destination must be fresh and never compiled: %s', canonical_out);
+        end
+        title_dir = canonical_out;
+    else
+        candidate_name = output_parts{3};
+        if isempty(regexp(candidate_name, '^[A-Za-z0-9][A-Za-z0-9._-]*$', 'once')) || ...
+                strcmpi(candidate_name, 'compiled') || strcmp(candidate_name, 'compiled_before_build') || ...
+                local_is_symlink(canonical_out) || ...
+                exist(canonical_out, 'file') == 2 || exist(canonical_out, 'dir') == 7
+            error('pseudo_CT:BuildOutputRejected', ...
+                'Named candidate must be fresh, safe, and never compiled: %s', canonical_out);
+        end
+        if local_is_symlink(title_dir) || exist(title_dir, 'file') == 2 || ...
+                (exist(title_dir, 'dir') == 7 && ~strcmp(local_canonical(title_dir), title_dir))
+            error('pseudo_CT:BuildOutputRejected', 'Scratch title must be a real directory: %s', title_dir);
+        end
+        if exist(title_dir, 'dir') == 7
+            title_contents = dir(title_dir);
+            for kk = 1:numel(title_contents)
+                if ~strcmp(title_contents(kk).name, '.') && ~strcmp(title_contents(kk).name, '..')
+                    error('pseudo_CT:BuildOutputRejected', ...
+                        'Scratch title for a named candidate must be fresh and empty: %s', title_dir);
+                end
+            end
+        end
+    end
+    out_dir_arg = canonical_out;
 end
-canonical_out = local_canonical(out_dir_arg);
-scratch_prefix = [scratch_root filesep];
-if ~strncmp(canonical_out, scratch_prefix, length(scratch_prefix)) || ...
-        ~strcmp(fileparts(canonical_out), scratch_root) || ...
-        ~isempty(strfind([filesep canonical_out filesep], [filesep 'compiled' filesep]))
-    error('pseudo_CT:BuildOutputRejected', ...
-        'Output must be a direct, controlled child of scratch (never compiled): %s', canonical_out);
-end
-if exist(out_dir_arg, 'file') == 2 || exist(out_dir_arg, 'dir') == 7
-    error('pseudo_CT:BuildOutputRejected', 'Output staging destination already exists: %s', canonical_out);
-end
-out_dir_arg = canonical_out;
 
 % 1. Verify EXECUTING MATLAB via live introspection (no path authority).
 act_release = '';
@@ -248,7 +379,7 @@ fprintf('BUILD_IDENTITY release=%s version=%s mcr=%s arch=%s root=%s\n', ...
 %   outputs under scratch/ (never dist/, never /usr/pubsw). The mcc call
 %   site below is unreachable when this gate blocks.
 if release_mode
-    gate_lib = fullfile(repo_root, 'src', 'mlsc');
+    gate_lib = fullfile(repo_root, 'src', 'backends', 'mlsc');
     if exist('mlsc_release_gate', 'file') ~= 2
         addpath(gate_lib);
     end
@@ -296,7 +427,8 @@ end
 fprintf('PROVENANCE head=%s tracked=%d untracked=%d\n', git_head, numel(tracked_mods), numel(untracked_sources));
 
 % 3. Validate dependency roots BEFORE expensive work (fail-closed).
-entrypoint = fullfile(src_root, 'src', 'mlsc', 'mlsc_current_payload.m');
+entrypoint = fullfile(src_root, 'src', 'science', 'current', ...
+    'mlsc_current_payload.m');
 if exist(entrypoint, 'file') ~= 2
     error('pseudo_CT:BuildDependency', 'Entrypoint missing: %s', entrypoint);
 end
@@ -313,7 +445,7 @@ end
 if ~isempty(strfind(entrypoint, 'run_pseudo_CT'))
     error('pseudo_CT:BuildDependency', 'Build must compile ONLY mlsc_current_payload, not run_pseudo_CT.');
 end
-vers_dir = fullfile(src_root, 'vers');
+vers_dir = fullfile(src_root, 'src', 'science', 'overrides');
 vers_files = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; 'spm_dicom_convert.m'};
 for kk = 1:numel(vers_files)
     if exist(fullfile(vers_dir, vers_files{kk}), 'file') ~= 2
@@ -347,6 +479,23 @@ if exist(alias_arg, 'dir') ~= 7
 end
 if exist(fullfile(alias_arg, 'correct_aliasing.m'), 'file') ~= 2
     error('pseudo_CT:BuildDependency', 'Aliasing facade missing: %s', fullfile(alias_arg, 'correct_aliasing.m'));
+end
+if exist(dflt_d2n, 'dir') ~= 7 || ...
+        exist(fullfile(dflt_d2n, 'dcm2nii.m'), 'file') ~= 2 || ...
+        exist(fullfile(dflt_d2n, '+dicom2nifti', '+api', 'run.m'), 'file') ~= 2
+    error('pseudo_CT:BuildDependency', ...
+        'Pinned dicom2nifti 1.2.5 dependency is missing or incomplete: %s', dflt_d2n);
+end
+alias_defaults = fullfile(alias_arg, 'config', 'defaults.m');
+if exist(alias_defaults, 'file') ~= 2
+    error('pseudo_CT:BuildDependency', ...
+        'Aliasing dependency defaults are missing: %s', alias_defaults);
+end
+alias_defaults_text = fileread(alias_defaults);
+if isempty(strfind(alias_defaults_text, 'dicom2nifti-1.2.5')) || ...
+        ~isempty(strfind(lower(alias_defaults_text), 'latest'))
+    error('pseudo_CT:BuildDependency', ...
+        'Aliasing dependency must resolve the pinned local dicom2nifti 1.2.5 package.');
 end
 % Aliasing must be external standalone, never repo src or SPM.
 canonical_alias = local_canonical(alias_arg);
@@ -389,24 +538,84 @@ for kk = 1:numel(forbidden_tokens)
     end
 end
 
-% 4. Prepare the already-validated fresh staging destination.
-[ok_mk, msg_mk] = mkdir(out_dir_arg);
-if ~ok_mk
-    error('pseudo_CT:BuildOutput', 'Cannot create output dir %s: %s', out_dir_arg, msg_mk);
+% 4. Snapshot the existing compiled tree without moving or changing it.
+%    The archive and all later intermediates stay within this unique title.
+if ~release_mode
+    if local_is_symlink(title_dir) || exist(title_dir, 'file') == 2
+        error('pseudo_CT:BuildOutput', 'Scratch title path is not a directory: %s', title_dir);
+    end
+    if exist(title_dir, 'dir') ~= 7
+        [ok_title, msg_title] = mkdir(title_dir);
+        if ~ok_title || exist(title_dir, 'dir') ~= 7
+            error('pseudo_CT:BuildOutput', 'Cannot create scratch title %s: %s', title_dir, msg_title);
+        end
+    end
+    if local_is_symlink(title_dir) || ~strcmp(local_canonical(title_dir), title_dir)
+        error('pseudo_CT:BuildOutputRejected', 'Scratch title must not be a symlink: %s', title_dir);
+    end
+    compiled_dir = fullfile(repo_root, 'compiled', 'current');
+    archive_dir = fullfile(title_dir, 'compiled_before_build');
+    if local_is_symlink(archive_dir) || exist(archive_dir, 'file') == 2 || exist(archive_dir, 'dir') == 7
+        error('pseudo_CT:BuildOutput', 'Compiled snapshot destination already exists: %s', archive_dir);
+    end
+    if local_is_symlink(compiled_dir) || exist(compiled_dir, 'file') == 2
+        error('pseudo_CT:BuildOutput', 'Compiled destination is not a directory: %s', compiled_dir);
+    end
+    had_previous = exist(compiled_dir, 'dir') == 7;
+    if had_previous
+        if ~strcmp(local_canonical(compiled_dir), compiled_dir)
+            error('pseudo_CT:BuildOutputRejected', 'Compiled destination must not be a symlink: %s', compiled_dir);
+        end
+        [ok_archive, msg_archive] = copyfile(compiled_dir, archive_dir);
+        if ~ok_archive || exist(archive_dir, 'dir') ~= 7
+            error('pseudo_CT:BuildOutput', ...
+                'Cannot archive prior compiled tree under scratch: %s', msg_archive);
+        end
+    end
+end
+
+% Prepare the fresh compiler staging destination. In a direct title output,
+% the title exists only because it contains the pre-build archive.
+if exist(out_dir_arg, 'file') == 2
+    error('pseudo_CT:BuildOutput', 'Output path is not a directory: %s', out_dir_arg);
+end
+if local_is_symlink(out_dir_arg)
+    error('pseudo_CT:BuildOutputRejected', 'Output staging directory must not be a symlink: %s', out_dir_arg);
+end
+if exist(out_dir_arg, 'dir') ~= 7
+    [ok_mk, msg_mk] = mkdir(out_dir_arg);
+    if ~ok_mk || exist(out_dir_arg, 'dir') ~= 7
+        error('pseudo_CT:BuildOutput', 'Cannot create output dir %s: %s', out_dir_arg, msg_mk);
+    end
+end
+if local_is_symlink(out_dir_arg) || ~strcmp(local_canonical(out_dir_arg), out_dir_arg)
+    error('pseudo_CT:BuildOutputRejected', 'Output staging directory must not be a symlink: %s', out_dir_arg);
 end
 build_dir = fullfile(out_dir_arg, 'payload_build');
 cfggen_dir = fullfile(out_dir_arg, 'cfggen');
 if exist(build_dir, 'dir') ~= 7
+    if local_is_symlink(build_dir)
+        error('pseudo_CT:BuildOutputRejected', 'Compiler output directory must not be a symlink: %s', build_dir);
+    end
     [ok_bd, msg_bd] = mkdir(build_dir);
     if ~ok_bd
         error('pseudo_CT:BuildOutput', 'Cannot create compiler output dir %s: %s', build_dir, msg_bd);
     end
 end
+if local_is_symlink(build_dir) || ~strcmp(local_canonical(build_dir), build_dir)
+    error('pseudo_CT:BuildOutputRejected', 'Compiler output directory must not be a symlink: %s', build_dir);
+end
 if exist(cfggen_dir, 'dir') ~= 7
+    if local_is_symlink(cfggen_dir)
+        error('pseudo_CT:BuildOutputRejected', 'Generated cfggen directory must not be a symlink: %s', cfggen_dir);
+    end
     [ok_cg, msg_cg] = mkdir(cfggen_dir);
     if ~ok_cg
         error('pseudo_CT:BuildOutput', 'Cannot create cfggen dir %s: %s', cfggen_dir, msg_cg);
     end
+end
+if local_is_symlink(cfggen_dir) || ~strcmp(local_canonical(cfggen_dir), cfggen_dir)
+    error('pseudo_CT:BuildOutputRejected', 'Generated cfggen directory must not be a symlink: %s', cfggen_dir);
 end
 
 % 5. Build-local deployed SPM init helpers (durable, not temp probe).
@@ -454,11 +663,12 @@ c_spm_eeg = local_canonical(fullfile(spm_arg, 'EEGtemplates'));
 c_spm_seg = local_canonical(fullfile(spm_arg, 'toolbox', 'Seg'));
 c_spm_dartel = local_canonical(fullfile(spm_arg, 'toolbox', 'DARTEL'));
 c_alias = local_canonical(alias_arg);
-c_src = local_canonical(fullfile(src_root, 'src'));
-c_src_core = local_canonical(fullfile(src_root, 'src', 'core'));
+c_d2n = local_canonical(dflt_d2n);
+c_src_current = local_canonical(fullfile(src_root, 'src', 'science', 'current'));
+c_src_science_shared = local_canonical(fullfile(src_root, 'src', 'science', 'shared'));
+c_src_science_legacy = local_canonical(fullfile(src_root, 'src', 'science', 'legacy'));
 c_src_io = local_canonical(fullfile(src_root, 'src', 'io'));
 c_src_qc = local_canonical(fullfile(src_root, 'src', 'qc'));
-c_src_mlsc = local_canonical(fullfile(src_root, 'src', 'mlsc'));
 c_src_config = local_canonical(fullfile(src_root, 'src', 'config'));
 c_cfggen = local_canonical(cfggen_dir);
 c_changelog = local_canonical(fullfile(src_root, 'CHANGELOG.md'));
@@ -467,12 +677,13 @@ c_changelog = local_canonical(fullfile(src_root, 'CHANGELOG.md'));
 % -R -nodisplay only (no -singleCompThread, no OMP/MKL forcing per T001/T012).
 mcc_args = {'-m', c_entry, '-d', local_canonical(build_dir), ...
     '-R', '-nodisplay', '-v', ...
-    '-I', c_vers, '-I', c_cfggen, '-I', c_alias, ...
+    '-I', c_vers, '-I', c_cfggen, '-I', c_alias, '-I', c_d2n, ...
     '-I', c_spm_mb, '-I', c_spm, '-I', c_spm_cfg, ...
     '-I', c_spm_seg, '-I', c_spm_dartel, ...
-    '-I', c_src, '-I', c_src_core, '-I', c_src_io, '-I', c_src_qc, ...
-    '-I', c_src_mlsc, '-I', c_src_config, ...
-    '-a', c_vers, '-a', c_cfggen, '-a', c_alias, ...
+    '-I', c_src_current, '-I', c_src_science_shared, ...
+    '-I', c_src_science_legacy, '-I', c_src_io, '-I', c_src_qc, ...
+    '-I', c_src_config, ...
+    '-a', c_vers, '-a', c_cfggen, '-a', c_alias, '-a', c_d2n, ...
     '-a', c_spm_cfg, '-a', c_spm_eeg, ...
     '-a', c_spm_seg, '-a', c_spm_dartel, ...
     '-a', fullfile(c_spm, 'spm_sample_vol.mexa64'), ...
@@ -531,8 +742,14 @@ if isempty(strfind(runner_text, '<deployedMCRroot>')) && isempty(strfind(runner_
     error('pseudo_CT:BuildVerify', 'Launcher MCR_ROOT-first contract not found in %s.', runner_path);
 end
 
-% File inventory + checksums (SHA-256 via system, bytes via dir).
-[build_files, build_checksums] = local_build_files(build_dir);
+% File inventory + checksums (SHA-256 via system, bytes via dir). Ordinary
+% builds record only runtime files; release candidates retain the complete
+% historical build-directory inventory.
+if release_mode
+    [build_files, build_checksums] = local_build_files(build_dir);
+else
+    [build_files, build_checksums] = local_runtime_files(build_dir);
+end
 % Resource fingerprint: SHA-256 of the .mat resource manifest (bytes identity).
 resource_fp = local_sha256(resources_path);
 runner_fp = local_sha256(runner_path);
@@ -561,7 +778,7 @@ build_stamp = local_utc_stamp();
 build = struct();
 build.schema = 'pseudo-CT.mlsc-current-build/v1';
 build.manifest_version = 1;
-build.runner = fullfile(repo_root, 'compiled', 'payload_build', 'run_mlsc_current_payload.sh');
+build.runner = fullfile(repo_root, 'compiled', 'current', 'payload_build', 'run_mlsc_current_payload.sh');
 build.mcr_root = mcr_arg;
 if isempty(regexp(strtrim(act_release), '^[0-9]{4}[ab]$', 'once'))
     error('pseudo_CT:BuildIdentityMismatch', ...
@@ -598,19 +815,25 @@ else
 end
 build.required_toolboxes = {'Image_Toolbox'; 'Statistics_Toolbox'; 'Compiler'};
 build.mcc_options = mcc_options_text;
-build.entrypoint = 'src/mlsc/mlsc_current_payload.m';
+build.entrypoint = 'src/science/current/mlsc_current_payload.m';
 build.entrypoint_signature = 'mlsc_current_payload(phase, job_manifest_path, resource_manifest_path)';
 build.spm_root = spm_arg;
 build.spm_version = 'SPM8 r6313 (Contents.m Version 6313 23-Jan-2015)';
 build.aliasing_root = alias_arg;
-build.aliasing_version = '0.3.0';
+build.aliasing_version = '0.4.0';
+build.d2n_root = dflt_d2n;
+build.d2n_version = '1.2.5';
 build.atlas_dir = atlas_arg;
-build.dep_inventory = {'vers/spm_vol_nifti.m'; 'vers/spm_preproc_write8.m'; ...
-    'vers/spm_dicom_convert.m'; 'spm/cfg_util (matlabbatch precedence)'; ...
+build.dep_inventory = {'src/science/overrides/spm_vol_nifti.m'; 'src/science/overrides/spm_preproc_write8.m'; ...
+    'src/science/overrides/spm_dicom_convert.m'; 'spm/cfg_util (matlabbatch precedence)'; ...
     'spm/spm_jobman'; 'toolbox/Seg/tbx_cfg_preproc8'; ...
-    'toolbox/DARTEL/tbx_cfg_dartel'; 'correct_aliasing facade + transitives'; ...
-    'src/core/pseudo_CT_current_prepare.m'; 'src/core/pseudo_CT_current_compute.m'; ...
-    'src helpers move_image_2_MNI/head_mask_mprage/CT_2_att_map/reduce_bone_segment/quick_fusion_pseudo_ct/toverlay2/spm_reslice_david/pca-resolver/output/version-log'; ...
+    'toolbox/DARTEL/tbx_cfg_dartel'; 'correct_aliasing 0.4.0 facade + transitives'; ...
+    'dicom2nifti 1.2.5 structured API + transitives'; ...
+    'src/science/current/pseudo_CT_current_prepare.m'; 'src/science/current/pseudo_CT_current_compute.m'; ...
+    'src/science/current helpers move_image_2_MNI/head_mask_mprage/CT_2_att_map/reduce_bone_segment'; ...
+    'src/science/shared/pseudo_CT_pca_resolver.m and src/science/legacy/pseudo_ct_princomp_legacy.m'; ...
+    'src/qc/quick_fusion_pseudo_ct.m/toverlay2.m and src/io/spm_reslice_david.m'; ...
+    'src/io output/version-log helpers'; ...
     'Image Processing (imfill/bwlabel/imdilate/imerode/imclose)'; 'Statistics (nlinfit)'};
 build.mex_inventory = required_mex;
 build.mex_extra_bundled = {'spm_mrf.mexa64'; 'dartel2.mexa64'; 'dartel3.mexa64'};
@@ -624,15 +847,24 @@ build.resource_fingerprint = lower(strtrim(resource_fp));
 build.executable_fingerprint = lower(strtrim(exe_fp));
 build.files = build_files;
 build.checksums = build_checksums;
-% Complete SHA-256 inventory of every packaged file (schema v1 retained,
-% additive only). Covers every file staged under the output root except
-% the self-describing manifest pair mlsc_current_build.mat/.txt (self-hash
-% impossible; the .mat identity stands alone in the active dev path (no
-% Gate-A binding is required or consulted).
-% Ordinary local builds carry the same inventory; only the release_* and
-% build_mode values differ.
+% Complete SHA-256 inventory of packaged files (schema v1 retained,
+% additive only). The self-describing build manifest pair is excluded.
+% Release candidates retain the recursive staged-output inventory; ordinary
+% builds inventory only runtime payload files and the resource manifest pair.
 local_write_text(fullfile(out_dir_arg, 'mcc_args.txt'), {mcc_options_text});
-[packaged_files, packaged_checksums, packaged_fp] = local_packaged_inventory(out_dir_arg);
+if release_mode
+    [packaged_files, packaged_checksums, packaged_fp] = ...
+        local_packaged_inventory(out_dir_arg);
+else
+    packaged_relpaths = {'mlsc_current_resources.mat'; ...
+        'mlsc_current_resources.txt'};
+    for kk = 1:numel(build_files)
+        packaged_relpaths{end + 1, 1} = ...
+            ['payload_build/' build_files{kk}]; %#ok<AGROW>
+    end
+    [packaged_files, packaged_checksums, packaged_fp] = ...
+        local_packaged_inventory(out_dir_arg, packaged_relpaths);
+end
 build.packaged_files = packaged_files;
 build.packaged_checksums = packaged_checksums;
 build.packaged_files_fingerprint = packaged_fp;
@@ -649,52 +881,279 @@ build.thread_policy = 'no -singleCompThread, no OMP/MKL=1 forcing; evidence-sele
 build.compat_note = 'same release required; same update preferred, newer same-release update compatible; never different release or older update';
 build.provenance_method = 'content-bound: canonical <relpath>\t<SHA256>\n per included file sorted by path, SHA-256 over that text; tracked mods + every untracked source, .nfs excluded; deterministic, no timestamps; fail closed on unreadable; base HEAD bound via source_commit + MATLAB introspection';
 build_manifest_path = fullfile(out_dir_arg, 'mlsc_current_build.mat');
-save(build_manifest_path, 'build');
-local_write_text(fullfile(out_dir_arg, 'mlsc_current_build.txt'), local_build_text(build));
-
-% Promote only after compilation and structural verification have completed.
-% Keep the existing compiled tree (including its historical R2026a files)
-% outside compiled/ before replacing it; never delete/overwrite it.
-compiled_dir = fullfile(repo_root, 'compiled');
-scratch_dir = fullfile(repo_root, 'scratch');
-if exist(scratch_dir, 'dir') ~= 7
-    [ok_mkdir, msg_mkdir] = mkdir(scratch_dir);
-    if ~ok_mkdir
+compiled_dir = fullfile(repo_root, 'compiled', 'current');
+if release_mode
+    % Preserve the opt-in release-candidate promotion path as-is.
+    save(build_manifest_path, 'build');
+    local_write_text(fullfile(out_dir_arg, 'mlsc_current_build.txt'), local_build_text(build));
+    scratch_dir = fullfile(repo_root, 'scratch');
+    history_dir = tempname(scratch_dir);
+    if exist(history_dir, 'dir') == 7 || exist(history_dir, 'file') == 2
         error('pseudo_CT:BuildOutput', ...
-            'Cannot create scratch directory for prior build preservation: %s', msg_mkdir);
+            'Unique prior-build backup path unexpectedly exists: %s.', history_dir);
     end
-end
-history_dir = tempname(scratch_dir);
-if exist(history_dir, 'dir') == 7 || exist(history_dir, 'file') == 2
-    error('pseudo_CT:BuildOutput', ...
-        'Unique prior-build backup path unexpectedly exists: %s.', history_dir);
-end
-had_previous = exist(compiled_dir, 'dir') == 7;
-if had_previous
-    [ok_move, msg_move] = movefile(compiled_dir, history_dir);
-    if ~ok_move
-        error('pseudo_CT:BuildOutput', 'Cannot preserve prior compiled tree: %s', msg_move);
-    end
-end
-[ok_move, msg_move] = movefile(out_dir_arg, compiled_dir);
-if ~ok_move
+    had_previous = exist(compiled_dir, 'dir') == 7;
     if had_previous
-        [ok_rollback, msg_rollback] = movefile(history_dir, compiled_dir);
-        if ~ok_rollback
-            error('pseudo_CT:BuildOutput', ...
-                ['Cannot promote verified build: %s. CRITICAL: rollback also ', ...
-                 'failed (%s); prior compiled tree remains preserved at %s.'], ...
-                msg_move, msg_rollback, history_dir);
+        [ok_move, msg_move] = movefile(compiled_dir, history_dir);
+        if ~ok_move
+            error('pseudo_CT:BuildOutput', 'Cannot preserve prior compiled tree: %s', msg_move);
         end
     end
-    error('pseudo_CT:BuildOutput', 'Cannot promote verified build: %s', msg_move);
+    [ok_move, msg_move] = movefile(out_dir_arg, compiled_dir);
+    if ~ok_move
+        if had_previous
+            [ok_rollback, msg_rollback] = movefile(history_dir, compiled_dir);
+            if ~ok_rollback
+                error('pseudo_CT:BuildOutput', ...
+                    ['Cannot promote verified build: %s. CRITICAL: rollback also ', ...
+                     'failed (%s); prior compiled tree remains preserved at %s.'], ...
+                    msg_move, msg_rollback, history_dir);
+            end
+        end
+        error('pseudo_CT:BuildOutput', 'Cannot promote verified build: %s', msg_move);
+    end
+else
+    % Install only files generated by this build. Existing compiled entries
+    % remain in place; overwritten builder-owned files are backed up and
+    % restored if any part of promotion fails.
+    build = local_promote_build(out_dir_arg, compiled_dir, archive_dir, packaged_files, build);
 end
 runner_path = fullfile(compiled_dir, 'payload_build', 'run_mlsc_current_payload.sh');
 exe_path = fullfile(compiled_dir, 'payload_build', 'mlsc_current_payload');
 
 fprintf('BUILD_SUCCESS out=%s runner=%s exe=%s\n', out_dir_arg, runner_path, exe_path);
-fprintf('RESOURCES %s\n', resources_path);
-fprintf('BUILD_MANIFEST %s\n', build_manifest_path);
+fprintf('RESOURCES %s\n', fullfile(compiled_dir, 'mlsc_current_resources.mat'));
+fprintf('BUILD_MANIFEST %s\n', fullfile(compiled_dir, 'mlsc_current_build.mat'));
+end
+
+function build = local_promote_build(out_dir, compiled_dir, archive_dir, packaged_files, build)
+%LOCAL_PROMOTE_BUILD Copy only this build's files and roll back on failure.
+manifest_names = {'mlsc_current_build.txt'; 'mlsc_current_build.mat'};
+attempted = {};
+attempted_existing = [];
+created_dirs = {};
+promotion_tmp_dir = fullfile(fileparts(archive_dir), 'promotion_tmp');
+if local_is_symlink(promotion_tmp_dir) || exist(promotion_tmp_dir, 'file') == 2 || ...
+        exist(promotion_tmp_dir, 'dir') == 7
+    error('pseudo_CT:BuildOutput', 'Promotion scratch directory is not fresh: %s', promotion_tmp_dir);
+end
+[ok_tmp, msg_tmp] = mkdir(promotion_tmp_dir);
+if ~ok_tmp || exist(promotion_tmp_dir, 'dir') ~= 7 || ...
+        local_is_symlink(promotion_tmp_dir) || ~strcmp(local_canonical(promotion_tmp_dir), promotion_tmp_dir)
+    error('pseudo_CT:BuildOutput', 'Cannot create promotion scratch directory: %s', msg_tmp);
+end
+if local_is_symlink(compiled_dir) || exist(compiled_dir, 'file') == 2
+    error('pseudo_CT:BuildOutput', 'Compiled destination is not a directory: %s', compiled_dir);
+end
+if exist(compiled_dir, 'dir') == 7
+    if ~strcmp(local_canonical(compiled_dir), compiled_dir)
+        error('pseudo_CT:BuildOutputRejected', 'Compiled destination must not be a symlink: %s', compiled_dir);
+    end
+else
+    [ok_root, msg_root] = mkdir(compiled_dir);
+    if ~ok_root || exist(compiled_dir, 'dir') ~= 7 || local_is_symlink(compiled_dir) || ...
+            ~strcmp(local_canonical(compiled_dir), compiled_dir)
+        error('pseudo_CT:BuildOutput', 'Cannot create compiled directory safely: %s', msg_root);
+    end
+    created_dirs{end + 1, 1} = compiled_dir;
+end
+try
+    for phase = 1:2
+        if phase == 1
+            files_here = sort(packaged_files(:));
+        else
+            % Read the installed runner only after its package files were
+            % copied, then save the final path/checksum in the manifest pair.
+            final_runner = fullfile(compiled_dir, 'payload_build', 'run_mlsc_current_payload.sh');
+            final_runner_fp = local_sha256(final_runner);
+            if ~local_is_valid_sha256(final_runner_fp) || ...
+                    ~strcmpi(final_runner_fp, build.runner_checksum)
+                error('pseudo_CT:BuildVerify', ...
+                    'Installed runner checksum differs from verified staging; STOP.');
+            end
+            build.runner = final_runner;
+            build.runner_checksum = lower(strtrim(final_runner_fp));
+            manifest_path = fullfile(out_dir, 'mlsc_current_build.mat');
+            save(manifest_path, 'build');
+            local_write_text(fullfile(out_dir, 'mlsc_current_build.txt'), local_build_text(build));
+            files_here = manifest_names;
+        end
+        for jj = 1:numel(files_here)
+            rel = files_here{jj};
+            if isempty(rel) || rel(1) == '/' || ~isempty(strfind(['/' rel '/'], '/../')) || ...
+                    strcmp(rel, '..') || ~isempty(strfind(rel, char(92)))
+                error('pseudo_CT:BuildOutput', 'Unsafe generated artifact path: %s', rel);
+            end
+            source = fullfile(out_dir, strrep(rel, '/', filesep));
+            destination = fullfile(compiled_dir, strrep(rel, '/', filesep));
+            if local_is_symlink(source) || exist(source, 'file') ~= 2 || ...
+                ~strcmp(local_canonical(source), source)
+                error('pseudo_CT:BuildOutput', 'Generated artifact is missing or linked: %s', source);
+            end
+            parent_dir = fileparts(destination);
+            created_dirs = local_ensure_build_dirs(parent_dir, compiled_dir, created_dirs);
+            if exist(destination, 'dir') == 7
+                error('pseudo_CT:BuildOutput', 'Compiled artifact target is a directory: %s', destination);
+            end
+            target_exists = exist(destination, 'file') == 2;
+            if local_is_symlink(destination) || ...
+                (target_exists && ~strcmp(local_canonical(destination), destination))
+                error('pseudo_CT:BuildOutputRejected', 'Compiled artifact target must not be a symlink: %s', destination);
+            end
+            backup = fullfile(archive_dir, strrep(rel, '/', filesep));
+            backup_exists = exist(backup, 'file') == 2;
+            if target_exists ~= backup_exists
+                error('pseudo_CT:BuildOutput', ...
+                    'Compiled artifact changed since its scratch snapshot: %s', destination);
+            end
+            if local_is_symlink(backup) || (backup_exists && ~strcmp(local_canonical(backup), backup))
+                error('pseudo_CT:BuildOutputRejected', 'Archived artifact must not be a symlink: %s', backup);
+            end
+            if target_exists
+                existing_fp = local_sha256(destination);
+                archived_fp = local_sha256(backup);
+                if ~local_is_valid_sha256(existing_fp) || ~strcmp(existing_fp, archived_fp)
+                    error('pseudo_CT:BuildOutput', ...
+                        'Compiled artifact changed after its scratch snapshot: %s', destination);
+                end
+            end
+            attempted{end + 1, 1} = rel; %#ok<AGROW>
+            attempted_existing(end + 1) = target_exists; %#ok<AGROW>
+            temporary = fullfile(promotion_tmp_dir, sprintf('promote-%06d.tmp', numel(attempted)));
+            [ok_copy, msg_copy] = copyfile(source, temporary, 'f');
+            if ~ok_copy || exist(temporary, 'file') ~= 2
+                error('pseudo_CT:BuildOutput', 'Cannot stage promotion of %s: %s', rel, msg_copy);
+            end
+            [ok_move, msg_move] = movefile(temporary, destination, 'f');
+            if ~ok_move || exist(destination, 'file') ~= 2
+                error('pseudo_CT:BuildOutput', 'Cannot promote %s: %s', rel, msg_move);
+            end
+        end
+        if phase == 1
+            for kk = 1:numel(packaged_files)
+                rel = packaged_files{kk};
+                source = fullfile(out_dir, strrep(rel, '/', filesep));
+                destination = fullfile(compiled_dir, strrep(rel, '/', filesep));
+                if ~strcmp(local_sha256(source), local_sha256(destination))
+                    error('pseudo_CT:BuildVerify', 'Installed artifact differs from staged file: %s', rel);
+                end
+            end
+        end
+    end
+catch ME
+    rollback_errors = '';
+    for kk = numel(attempted):-1:1
+        rel = attempted{kk};
+        destination = fullfile(compiled_dir, strrep(rel, '/', filesep));
+        try
+            if attempted_existing(kk)
+                backup = fullfile(archive_dir, strrep(rel, '/', filesep));
+                if local_is_symlink(backup) || exist(backup, 'file') ~= 2 || ...
+                        local_is_symlink(destination) || ~strcmp(local_canonical(destination), destination)
+                    error('pseudo_CT:BuildOutput', 'Cannot safely restore archived file %s.', rel);
+                end
+                temporary = fullfile(promotion_tmp_dir, sprintf('restore-%06d.tmp', kk));
+                [ok_restore, msg_restore] = copyfile(backup, temporary, 'f');
+                if ok_restore
+                    [ok_restore, msg_restore] = movefile(temporary, destination, 'f');
+                end
+                backup_fp = local_sha256(backup);
+                restored_fp = local_sha256(destination);
+                if ~ok_restore || ~local_is_valid_sha256(backup_fp) || ...
+                        ~strcmp(backup_fp, restored_fp)
+                    error('pseudo_CT:BuildOutput', 'Restore failed for %s: %s', rel, msg_restore);
+                end
+            elseif exist(destination, 'file') == 2
+                if local_is_symlink(destination) || ~strcmp(local_canonical(destination), destination)
+                    error('pseudo_CT:BuildOutput', 'Cannot safely remove new file %s.', rel);
+                end
+                delete(destination);
+                if exist(destination, 'file') == 2
+                    error('pseudo_CT:BuildOutput', 'Could not remove new file %s.', rel);
+                end
+            end
+        catch restore_me
+            rollback_errors = [rollback_errors sprintf('\n%s', restore_me.message)]; %#ok<AGROW>
+        end
+    end
+    for kk = numel(created_dirs):-1:1
+        try
+            if exist(created_dirs{kk}, 'dir') == 7 && ~local_is_symlink(created_dirs{kk})
+                [ok_remove, msg_remove] = rmdir(created_dirs{kk});
+                if ~ok_remove
+                    error('pseudo_CT:BuildOutput', 'Could not remove new directory %s: %s', ...
+                        created_dirs{kk}, msg_remove);
+                end
+            end
+        catch remove_me
+            rollback_errors = [rollback_errors sprintf('\n%s', remove_me.message)]; %#ok<AGROW>
+        end
+    end
+    if ~isempty(rollback_errors)
+        error('pseudo_CT:BuildOutput', ...
+            'Promotion failed: %s. CRITICAL: rollback was incomplete:%s. Prior data is archived under %s.', ...
+            ME.message, rollback_errors, archive_dir);
+    end
+    rethrow(ME);
+end
+end
+
+function created_dirs = local_ensure_build_dirs(target_dir, root_dir, created_dirs)
+% Create missing promotion parents without traversing or replacing symlinks.
+if ~strcmp(target_dir, root_dir) && ...
+        ~strncmp(target_dir, [root_dir filesep], length([root_dir filesep]))
+    error('pseudo_CT:BuildOutputRejected', 'Compiled parent escapes compiled/: %s', target_dir);
+end
+missing = {};
+cursor = target_dir;
+while ~strcmp(cursor, root_dir) && exist(cursor, 'dir') ~= 7
+    if local_is_symlink(cursor)
+        error('pseudo_CT:BuildOutputRejected', 'Compiled parent must not be a symlink: %s', cursor);
+    end
+    if exist(cursor, 'file') == 2
+        error('pseudo_CT:BuildOutput', 'Compiled parent is not a directory: %s', cursor);
+    end
+    missing{end + 1, 1} = cursor; %#ok<AGROW>
+    parent = fileparts(cursor);
+    if isempty(parent) || strcmp(parent, cursor)
+        error('pseudo_CT:BuildOutputRejected', 'Cannot safely resolve compiled parent: %s', cursor);
+    end
+    cursor = parent;
+end
+if ~strcmp(local_canonical(cursor), cursor)
+    error('pseudo_CT:BuildOutputRejected', 'Compiled parent must not be a symlink: %s', cursor);
+end
+made_here = {};
+try
+    for kk = numel(missing):-1:1
+        if local_is_symlink(missing{kk})
+            error('pseudo_CT:BuildOutputRejected', 'Compiled parent must not be a symlink: %s', missing{kk});
+        end
+        if exist(missing{kk}, 'dir') == 7
+            if ~strcmp(local_canonical(missing{kk}), missing{kk})
+                error('pseudo_CT:BuildOutputRejected', 'Compiled parent must not be a symlink: %s', missing{kk});
+            end
+            continue;
+        end
+        [ok_mkdir, msg_mkdir] = mkdir(missing{kk});
+        if ~ok_mkdir || exist(missing{kk}, 'dir') ~= 7 || local_is_symlink(missing{kk}) || ...
+                ~strcmp(local_canonical(missing{kk}), missing{kk})
+            error('pseudo_CT:BuildOutput', 'Cannot create compiled parent safely: %s', msg_mkdir);
+        end
+        made_here{end + 1, 1} = missing{kk}; %#ok<AGROW>
+    end
+catch ME
+    for kk = numel(made_here):-1:1
+        try
+            if exist(made_here{kk}, 'dir') == 7 && strcmp(local_canonical(made_here{kk}), made_here{kk})
+                rmdir(made_here{kk});
+            end
+        catch %#ok<CTCH>
+        end
+    end
+    rethrow(ME);
+end
+created_dirs = [created_dirs(:); made_here(:)];
 end
 
 function [head, status_text, tracked, untracked] = local_git_provenance(repo_root)
@@ -809,6 +1268,21 @@ catch %#ok<CTCH>
 end
 end
 
+function flag = local_is_symlink(path_text)
+% Detect dangling links too; Java canonicalization alone cannot do that.
+quote = char(39);
+escaped = strrep(path_text, quote, [quote char(34) quote char(34) quote]);
+[status, detail] = system(['test -L ' quote escaped quote]);
+if status == 0
+    flag = true;
+elseif status == 1
+    flag = false;
+else
+    error('pseudo_CT:BuildOutputRejected', ...
+        'Cannot safely check symlink status for %s: %s', path_text, strtrim(detail));
+end
+end
+
 function resources = local_build_resources(atlas_dir)
 % T009 existence-only resource manifest: atlas_list plus resource_names.
 % Content-identity (bytes/datenum) fingerprint fields and the native
@@ -910,25 +1384,76 @@ files = sort(files);
 checksums = sort(checksums);
 end
 
-function [files, checksums, fp] = local_packaged_inventory(out_dir)
-%LOCAL_PACKAGED_INVENTORY Complete SHA-256 inventory of staged outputs.
-%   Recursive sorted inventory of every regular file under OUT_DIR with
-%   '/'-separated relpaths, excluding the self-describing manifest pair
-%   mlsc_current_build.mat/.txt (self-hash impossible) and environmental
-%   .nfs names. CHECKSUMS parallels FILES as '<rel> bytes=<N>
-%   sha256=<hex>'. FP is the SHA-256 over canonical '<rel>\t<hex>\n'
-%   text sorted by path. Unreadable/unhashable files STOP the build
-%   (fail closed, no fallback). R2010b only.
+function [files, checksums] = local_runtime_files(build_dir)
+%LOCAL_RUNTIME_FILES Whitelist the ordinary-build runtime payload.
+%   Only the launcher, executable/CTF stub, and any top-level CTF archive
+%   are package deliverables. Compiler logs and other intermediates remain
+%   in the dated scratch title.
+required = {'run_mlsc_current_payload.sh'; 'mlsc_current_payload'};
+listed = dir(fullfile(build_dir, '*'));
+files = required;
+for kk = 1:numel(listed)
+    if listed(kk).isdir
+        continue;
+    end
+    name_here = listed(kk).name;
+    if length(name_here) >= 4 && strcmpi(name_here(end - 3:end), '.ctf') && ...
+            ~any(strcmp(files, name_here))
+        files{end + 1, 1} = name_here; %#ok<AGROW>
+    end
+end
+files = sort(files);
+checksums = {};
+for kk = 1:numel(files)
+    path_here = fullfile(build_dir, files{kk});
+    if local_is_symlink(path_here) || exist(path_here, 'file') ~= 2 || ...
+            ~strcmp(local_canonical(path_here), path_here)
+        error('pseudo_CT:BuildVerify', ...
+            'Required runtime deliverable is missing or linked: %s.', files{kk});
+    end
+    info = dir(path_here);
+    fp = local_sha256(path_here);
+    if isempty(info) || ~local_is_valid_sha256(fp)
+        error('pseudo_CT:BuildVerify', ...
+            'Runtime deliverable is unreadable or unhashable: %s.', files{kk});
+    end
+    checksums{end + 1, 1} = sprintf('%s bytes=%d sha256=%s', ...
+        files{kk}, info(1).bytes, lower(strtrim(fp))); %#ok<AGROW>
+end
+checksums = sort(checksums);
+end
+
+function [files, checksums, fp] = local_packaged_inventory(out_dir, explicit_files)
+%LOCAL_PACKAGED_INVENTORY SHA-256 inventory of staged package deliverables.
+%   With EXPLICIT_FILES, inventory only those approved relpaths (ordinary
+%   builds: runtime payload plus resource manifests). Without it, retain the
+%   recursive staged-output inventory used by the opt-in release path.
+%   Both forms exclude the self-describing build manifest pair and .nfs
+%   names. CHECKSUMS parallels FILES as '<rel> bytes=<N> sha256=<hex>'. FP
+%   is SHA-256 over canonical '<rel>\t<hex>\n' text sorted by path.
+%   Unreadable/unhashable files STOP the build (fail closed). R2010b only.
 if exist(out_dir, 'dir') ~= 7
     error('pseudo_CT:BuildVerify', 'Packaged inventory root unavailable: %s.', out_dir);
 end
-rels = local_packaged_walk(out_dir, '');
+if nargin > 1
+    if ~iscell(explicit_files) || isempty(explicit_files)
+        error('pseudo_CT:BuildVerify', 'Explicit packaged inventory is empty or invalid.');
+    end
+    rels = explicit_files(:);
+else
+    rels = local_packaged_walk(out_dir, '');
+end
 rels = sort(rels);
 files = {};
 checksums = {};
 canonical = '';
 for kk = 1:numel(rels)
     rel_here = rels{kk};
+    if ~ischar(rel_here) || isempty(rel_here) || rel_here(1) == '/' || ...
+            ~isempty(strfind(['/' rel_here '/'], '/../')) || ...
+            ~isempty(strfind(rel_here, char(92)))
+        error('pseudo_CT:BuildVerify', 'Unsafe packaged inventory path: %s.', rel_here);
+    end
     if ~isempty(strfind(rel_here, '.nfs'))
         continue;
     end
@@ -986,6 +1511,9 @@ for kk = 1:numel(names)
         rel_here = names{kk};
     else
         rel_here = [prefix '/' names{kk}]; %#ok<AGROW>
+    end
+    if strcmp(rel_here, 'compiled_before_build')
+        continue;
     end
     full_here = fullfile(root_here, strrep(rel_here, '/', filesep));
     if exist(full_here, 'dir') == 7

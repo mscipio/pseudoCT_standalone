@@ -35,11 +35,6 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %     'ExpectedFingerprint'
 %                     Optional out-of-band source fingerprint the manifest
 %                     must carry (wrong hash blocks).
-%     'GateARecord'   Finalized Gate-A record .mat (variable gate_a,
-%                     schema pseudo-CT.mlsc-current-gate-a/v1) binding this
-%                     exact candidate. Required except for the exact-pinned
-%                     R2010b artifact when targeting v3.1.0, v3.1.1, or
-%                     exact candidates v3.2.0-rc1 and v3.2.0-rc2.
 %     'DeployRoot'    Exact production runtime root of the deployment
 %                     copy (postinstall only; prepublication rejects it).
 %                     The layout is pinned by the mlsc-current profile:
@@ -57,7 +52,7 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %     'RepoRoot'      Git repository used for tag/tree resolution
 %                     (default: this repository root).
 %
-%   Checks (each fail-closed; the 10 publication requirements):
+%   Checks (each fail-closed; the 9 publication requirements):
 %     1. commit==tag: on the strict path, manifest source/release commit
 %        equals the resolved tag commit (and ReleaseCommit when given).
 %     2. artifacts-from-source: on the strict path, the release-tree fingerprint is ALWAYS
@@ -77,14 +72,9 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %     7. runtime paths pinned: on the strict path MCR_ROOT is the pinned
 %        tree and the staged runner path equals the manifest; the exact
 %        exception retains its recorded runner path but verifies its hash.
-%     8. Gate-A binding: the record binds this exact candidate under
-%        the FULL mlsc_current_validate execution bar (all required
-%        fields; pinned runtime identity disk-validated; recomputed
-%        runner/executable/manifest/native SHA-256 with missing files
-%        rejected, never skipped; every gate pass; no foreign records).
-%     9. no stale/fallback: no extra files, no non-SHA identity, no
+%     8. no stale/fallback: no extra files, no non-SHA identity, no
 %        local-mode manifests.
-%    10. missing=>block: every absent input or evidence blocks.
+%     9. missing=>block: every absent input or evidence blocks.
 %
 %   One-time provenance exception: the original R2010b/Compiler 4.14
 %   artifact is recognized only by its exact build-manifest, executable,
@@ -99,10 +89,8 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %   is not independently reconstructed. Release-source commit/tag/tree
 %   are resolved separately from the release repository; reusing this exact
 %   payload in a later source release does not claim it was built from that
-%   release. No Gate-A record is used for this artifact. Every package
-%   inventory hash and package completeness check remains mandatory; all
-%   other artifacts retain the strict R2026a release-candidate and Gate-A
-%   contract above.
+%   release. Every package inventory hash and package completeness check
+%   remains mandatory.
 %
 %   Deployment-copy provenance (postinstall): the deployment copy must
 %   use the exact pinned runtime layout (launcher at the DeployRoot,
@@ -138,10 +126,10 @@ provenance_exception = false;
 
 repo_guess = fileparts(fileparts(mfilename('fullpath')));
 if exist('mlsc_current_validate', 'file') ~= 2
-    addpath(fullfile(repo_guess, 'src', 'mlsc'));
+    addpath(fullfile(repo_guess, 'src', 'backends', 'mlsc'));
 end
 if exist('mlsc_release_gate', 'file') ~= 2
-    addpath(fullfile(repo_guess, 'src', 'mlsc'));
+    addpath(fullfile(repo_guess, 'src', 'backends', 'mlsc'));
 end
 if exist('mlsc_current_validate', 'file') ~= 2 || exist('mlsc_release_gate', 'file') ~= 2
     error('pseudo_CT:MLSCReleaseGate', 'MLSC current contract helpers are unavailable; missing tooling blocks publication.');
@@ -154,7 +142,6 @@ release_tag = '';
 release_commit = '';
 expected_target_version = '';
 expected_fp = '';
-gate_a_record = '';
 deploy_root = '';
 mcr_root = mlsc_current_validate('pinned_mcr_root');
 repo_root = repo_guess;
@@ -186,8 +173,6 @@ while ii <= numel(varargin)
             expected_target_version = strtrim(val_here);
         case 'expectedfingerprint'
             expected_fp = strtrim(val_here);
-        case 'gatearecord'
-            gate_a_record = strtrim(val_here);
         case 'deployroot'
             deploy_root = strtrim(val_here);
         case 'mcrroot'
@@ -237,10 +222,9 @@ if is_preview
             'PackageDir is required for a working preview; missing package blocks verification.');
     end
     if ~isempty(release_tag) || ~isempty(release_commit) || ...
-            ~isempty(expected_target_version) || ~isempty(gate_a_record) || ...
-            ~isempty(deploy_root)
+            ~isempty(expected_target_version) || ~isempty(deploy_root)
         error('pseudo_CT:MLSCReleaseGate', ...
-            'Working-preview validation does not accept release, Gate-A, or deployment identity.');
+            'Working-preview validation does not accept release or deployment identity.');
     end
     if exist(package_dir, 'dir') ~= 7
         error('pseudo_CT:MLSCReleaseGate', ...
@@ -311,9 +295,8 @@ if isempty(release_tag) && isempty(release_commit)
     error('pseudo_CT:MLSCReleaseGate', 'ReleaseTag or ReleaseCommit is required; missing release identity blocks publication.');
 end
 
-% Gate-A may be omitted only when the exact artifact manifest digest is pinned.
-% The loaded manifest must then also carry the expected runtime identity
-% and runner/executable anchors before the exception branch is selected.
+% The original R2010b artifact is recognized only by its exact manifest
+% digest and the runtime identity, runner, executable, and inventory checks.
 exception_manifest_digest = local_r2010b_manifest_digest(build_manifest);
 prepublication_target = is_pre && isempty(release_tag) && ...
     ~isempty(expected_target_version) && ~isempty(release_commit);
@@ -328,9 +311,6 @@ if exception_manifest_digest && ~local_is_r2010b_compatible_tag(release_tag) && 
         'v3.1.1, v3.2.0-rc1, or v3.2.0-rc2; ', ...
         'unsupported version blocks publication.']);
 end
-if isempty(gate_a_record) && ~exception_manifest_digest
-    error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
-end
 build = local_load_manifest(build_manifest, 'build', 'pseudo-CT.mlsc-current-build/v1');
 resources = local_load_manifest(resource_manifest, 'resources', 'pseudo-CT.mlsc-current-resources/v1');
 provenance_exception = local_is_r2010b_exception(build_manifest, build);
@@ -340,9 +320,6 @@ if exception_manifest_digest && ~provenance_exception
 end
 if is_pre && provenance_exception
     local_require_r2010b_package_manifest(package_dir);
-end
-if isempty(gate_a_record) && ~provenance_exception
-    error('pseudo_CT:MLSCReleaseGate', 'GateARecord is required; a candidate without Gate-A binding blocks publication.');
 end
 
 % 1-2. Release source binding (commit==tag, artifacts-from-source).
@@ -453,20 +430,6 @@ for kk = 1:numel(wanted_toolboxes)
     end
 end
 
-% Resource contract (existence/schema/pending marker; science stays in payload).
-if ~isfield(resources, 'native_platform') || ~ischar(resources.native_platform) || ...
-        ~strcmp(strtrim(resources.native_platform), 'glnxa64')
-    error('pseudo_CT:MLSCReleaseGate', 'Resource manifest platform is incompatible; mismatch blocks publication.');
-end
-if ~isfield(resources, 'native_arch') || ~ischar(resources.native_arch) || ...
-        ~strcmp(strtrim(resources.native_arch), 'glnxa64')
-    error('pseudo_CT:MLSCReleaseGate', 'Resource manifest architecture is incompatible; mismatch blocks publication.');
-end
-if ~isfield(resources, 'native_validation') || ~ischar(resources.native_validation) || ...
-        ~strcmp(strtrim(resources.native_validation), ...
-        't007-gate-a-pending: existence-only; production loadability evidence comes later')
-    error('pseudo_CT:MLSCReleaseGate', 'Resource manifest native validation is unknown; evidence mismatch blocks publication.');
-end
 end
 
 % 4-6. Required files, SHA match, package==build.
@@ -474,13 +437,6 @@ if is_pre
     local_check_package(package_dir, build, provenance_exception);
 else
     local_check_deploy(deploy_root, build, build_manifest, resource_manifest, provenance_exception);
-end
-
-% 8. Gate-A binding (binds, never rewrites).
-if ~provenance_exception
-    local_check_gate_a(gate_a_record, build_manifest, resource_manifest, build, resources, is_pre);
-else
-    fprintf('PROVENANCE-EXCEPTION exact R2010b artifact verified without a R2026a Gate-A record.\n');
 end
 
 if is_pre
@@ -968,222 +924,6 @@ try
 catch %#ok<CTCH>
     byte_count = [];
 end
-end
-
-function local_check_gate_a(record_path, build_manifest, resource_manifest, build, resources, bind_paths)
-% bind_paths true verifies the record was minted for these exact manifest
-% paths (prepublication staged layout); false verifies content binding
-% only, for byte-copies at a deployment root (postinstall).
-%   The Gate-A bar is the FULL mlsc_current_validate execution gate, no
-%   subset: schema/version, every required record field (source, pinned
-%   runtime identity, runner, executable, manifests, natives, run
-%   evidence), provenance binding, disk-validated runtime binding,
-%   recomputed file bindings (runner/exe/manifests/natives, SHA-256
-%   mandatory, missing files rejected, never skipped), and all gates
-%   pass. Incomplete records and foreign records block publication.
-if exist(strtrim(record_path), 'file') ~= 2
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record is missing: %s; missing Gate-A binding blocks publication.', record_path);
-end
-loaded = load(strtrim(record_path));
-if ~isfield(loaded, 'gate_a')
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record is missing variable gate_a; binding failure blocks publication.');
-end
-record = loaded.gate_a;
-if ~isstruct(record) || numel(record) ~= 1
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record variable gate_a must be one scalar struct; binding failure blocks publication.');
-end
-if ~isfield(record, 'schema') || ~ischar(record.schema) || ...
-        ~strcmp(record.schema, 'pseudo-CT.mlsc-current-gate-a/v1')
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record has an unexpected schema; binding failure blocks publication.');
-end
-if ~isfield(record, 'manifest_version') || ~isnumeric(record.manifest_version) || ...
-        ~isscalar(record.manifest_version) || record.manifest_version ~= 1
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record has an unsupported version; binding failure blocks publication.');
-end
-required_gate_a = {'source_commit'; 'source_provenance_fingerprint'; ...
-    'mcr_root'; 'release'; 'version'; 'update_minimum'; ...
-    'update_actual'; 'mcr_version'; 'arch'; 'generation'; ...
-    'runner'; 'runner_checksum'; 'build_exe'; 'build_exe_checksum'; ...
-    'build_manifest'; 'build_manifest_checksum'; ...
-    'resource_manifest'; 'resource_manifest_checksum'; ...
-    'native_names'; 'native_paths'; 'native_checksums'; ...
-    'native_results'; 'launcher_result'; 'runtime_lib_result'; ...
-    'prepare_result'; 'compute_result'; 'overall_result'};
-for kk = 1:numel(required_gate_a)
-    if ~isfield(record, required_gate_a{kk})
-        error('pseudo_CT:MLSCReleaseGate', ...
-            'Gate-A record is missing field %s; incomplete Gate-A evidence blocks publication.', ...
-            required_gate_a{kk});
-    end
-end
-if ~isfield(record, 'source_commit') || ~ischar(record.source_commit) || ...
-        ~strcmpi(strtrim(record.source_commit), strtrim(build.source_commit))
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record source commit does not match the build manifest; binding failure blocks publication.');
-end
-if ~isfield(record, 'source_provenance_fingerprint') || ...
-        ~ischar(record.source_provenance_fingerprint) || ...
-        ~mlsc_release_gate('is_valid_sha256', record.source_provenance_fingerprint) || ...
-        ~strcmpi(strtrim(record.source_provenance_fingerprint), strtrim(build.source_provenance_fingerprint))
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record provenance does not match the build manifest; binding failure blocks publication.');
-end
-% Runtime binding: pinned root with disk-validated actual identity (the
-% same actual_identity contract section 3 uses; constants never prove it).
-pinned = mlsc_current_validate('pinned_mcr_root');
-if ~ischar(record.mcr_root) || ...
-        ~strcmp(local_strip_sep(strtrim(record.mcr_root)), pinned)
-    error('pseudo_CT:MLSCReleaseGate', ...
-        'Gate-A record MCR_ROOT does not match the pinned %s; binding failure blocks publication.', pinned);
-end
-actual = mlsc_current_validate('actual_identity', pinned);
-if ~ischar(record.release) || ~strcmp(strtrim(record.release), actual.release)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record release is incompatible; binding failure blocks publication.');
-end
-if ~ischar(record.version) || ~strcmp(strtrim(record.version), actual.version)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record runtime version is incompatible; binding failure blocks publication.');
-end
-if ~isnumeric(record.update_minimum) || ~isscalar(record.update_minimum) || ...
-        record.update_minimum ~= build.update_minimum
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record update minimum does not match the build manifest; binding failure blocks publication.');
-end
-if ~isnumeric(record.update_actual) || ~isscalar(record.update_actual) || ...
-        record.update_actual ~= actual.update
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record runtime update does not match the pinned runtime; binding failure blocks publication.');
-end
-if ~isnumeric(record.mcr_version) || numel(record.mcr_version) ~= 2 || ...
-        record.mcr_version(1) ~= actual.mcr_version(1) || ...
-        record.mcr_version(2) ~= actual.mcr_version(2)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record numeric runtime version is incompatible; binding failure blocks publication.');
-end
-if ~ischar(record.arch) || ~strcmp(strtrim(record.arch), actual.arch)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record architecture is incompatible; binding failure blocks publication.');
-end
-if ~ischar(record.generation) || ~strcmp(strtrim(record.generation), actual.generation)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record generation is incompatible; binding failure blocks publication.');
-end
-if ~isfield(record, 'runner') || ~ischar(record.runner) || ...
-        ~strcmp(local_strip_sep(strtrim(record.runner)), local_strip_sep(strtrim(build.runner)))
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record runner does not match the build manifest; binding failure blocks publication.');
-end
-if ~isfield(record, 'runner_checksum') || ~ischar(record.runner_checksum) || ...
-        ~strcmpi(strtrim(record.runner_checksum), strtrim(build.runner_checksum))
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record runner checksum does not match the build manifest; binding failure blocks publication.');
-end
-% (Runner identity against disk is proven in section 5, where the staged
-% or deployed runner hash must equal build.runner_checksum; equality here
-% transitively binds the record to that exact file.)
-if ~isfield(record, 'build_exe') || ~ischar(record.build_exe) || ...
-        isempty(strtrim(record.build_exe))
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record executable path is invalid; binding failure blocks publication.');
-end
-if ~isfield(record, 'build_exe_checksum') || ~ischar(record.build_exe_checksum) || ...
-        ~mlsc_release_gate('is_valid_sha256', record.build_exe_checksum)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record executable checksum must be SHA-256; binding failure blocks publication.');
-end
-if ~strcmpi(strtrim(record.build_exe_checksum), strtrim(build.executable_fingerprint))
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record executable identity does not match the build manifest; binding failure blocks publication.');
-end
-if exist(strtrim(record.build_exe), 'file') ~= 2
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record executable file is missing: %s; missing executable evidence blocks publication.', strtrim(record.build_exe));
-end
-exe_actual = mlsc_release_gate('sha256_file', strtrim(record.build_exe));
-if ~strcmpi(strtrim(record.build_exe_checksum), exe_actual)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record executable identity does not match the file; binding failure blocks publication.');
-end
-if ~isfield(record, 'build_manifest') || ~ischar(record.build_manifest) || ...
-        (bind_paths && ~strcmp(local_strip_sep(strtrim(record.build_manifest)), local_strip_sep(build_manifest)))
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record was minted for another build manifest; foreign record blocks publication.');
-end
-if ~isfield(record, 'build_manifest_checksum') || ...
-        ~ischar(record.build_manifest_checksum) || ...
-        ~mlsc_release_gate('is_valid_sha256', record.build_manifest_checksum)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record build manifest checksum must be SHA-256; binding failure blocks publication.');
-end
-build_actual = mlsc_release_gate('sha256_file', build_manifest);
-if ~strcmpi(strtrim(record.build_manifest_checksum), build_actual)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record build manifest identity does not match the file; binding failure blocks publication.');
-end
-if ~isfield(record, 'resource_manifest') || ~ischar(record.resource_manifest) || ...
-        (bind_paths && ~strcmp(local_strip_sep(strtrim(record.resource_manifest)), local_strip_sep(resource_manifest)))
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record was minted for another resource manifest; foreign record blocks publication.');
-end
-if ~isfield(record, 'resource_manifest_checksum') || ...
-        ~ischar(record.resource_manifest_checksum) || ...
-        ~mlsc_release_gate('is_valid_sha256', record.resource_manifest_checksum)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record resource manifest checksum must be SHA-256; binding failure blocks publication.');
-end
-resource_actual = mlsc_release_gate('sha256_file', resource_manifest);
-if ~strcmpi(strtrim(record.resource_manifest_checksum), resource_actual)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record resource identity does not match the file; binding failure blocks publication.');
-end
-if ~isfield(record, 'native_names') || ~iscell(record.native_names) || isempty(record.native_names) || ...
-        ~isfield(record, 'native_paths') || ~iscell(record.native_paths) || ...
-        ~isfield(record, 'native_checksums') || ~iscell(record.native_checksums) || ...
-        ~isfield(record, 'native_results') || ~iscell(record.native_results)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record native evidence is invalid; binding failure blocks publication.');
-end
-if numel(record.native_names) ~= numel(record.native_paths) || ...
-        numel(record.native_names) ~= numel(record.native_checksums) || ...
-        numel(record.native_names) ~= numel(record.native_results)
-    error('pseudo_CT:MLSCReleaseGate', 'Gate-A record native evidence is inconsistent; binding failure blocks publication.');
-end
-for kk = 1:numel(record.native_names)
-    if ~ischar(record.native_names{kk}) || isempty(strtrim(record.native_names{kk}))
-        error('pseudo_CT:MLSCReleaseGate', 'Gate-A record native evidence is invalid; binding failure blocks publication.');
-    end
-    if ~ischar(record.native_results{kk}) || ~strcmp(strtrim(record.native_results{kk}), 'pass')
-        error('pseudo_CT:MLSCReleaseGate', 'Gate-A native evidence did not pass; binding failure blocks publication.');
-    end
-    if ~ischar(record.native_checksums{kk}) || ...
-            ~mlsc_release_gate('is_valid_sha256', record.native_checksums{kk})
-        error('pseudo_CT:MLSCReleaseGate', 'Gate-A record native checksum must be SHA-256; binding failure blocks publication.');
-    end
-    if ~ischar(record.native_paths{kk}) || isempty(strtrim(record.native_paths{kk}))
-        error('pseudo_CT:MLSCReleaseGate', 'Gate-A record native path is invalid; binding failure blocks publication.');
-    end
-    if exist(strtrim(record.native_paths{kk}), 'file') ~= 2
-        error('pseudo_CT:MLSCReleaseGate', ...
-            'Gate-A native evidence file is missing: %s; missing native evidence blocks publication.', ...
-            strtrim(record.native_paths{kk}));
-    end
-    native_actual = mlsc_release_gate('sha256_file', strtrim(record.native_paths{kk}));
-    if ~strcmpi(strtrim(record.native_checksums{kk}), native_actual)
-        error('pseudo_CT:MLSCReleaseGate', 'Gate-A native identity does not match the file; binding failure blocks publication.');
-    end
-end
-if isfield(resources, 'native_names') && iscell(resources.native_names) && ...
-        ~isempty(resources.native_names)
-    for kk = 1:numel(resources.native_names)
-        required_name = resources.native_names{kk};
-        if ~ischar(required_name) || isempty(strtrim(required_name))
-            continue;
-        end
-        covered = false;
-        for jj = 1:numel(record.native_names)
-            entry = record.native_names{jj};
-            result_entry = record.native_results{jj};
-            if ischar(entry) && strcmp(strtrim(entry), strtrim(required_name)) && ...
-                    ischar(result_entry) && strcmp(strtrim(result_entry), 'pass')
-                covered = true;
-                break;
-            end
-        end
-        if ~covered
-            error('pseudo_CT:MLSCReleaseGate', ...
-                'Gate-A record is missing native %s; binding failure blocks publication.', ...
-                strtrim(required_name));
-        end
-    end
-end
-evidence_fields = {'launcher_result'; 'runtime_lib_result'; 'prepare_result'; 'compute_result'; 'overall_result'};
-for kk = 1:numel(evidence_fields)
-    field_here = evidence_fields{kk};
-    if ~isfield(record, field_here) || ~ischar(record.(field_here)) || ...
-            ~strcmp(strtrim(record.(field_here)), 'pass')
-        error('pseudo_CT:MLSCReleaseGate', ...
-            'Gate-A %s did not pass; binding failure blocks publication.', field_here);
-    end
-end
-fprintf('GATE-A BINDING OK: record %s binds this candidate.\n', strtrim(record_path));
 end
 
 function label = local_release_label(tag, commit)

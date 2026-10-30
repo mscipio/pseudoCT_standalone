@@ -4,7 +4,7 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
-source="$repo_root/compiled"
+source="$repo_root/compiled/current"
 output=${1:-"$repo_root/scratch/mlsc_current_package"}
 
 case "$output" in

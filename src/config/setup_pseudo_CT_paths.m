@@ -1,20 +1,57 @@
-function setup_pseudo_CT_paths(root_dir, config)
-%SETUP_PSEUDO_CT_PATHS Check resources and add pseudo-CT dependencies.
+function setup_pseudo_CT_paths(root_dir, config, purpose, has_inputs, needs_dicom)
+%SETUP_PSEUDO_CT_PATHS Add orchestration runtime paths and needed resources.
+%   The current scientific implementation is compiled and is deliberately
+%   not added to the MATLAB source path. Converter resources are checked/added
+%   for runs or when validation includes a resolved input.
 
 if nargin < 2 || ~isstruct(config)
     error('pseudo_CT:InvalidProfile', 'A loaded profile config is required.');
 end
-if exist(config.spm_root, 'dir') ~= 7
-    error('pseudo_CT:SPMRootMissing', ...
-        'Configured SPM root not found: %s', config.spm_root);
+if nargin < 3 || isempty(purpose)
+    purpose = 'run';
 end
-if exist(config.atlas_root, 'dir') ~= 7
+if nargin < 4 || isempty(has_inputs)
+    has_inputs = true;
+end
+if nargin < 5 || isempty(needs_dicom)
+    needs_dicom = true;
+end
+if ~ischar(purpose) || ~any(strcmp(purpose, ...
+        {'run'; 'validate'; 'preflight'})) || ...
+        ~islogical(has_inputs) || ~isscalar(has_inputs) || ...
+        ~islogical(needs_dicom) || ~isscalar(needs_dicom)
+    error('pseudo_CT:InvalidSetupPurpose', ...
+        'Runtime setup purpose and input requirements are invalid.');
+end
+
+needs_converter = strcmp(purpose, 'run') || has_inputs;
+% Any resolved input can be submitted through the same run setup, which
+% conservatively requires SPM even when the input itself is NIfTI.
+needs_spm = strcmp(purpose, 'run') || has_inputs || needs_dicom;
+needs_science_resources = strcmp(purpose, 'run') || has_inputs;
+if needs_science_resources && exist(config.atlas_root, 'dir') ~= 7
     error('pseudo_CT:AtlasRootMissing', ...
         'Configured atlas root not found: %s', config.atlas_root);
 end
-if exist(config.d2n_root, 'dir') ~= 7
-    error('pseudo_CT:D2NRootMissing', ...
-        'Configured dicom2nifti root not found: %s', config.d2n_root);
+if needs_converter
+    if exist(config.d2n_root, 'dir') ~= 7
+        error('pseudo_CT:D2NRootMissing', ...
+            'Configured dicom2nifti root not found: %s', config.d2n_root);
+    end
+    if exist(fullfile(config.d2n_root, 'dcm2nii.m'), 'file') ~= 2 || ...
+            exist(fullfile(config.d2n_root, '+dicom2nifti', '+api', 'run.m'), 'file') ~= 2
+        error('pseudo_CT:D2NEntrypointMissing', ...
+            'Pinned dicom2nifti 1.2.5 entrypoints are missing under: %s', ...
+            config.d2n_root);
+    end
+end
+if needs_spm && exist(config.spm_root, 'dir') ~= 7
+    error('pseudo_CT:SPMRootMissing', ...
+        'Configured SPM root not found: %s', config.spm_root);
+end
+if isfield(config, 'implementation') && ...
+        ischar(config.implementation) && strcmp(config.implementation, 'legacy-v2')
+    local_validate_legacy_artifacts(config);
 end
 if strcmp(config.mode, 'launchpad')
     launchpad_files = {config.launchpad.runner; config.launchpad.defaults_mat};
@@ -44,10 +81,18 @@ elseif strcmp(config.mode, 'mlsc')
     end
     if is_current_setup
         local_validate_current_setup(config);
-        mlsc_files = {config.mlsc.shell; config.mlsc.freesurfer_env};
+        if strcmp(purpose, 'run')
+            mlsc_files = {config.mlsc.shell; config.mlsc.freesurfer_env};
+        else
+            mlsc_files = {};
+        end
     else
-    mlsc_files = {config.mlsc.runner; config.mlsc.defaults_mat; ...
-        config.mlsc.shell; config.mlsc.freesurfer_env};
+        if strcmp(purpose, 'run')
+            mlsc_files = {config.mlsc.runner; config.mlsc.defaults_mat; ...
+                config.mlsc.shell; config.mlsc.freesurfer_env};
+        else
+            mlsc_files = {};
+        end
     end
     for ii = 1:length(mlsc_files)
         if exist(mlsc_files{ii}, 'file') ~= 2
@@ -56,83 +101,113 @@ elseif strcmp(config.mode, 'mlsc')
         end
     end
     if is_current_setup
-        % Current artifact-file existence stays with preflight/validator
-        % (fail-closed pending Gate A); setup keeps the interpreted
-        % submitting-host dependencies below.
-    else
-    mlsc_dirs = {config.mlsc.mcr_root; config.mlsc.batch_templates};
-    for ii = 1:length(mlsc_dirs)
-        if exist(mlsc_dirs{ii}, 'dir') ~= 7
-            error('pseudo_CT:MissingResource', ...
-                'Configured MLSC directory not found: %s', mlsc_dirs{ii});
+        % Current artifact-file existence and integrity are checked by
+        % preflight/validator; setup checks interpreted host dependencies.
+    elseif strcmp(purpose, 'run')
+        mlsc_dirs = {config.mlsc.mcr_root; config.mlsc.batch_templates};
+        for ii = 1:length(mlsc_dirs)
+            if exist(mlsc_dirs{ii}, 'dir') ~= 7
+                error('pseudo_CT:MissingResource', ...
+                    'Configured MLSC directory not found: %s', mlsc_dirs{ii});
+            end
         end
     end
-    end
 else
-    % Local mode: validate the external aliasing-correction standalone.
-    if exist(config.aliasing_root, 'dir') ~= 7
-        error('pseudo_CT:AliasingRootMissing', ...
-            'Configured aliasing root not found: %s', config.aliasing_root);
-    end
+    % Local mode's external dependencies were validated above.
 end
 
-vers_path = fullfile(root_dir, 'vers');
+overrides_path = fullfile(root_dir, 'src', 'science', 'overrides');
 overrides = {'spm_vol_nifti.m'; 'spm_preproc_write8.m'; ...
     'spm_dicom_convert.m'};
-for ii = 1:length(overrides)
-    if exist(fullfile(vers_path, overrides{ii}), 'file') ~= 2
-        error('pseudo_CT:MissingResource', ...
-            'Required SPM override not found: %s', ...
-            fullfile(vers_path, overrides{ii}));
+if needs_spm
+    for ii = 1:length(overrides)
+        if exist(fullfile(overrides_path, overrides{ii}), 'file') ~= 2
+            error('pseudo_CT:MissingResource', ...
+                'Required SPM override not found: %s', ...
+                fullfile(overrides_path, overrides{ii}));
+        end
     end
 end
 
 addpath(root_dir, '-begin');
-if exist(fullfile(root_dir, 'src'), 'dir') == 7
-    addpath(genpath(fullfile(root_dir, 'src')), '-begin');
+runtime_dirs = {'api'; 'cli'; 'gui'; 'orchestration'; 'backends'; ...
+    'config'; 'io'; 'qc'};
+for ii = 1:length(runtime_dirs)
+    runtime_path = fullfile(root_dir, 'src', runtime_dirs{ii});
+    if exist(runtime_path, 'dir') == 7
+        addpath(genpath(runtime_path), '-begin');
+    end
 end
 
-addpath(genpath(config.spm_root), '-begin');
-% Ensure main SPM matlabbatch/ is first on path - prevents WFU toolbox
-% (spm8-dan/toolbox/.../matlabbatch/) from shadowing cfg_getfile and
-% other core SPM functions with incompatible versions.
-addpath(fullfile(config.spm_root, 'matlabbatch'), '-begin');
-
-if exist(fullfile(root_dir, 'imgaussian'), 'dir') == 7
-    addpath(genpath(fullfile(root_dir, 'imgaussian')), '-begin');
+if needs_spm
+    addpath(genpath(config.spm_root), '-begin');
+    % Keep main SPM matlabbatch/ ahead of toolbox copies.
+    addpath(fullfile(config.spm_root, 'matlabbatch'), '-begin');
+    % Preserve the historical pre-converter override selection. The pinned
+    % DICOM API adds the configured SPM root at path-begin during conversion,
+    % so its SPM8 spm_dicom_convert remains the effective converter function.
+    addpath(overrides_path, '-begin');
 end
-if exist(fullfile(root_dir, 'ssh2_v2_m1_r5'), 'dir') == 7
-    addpath(genpath(fullfile(root_dir, 'ssh2_v2_m1_r5')), '-begin');
-end
-% Standalone DICOM-to-NIfTI converter.
-if exist(config.d2n_root, 'dir') == 7
+if needs_converter
     addpath(config.d2n_root, '-begin');
 end
-% Standalone aliasing correction (local mode only).
-if strcmp(config.mode, 'local')
-    addpath(config.aliasing_root, '-begin');
-    clear correct_aliasing;
+if any(strcmp(config.mode, {'mlsc'; 'launchpad'})) && ...
+        ~strcmp(purpose, 'validate')
+    ssh2_root = fullfile(root_dir, 'external', 'ssh2_v2_m1_r5');
+    if exist(ssh2_root, 'dir') ~= 7
+        error('pseudo_CT:SSH2RootMissing', ...
+            'Bundled SSH2 client source is missing: %s', ssh2_root);
+    end
+    addpath(genpath(ssh2_root), '-begin');
 end
-addpath(vers_path, '-begin');
-clear spm_vol_nifti spm_preproc_write8 spm_dicom_convert
+if needs_spm
+    clear spm_vol_nifti spm_preproc_write8 spm_dicom_convert
+end
 rehash;
 
-for ii = 1:length(overrides)
-    actual = which(overrides{ii}(1:end-2));
-    expected_path = fullfile(vers_path, overrides{ii});
-    if ~strcmp(actual, expected_path)
-        error('VERS:WrongOrder', ...
-            'Override %s is not first on the MATLAB path: %s', ...
-            overrides{ii}, actual);
+if needs_spm
+    for ii = 1:length(overrides)
+        actual = which(overrides{ii}(1:end-2));
+        expected_path = fullfile(overrides_path, overrides{ii});
+        if ~strcmp(actual, expected_path)
+            error('pseudo_CT:OverrideWrongOrder', ...
+                'Override %s is not first on the MATLAB path: %s', ...
+                overrides{ii}, actual);
+        end
+    end
+end
+end
+
+function local_validate_legacy_artifacts(config)
+%LOCAL_VALIDATE_LEGACY_ARTIFACTS Never fall back to a site-installed runner.
+if ~isfield(config, 'legacy') || ~isstruct(config.legacy) || ...
+        numel(config.legacy) ~= 1
+    error('pseudo_CT:LegacyDependencyMissing', ...
+        'The legacy profile has no local compiled/legacy-v2.0.0 contract.');
+end
+required_files = {config.legacy.runner; config.legacy.defaults_mat};
+for ii = 1:numel(required_files)
+    if exist(required_files{ii}, 'file') ~= 2
+        error('pseudo_CT:LegacyDependencyMissing', ...
+            'Required local legacy-v2.0.0 file is missing: %s', ...
+            required_files{ii});
+    end
+end
+required_dirs = {config.legacy.mcr_root; config.legacy.batch_templates};
+for ii = 1:numel(required_dirs)
+    if exist(required_dirs{ii}, 'dir') ~= 7
+        error('pseudo_CT:LegacyDependencyMissing', ...
+            'Required legacy-v2.0.0 directory is missing: %s', ...
+            required_dirs{ii});
     end
 end
 end
 
 function local_validate_current_setup(config)
-%LOCAL_VALIDATE_CURRENT_SETUP Fail-closed current strings for setup (T005).
+%LOCAL_VALIDATE_CURRENT_SETUP Validate current artifact strings for setup.
 %   Requires the neutral config.current artifact strings and rejects any
-%   legacy block/fields. Artifact-file existence is NOT checked here;
-%   preflight/validator own that gate pending Gate A. R2010b only.
+%   legacy block/fields. Artifact-file existence is checked by preflight and
+%   the execution validator. R2010b only.
 if ~isfield(config, 'current') || ~isstruct(config.current) || ...
         numel(config.current) ~= 1
     error('pseudo_CT:InvalidProfile', ...

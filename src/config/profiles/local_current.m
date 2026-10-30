@@ -1,19 +1,21 @@
 function config = local_current()
-%LOCAL_CURRENT Local MATLAB profile using the current installed release.
+%LOCAL_CURRENT Local profile using the shared compiled current payload.
+
+dependency_paths = pseudo_CT_dependency_paths();
 
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'local';
-% Implementation lineage: 'current' is source MATLAB, 'legacy-v2' is the
-% compiled Aether backend.
+% Implementation lineage: 'current' selects the compiled current payload;
+% 'legacy-v2' is the compiled Aether backend.
 config.implementation = 'current';
 % SPM installation used by this profile.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
+config.spm_root = dependency_paths.spm_root;
 % Atlas images and SPM batch templates used by the pipeline.
-config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
+config.atlas_root = dependency_paths.atlas_root;
 % Standalone DICOM-to-NIfTI converter (sibling repository).
-config.d2n_root = '/usr/pubsw/packages/mrpet/standalone_apps/dcm2nii/dicom2nifti_standalone-latest';
+config.d2n_root = dependency_paths.d2n_root;
 % Standalone nose/back aliasing correction (external standalone app).
-config.aliasing_root = '/usr/pubsw/packages/mrpet/standalone_apps/correct_aliasing/correct_aliasing_standalone-latest';
+config.aliasing_root = dependency_paths.aliasing_root;
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'Yes';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
@@ -45,7 +47,7 @@ config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'Local MATLAB - This Computer';
 config.presentation.description = ...
-    'Run the pseudoCT pipeline on this computer using a chosen MATLAB version. Results may vary.';
+    'Run the pseudoCT workflow locally using the shared compiled current-science payload.';
 config.presentation.group = 'recommended';
 config.presentation.recommended = false;
 config.presentation.order = 10;
@@ -60,6 +62,20 @@ config.normalization.host = '127.0.0.1';
 config.normalization.cluster = 'No';
 % Remote normalization scratch root; empty for localhost.
 config.normalization.host_folder = '';
+
+% Current compiled prepare/compute artifact contract shared with MLSC.
+% Resolve every artifact from this profile's install root; missing artifacts
+% and integrity mismatches fail closed before local processing.
+artifact_dir_here = dependency_paths.current_root;
+config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
+    'run_mlsc_current_payload.sh');
+config.current.mcr_root = '/usr/pubsw/common/matlab/7.11';
+config.current.build_manifest = fullfile(artifact_dir_here, ...
+    'mlsc_current_build.mat');
+config.current.resource_manifest = fullfile(artifact_dir_here, ...
+    'mlsc_current_resources.mat');
+config.current.required_outputs = {'att_map.nii'; ...
+    'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
 
 % Launchpad SSH host; empty for local use.
 config.launchpad.host = '';

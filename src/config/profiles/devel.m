@@ -1,19 +1,21 @@
 function config = devel()
 %DEVEL Local MATLAB profile using the current installed release.
 
+dependency_paths = pseudo_CT_dependency_paths();
+
 % Select the local processing path or the remote Launchpad path.
 config.mode = 'local';
-% Implementation lineage: 'current' is source MATLAB, 'legacy-v2' is the
-% compiled Aether backend.
+% Implementation lineage: 'current' selects the compiled current payload;
+% 'legacy-v2' selects the historical compiled Aether backend.
 config.implementation = 'current';
 % SPM installation used by this profile.
-config.spm_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-r6313';
+config.spm_root = dependency_paths.spm_root;
 % Atlas images and SPM batch templates used by the pipeline.
-config.atlas_root = '/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/Batch_atlas';
+config.atlas_root = dependency_paths.atlas_root;
 % Standalone DICOM-to-NIfTI converter (sibling repository).
-config.d2n_root = '/autofs/cluster/catanagp/users/mscipioni/Biograph_mMR/piano_mMR_devel/dicom2nifti_standalone';
+config.d2n_root = dependency_paths.d2n_root;
 % Standalone nose/back aliasing correction (external standalone app).
-config.aliasing_root = '/autofs/cluster/catanagp/users/mscipioni/Biograph_mMR/piano_mMR_devel/correct_aliasing_standalone';
+config.aliasing_root = dependency_paths.aliasing_root;
 % Recenter the MPRAGE before FreeSurfer normalization: 'Yes' or 'No'.
 config.recenter_before_normalization = 'Yes';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.

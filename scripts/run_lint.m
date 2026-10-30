@@ -4,7 +4,7 @@ root_dir = fileparts(fileparts(mfilename('fullpath')));
 
 source_dirs = {
     fullfile(root_dir, 'src')
-    fullfile(root_dir, 'vers')
+    fullfile(root_dir, 'src', 'science', 'overrides')
 };
 
 matlab_files = {};

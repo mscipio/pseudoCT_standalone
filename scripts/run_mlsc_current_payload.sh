@@ -5,8 +5,8 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
-artifact="$repo_root/compiled/payload_build"
-manifest="$repo_root/compiled/mlsc_current_build.txt"
+artifact="$repo_root/compiled/current/payload_build"
+manifest="$repo_root/compiled/current/mlsc_current_build.txt"
 
 if [ ! -x "$artifact/mlsc_current_payload" ] || [ ! -x "$artifact/run_mlsc_current_payload.sh" ] || [ ! -r "$manifest" ]; then
     echo "Current compiled MLSC artifact is missing or incomplete: $artifact" >&2
