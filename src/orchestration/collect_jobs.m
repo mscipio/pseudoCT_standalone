@@ -1,4 +1,4 @@
-function [jobs, stats] = collect_jobs(config, varargin)
+function [jobs, stats, cleanup_on_success, gui_handoff] = collect_jobs(config, varargin)
 %COLLECT_JOBS Collect pseudo-CT jobs from GUI, batch mode, or subject list.
 %   JOBS = COLLECT_JOBS(MANIFEST) opens the existing single-subject GUI
 %   (LOAD_MR_4_AC) and returns a job struct for one subject.
@@ -32,6 +32,8 @@ function [jobs, stats] = collect_jobs(config, varargin)
 jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {}, ...
     'recenter_before_normalization', {}, 'io_policy', {});
 stats = struct('requested', 0, 'skipped', 0, 'skipped_subjects', {{}});
+cleanup_on_success = get_config_default(config, 'cleanup_on_success', true);
+gui_handoff = struct('credentials', struct(), 'group_account', '');
 
 allow_deployed_explicit = false;
 try
@@ -82,7 +84,8 @@ end
 % are never swallowed: any throw from load_mr_4_AC propagates with its
 % identifier and diagnostics, never silent empty.
 [mprage_fn, ute_fn, umap_fn, correct_aliasing, ...
-    recenter_before_normalization] = load_mr_4_AC(config.io_policy.gui, config);
+    recenter_before_normalization, cleanup_on_success, gui_handoff] = ...
+    load_mr_4_AC(config.io_policy.gui, config);
 if isnumeric(mprage_fn) && isscalar(mprage_fn) && mprage_fn == 0
     return;
 end
@@ -101,6 +104,11 @@ end
 correct_aliasing = validate_aliasing(correct_aliasing);
 recenter_before_normalization = validate_recentering( ...
     recenter_before_normalization);
+cleanup_on_success = validate_cleanup(cleanup_on_success);
+if ~isstruct(gui_handoff) || numel(gui_handoff) ~= 1
+    error('pseudo_CT:InvalidGuiHandoff', ...
+        'The input GUI returned an invalid credential handoff.');
+end
 
 jobs(1).mprage_fn = mprage_fn;
 jobs(1).umap_fn = umap_fn;
@@ -138,6 +146,15 @@ elseif ~(isnumeric(value) || islogical(value)) || ~isscalar(value) || ...
 else
     value = logical(value);
 end
+end
+
+function value = validate_cleanup(value)
+if ~(isnumeric(value) || islogical(value)) || ~isscalar(value) || ...
+        ~isreal(value) || ~ismember(double(value), [0 1])
+    error('pseudo_CT:InvalidCleanup', ...
+        'Cleanup after success must be a scalar numeric or logical 0 or 1.');
+end
+value = logical(value);
 end
 
 function value = get_config_default(config, field_name, fallback)

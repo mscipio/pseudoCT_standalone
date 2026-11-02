@@ -71,6 +71,7 @@ end
 
 local_validate_flag(request, 'correct_aliasing');
 local_validate_flag(request, 'recenter_before_normalization');
+local_validate_flag(request, 'cleanup_on_success');
 
 subjects = local_subjects(request);
 needs_dicom = false;
@@ -92,9 +93,11 @@ catch %#ok<CTCH>
 end
 if is_current_mlsc
     mlsc_current_validate('validate_for_execution', config);
-elseif strcmp(profile_name, 'local-current')
-    % Local-current uses the same immutable compiled artifact contract as
-    % MLSC current, validated before input preparation or normalization.
+elseif isfield(config, 'mode') && strcmp(config.mode, 'local') && ...
+        isfield(config, 'implementation') && ...
+        strcmp(config.implementation, 'current')
+    % Local current-lineage profiles use the same immutable compiled artifact
+    % contract as MLSC current, validated before input preparation or normalization.
     artifact_config = struct();
     artifact_config.implementation = 'current';
     artifact_config.current = config.current;
@@ -152,11 +155,14 @@ aliasing = local_option(request, 'correct_aliasing', ...
     get_config_value(config, 'aliasing_default', 1));
 recenter = local_option(request, 'recenter_before_normalization', ...
     get_config_value(config, 'recenter_before_normalization', false));
+cleanup = local_option(request, 'cleanup_on_success', ...
+    get_config_value(config, 'cleanup_on_success', true));
 if ischar(recenter)
     recenter = local_yes_no(recenter);
 end
 options = struct('correct_aliasing', logical(aliasing), ...
-    'recenter_before_normalization', logical(recenter));
+    'recenter_before_normalization', logical(recenter), ...
+    'cleanup_on_success', logical(cleanup));
 jobs = struct('mprage_fn', {}, 'umap_fn', {}, 'correct_aliasing', {}, ...
     'recenter_before_normalization', {}, 'io_policy', {}, ...
     'processing_dir', {}, 'temp_dir', {}, 'save_dir', {}, ...
@@ -257,6 +263,10 @@ validation_request = struct('profile', resolved.profile, ...
     'recenter_before_normalization', ...
     resolved.options.recenter_before_normalization, ...
     'invocation_id', resolved.invocation_id);
+if isfield(resolved.options, 'cleanup_on_success')
+    validation_request.cleanup_on_success = ...
+        resolved.options.cleanup_on_success;
+end
 if isfield(resolved, 'current_artifact_root')
     validation_request.current_artifact_root = resolved.current_artifact_root;
 end
@@ -285,11 +295,15 @@ provider = [];
 if isfield(request, 'host_key_provider')
     provider = request.host_key_provider;
 end
-args = {'profile', resolved.profile, 'subjects', {subjects}, ...
-    'umap_files', {umaps}, 'resolved_jobs', resolved.subjects, ...
+args = {'profile', resolved.profile, 'subjects', subjects, ...
+    'umap_files', umaps, 'resolved_jobs', resolved.subjects, ...
     'headless_mode', ~isempty(fieldnames(credentials)), ...
     'headless_credentials', credentials, 'group_account', group_account, ...
     'mlsc_host_key_provider', provider};
+if isfield(resolved.options, 'cleanup_on_success')
+    args = [args {'cleanup_on_success', ...
+        resolved.options.cleanup_on_success}]; %#ok<AGROW>
+end
 if isfield(resolved, 'current_artifact_root') && ...
         ~isempty(resolved.current_artifact_root)
     args = [args {'mlsc_current_artifact_root', ...
@@ -310,6 +324,10 @@ end
 report.schema = 'pseudoCT.submission/v1';
 if ~isempty(report.error_code)
     report.dispatch_status = 'failed';
+elseif strcmp(backend, 'local') && strcmp(report.run_status, 'returned')
+    % Direct local execution has no scheduler submission status or ID; this
+    % only records that the local execution path was entered and returned.
+    report.dispatch_status = 'dispatched';
 elseif strcmp(report.submission_status, 'not_attempted')
     report.dispatch_status = 'not_dispatched';
 else
@@ -348,7 +366,7 @@ end
 validation_request = struct('profile', options.profile, ...
     'subjects', {options.subjects});
 copy_names = {'umap_files'; 'correct_aliasing'; ...
-    'recenter_before_normalization'; 'output_config'};
+    'recenter_before_normalization'; 'cleanup_on_success'; 'output_config'};
 for ii = 1:length(copy_names)
     if isfield(options, copy_names{ii})
         validation_request.(copy_names{ii}) = options.(copy_names{ii});
@@ -380,13 +398,14 @@ function same = local_same_resolved_job(a, b)
 same = strcmp(a.profile, b.profile) && ...
     isequal(a.invocation_id, b.invocation_id) && ...
     isequal(a.current_artifact_root, b.current_artifact_root) && ...
-    isequal(a.options, b.options) && ...
+    local_same_options(a.options, b.options) && ...
     isequal(a.output_config, b.output_config) && ...
     isequal(a.artifact_identity, b.artifact_identity) && ...
     length(a.subjects) == length(b.subjects);
 if ~same
     return;
 end
+
 fields = {'mprage_fn'; 'umap_fn'; 'correct_aliasing'; ...
     'recenter_before_normalization'; 'processing_dir'; 'temp_dir'; ...
     'save_dir'; 'mprage_identity'; 'umap_identity'; 'io_policy'};
@@ -397,6 +416,18 @@ for ii = 1:length(a.subjects)
             return;
         end
     end
+end
+end
+
+function same = local_same_options(a, b)
+if isequal(a, b)
+    same = true;
+elseif isstruct(a) && numel(a) == 1 && isstruct(b) && numel(b) == 1 && ...
+        ~isfield(a, 'cleanup_on_success') && ...
+        isfield(b, 'cleanup_on_success')
+    same = isequal(a, rmfield(b, 'cleanup_on_success'));
+else
+    same = false;
 end
 end
 

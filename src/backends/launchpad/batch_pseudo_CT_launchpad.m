@@ -144,7 +144,8 @@ end
 
 shared_context = struct('log_files', {output_log_files}, 'scope', 'batch', ...
     'stage_index', 3, 'stage_count', 8, ...
-    'subject_log_files', {output_log_files});
+    'subject_log_files', {output_log_files}, ...
+    'console_profile', 'launchpad-legacy');
 stage_started = tic;
 pseudo_CT_output('INFO', shared_context, 'Waiting for remote Launchpad processing.');
 ss_tot = check_launchpad_command_status(jobname, ssh2_conn, 10*60, 60, ...
@@ -236,7 +237,8 @@ end
 
 function context = local_context(log_files, subject_index, subject_count, stage_index)
 context = struct('subject_index', subject_index, 'subject_count', subject_count, ...
-    'stage_index', stage_index, 'stage_count', 8);
+    'stage_index', stage_index, 'stage_count', 8, ...
+    'console_profile', 'launchpad-legacy');
 if length(log_files) >= subject_index
     context.log_file = log_files{subject_index};
 end

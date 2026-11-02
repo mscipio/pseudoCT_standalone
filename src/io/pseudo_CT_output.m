@@ -43,7 +43,28 @@ if isempty(tags) && isfield(context, 'scope') && ~isempty(context.scope)
 end
 
 line = sprintf('[%s] %-7s %s%s', timestamp, level, tags, message);
-fprintf(1, '%s\n', line);
+if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+    console_source_line = line;
+    if isfield(context, 'console_timestamp') && ...
+            ischar(context.console_timestamp) && ...
+            ~isempty(regexp(context.console_timestamp, ...
+            '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$', 'once'))
+        console_source_line = sprintf('[%s] %-7s %s%s', ...
+            context.console_timestamp, level, tags, message);
+    end
+    [console_visible, console_line] = pseudo_CT_output_console_visible( ...
+        level, message, context, console_source_line);
+    if console_visible
+        if strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
+            % The CLI formatter emits JSONL directly, including delayed warnings.
+        else
+            fprintf(1, '%s\n', console_line);
+        end
+    end
+else
+    % Preserve the established MATLAB console contract outside the CLI.
+    fprintf(1, '%s\n', line);
+end
 
 log_files = {};
 if isfield(context, 'log_files') && ~isempty(context.log_files)
@@ -59,7 +80,13 @@ for ii = 1:length(log_files)
     fid = fopen(log_files{ii}, 'a');
     if fid == -1
         if ~log_warning_emitted
-            fprintf(1, '[%s] WARN    Run log could not be written; processing will continue.\n', timestamp);
+            warning_line = sprintf('[%s] WARN    Run log could not be written; processing will continue.', timestamp);
+            if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1') && ...
+                    strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
+                fprintf(2, '%s\n', warning_line);
+            else
+                fprintf(1, '%s\n', warning_line);
+            end
             log_warning_emitted = true;
         end
         continue;
@@ -77,7 +104,13 @@ for ii = 1:length(log_files)
     end
     if write_failed
         if ~log_warning_emitted
-            fprintf(1, '[%s] WARN    Run log could not be written; processing will continue.\n', timestamp);
+            warning_line = sprintf('[%s] WARN    Run log could not be written; processing will continue.', timestamp);
+            if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1') && ...
+                    strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
+                fprintf(2, '%s\n', warning_line);
+            else
+                fprintf(1, '%s\n', warning_line);
+            end
             log_warning_emitted = true;
         end
     end

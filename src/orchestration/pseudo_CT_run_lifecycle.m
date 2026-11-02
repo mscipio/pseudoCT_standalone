@@ -172,6 +172,9 @@ else
     umap_files_arg = p.Results.umap_files;
     resolved_jobs = p.Results.resolved_jobs;
 end
+gui_cleanup_on_success = [];
+gui_handoff = struct('credentials', struct(), 'group_account', '');
+gui_credentials = struct();
 
 %% === Validate profile name against available profile files ===
 available_profiles = pseudo_CT_list_profiles(fullfile(pathp, 'src', 'config'));
@@ -261,7 +264,8 @@ if ~isempty(resolved_jobs)
     collection_stats = struct('requested', length(jobs), 'skipped', 0, ...
         'skipped_subjects', {{}});
 elseif isempty(subjects_arg)
-    [jobs, collection_stats] = collect_jobs(config);
+    [jobs, collection_stats, gui_cleanup_on_success, gui_handoff] = ...
+        collect_jobs(config);
 elseif ischar(subjects_arg) && size(subjects_arg, 1) == 1 && ...
        strcmpi(strtrim(subjects_arg), 'batch')
     [jobs, collection_stats] = collect_jobs(config, 'batch', ...
@@ -270,6 +274,19 @@ else
     [jobs, collection_stats] = collect_jobs(config, subjects_arg, ...
         aliasing_arg, recenter_arg, umap_files_arg);
 end
+if isempty(cleanup_on_success_arg) && ~isempty(gui_cleanup_on_success)
+    config.cleanup_on_success = logical(gui_cleanup_on_success);
+end
+if isstruct(gui_handoff) && isfield(gui_handoff, 'credentials') && ...
+        isstruct(gui_handoff.credentials)
+    gui_credentials = gui_handoff.credentials;
+end
+if isempty(group_account) && isstruct(gui_handoff) && ...
+        isfield(gui_handoff, 'group_account') && ...
+        ischar(gui_handoff.group_account)
+    group_account = gui_handoff.group_account;
+end
+clear gui_handoff
 % Explicit runtime overrides also apply to GUI-collected jobs, while omitted
 % values preserve each GUI control and the selected profile's defaults.
 for ii = 1:length(jobs)
@@ -289,6 +306,9 @@ validation_request.profile = profile_name;
 validation_request.config = config;
 validation_request.subjects = {jobs.mprage_fn};
 validation_request.umap_files = {jobs.umap_fn};
+if isfield(config, 'cleanup_on_success')
+    validation_request.cleanup_on_success = config.cleanup_on_success;
+end
 if ~isempty(jobs)
     validation_request.correct_aliasing = jobs(1).correct_aliasing;
     validation_request.recenter_before_normalization = ...
@@ -343,6 +363,18 @@ for ii = 1:length(collection_stats.skipped_subjects)
     pseudo_CT_output('INFO', context, '    %s', skipped_input);
 end
 run_context = struct('log_files', {all_log_files}, 'scope', 'run');
+run_context.console_profile = profile_name;
+run_context.console_run_id = run_id;
+run_context.console_subject_count = collection_stats.requested;
+run_context.console_release = version('-release');
+run_context.console_started_at = run_start_time;
+if strcmp(config.io_policy.output, 'nifti-only')
+    run_context.console_output = 'NIfTI';
+elseif strcmp(config.io_policy.output, 'dicom-only')
+    run_context.console_output = 'DICOM';
+else
+    run_context.console_output = 'NIfTI+DICOM';
+end
 mlsc_context = struct('log_files', {all_log_files}, 'scope', 'mlsc');
 if isfield(config, 'implementation') && ischar(config.implementation) && ...
         strcmp(config.implementation, 'legacy-v2')
@@ -375,7 +407,7 @@ if ~isempty(jobs)
 end
 if isempty(jobs)
     report.run_status = 'no_jobs';
-    clear headless_credentials
+    clear headless_credentials gui_credentials
     pseudo_CT_output('WARN', run_context, ...
         ['Run completed: requested %d, started 0, succeeded 0, failed 0, ', ...
          'skipped %d (elapsed %s).'], collection_stats.requested, ...
@@ -526,6 +558,15 @@ switch config.mode
         if headless_mode
             PASSWORD = headless_credentials.password;
             USERNAME = headless_credentials.username;
+        elseif ~isempty(fieldnames(gui_credentials))
+            if ~isfield(gui_credentials, 'username') || ...
+                    ~isfield(gui_credentials, 'password')
+                error('run_pseudo_CT:GuiCredentialHandoff', ...
+                    'The GUI authentication handoff is incomplete.');
+            end
+            PASSWORD = gui_credentials.password;
+            USERNAME = gui_credentials.username;
+            clear gui_credentials
         else
             [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, ...
                 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
@@ -780,7 +821,13 @@ switch config.mode
             'Unsupported execution mode: %s.', config.mode);
 end
 
-if num_success > 0 && num_success == length(jobs)
+if strcmp(config.mode, 'local')
+    if num_failed > 0
+        report.completion_status = 'failed';
+    elseif num_success > 0 && num_success == length(jobs)
+        report.completion_status = 'completed';
+    end
+elseif num_success > 0 && num_success == length(jobs)
     report.completion_status = 'completed';
 end
 if exist('transport', 'var') == 1
@@ -802,7 +849,7 @@ pseudo_CT_output(summary_level, run_context, ...
      num_success, num_failed, collection_stats.skipped, ...
      local_elapsed(toc(run_started)));
 report.run_status = 'returned';
-clear headless_credentials PASSWORD USERNAME ssh_log
+clear headless_credentials PASSWORD USERNAME ssh_log gui_credentials
 
 end
 
@@ -823,6 +870,7 @@ function success = local_run_subject(job, dir_batch_templates, ...
 
 success = 0;
 context = local_subject_context(job, subject_index, subject_count);
+context.console_profile = profile_name;
 subject_started = job.subject_started;
 
 [pathr, ~, ~] = fileparts(deblank(job.mprage_fn));
@@ -848,9 +896,11 @@ end
 
 % Resolve SSH host for FreeSurfer normalization from the selected profile.
 HOSTNAME = config.normalization.host;
-if strcmp(profile_name, 'local-current')
-    % The current local path uses the shared compiled payload and local
-    % FreeSurfer only; it never creates an SSH connection or prompts.
+is_current_implementation = isfield(config, 'implementation') && ...
+    ischar(config.implementation) && strcmp(config.implementation, 'current');
+if is_current_implementation
+    % Current-lineage local profiles use the shared compiled payload and local
+    % FreeSurfer only; they never create an SSH connection or prompt.
     ssh_log = [];
 elseif strcmp(HOSTNAME, '127.0.0.1') || strcmpi(HOSTNAME, 'localhost')
     USERNAME = getenv('USER');
@@ -888,7 +938,7 @@ pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
 % compute runner used by mlsc-current, with the existing external local
 % FreeSurfer normalization between phases. Other profiles keep their legacy
 % facade path unchanged.
-if strcmp(profile_name, 'local-current')
+if is_current_implementation
     Pf = pseudo_CT_run_local_current_subject(P, temp_dir, config, ...
         job.correct_aliasing, job.recenter_before_normalization, context);
 else
@@ -1140,6 +1190,14 @@ end
 function context = local_stage_context(context, stage_index)
 context.stage_index = stage_index;
 context.stage_count = 8;
+if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
+        strcmp(context.console_profile, 'local-current')
+    context.stage_count = 9;
+elseif isfield(context, 'console_profile') && ...
+        ischar(context.console_profile) && ...
+        strcmp(context.console_profile, 'local-mprage-only')
+    context.stage_count = 8;
+end
 end
 
 

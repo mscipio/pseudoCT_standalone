@@ -1,0 +1,834 @@
+#!/usr/bin/env bash
+# User-facing CLI for MATLAB-serialized pseudoCT Headless API v2 requests.
+set -u
+
+EXIT_USAGE=64
+EXIT_VALIDATION=65
+EXIT_AUTH=66
+EXIT_SUBMISSION=67
+EXIT_SCIENCE=68
+EXIT_RUNTIME=69
+profiles='local-current local-legacy local-mprage-only mlsc-current mlsc-legacy mlsc-mprage-only launchpad-legacy'
+operation_phase=not_started
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  pseudoct validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
+  pseudoct run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
+
+Options:
+  --profile NAME                  Canonical supported profile (required)
+  --mprage FILE --umap FILE       One subject; UMAP may be omitted for discovery
+  --config job.json               Multi-subject JSON with mprage[] and optional umap[]
+  --correct-aliasing yes|no       Override profile default
+  --recenter-before-normalization yes|no
+  --cleanup-on-success yes|no
+  --current-artifact-root PATH    Current-profile validation override
+  --group-account ACCOUNT        MLSC account selection for run
+  --host-key-file FILE            Optional MLSC strict host-key input
+  --credential-handoff FILE       Existing authorized single-use handoff
+  --format text|jsonl             Output format (default: text)
+  -h, --help                      Show this help
+
+Exit codes: 0 validated/completed, 64 usage/config, 65 invalid request,
+66 authentication, 67 submission failure, 68 scientific failure/unverified,
+69 launcher/runtime failure.
+USAGE
+}
+
+error_record() {
+    code=$1
+    message=$2
+    error_class=${3:-}
+    if [ -z "$error_class" ]; then
+        case "$code" in
+            64) error_class=USAGE_OR_CONFIG_ERROR ;;
+            65) error_class=INVALID_REQUEST ;;
+            66) error_class=AUTHENTICATION_FAILED ;;
+            67) error_class=SUBMISSION_FAILED ;;
+            68) error_class=SCIENTIFIC_FAILURE_OR_UNVERIFIED ;;
+            *) error_class=CLI_RUNTIME_ERROR ;;
+        esac
+    fi
+    if [ "${format:-text}" = jsonl ]; then
+        python3 - "${invocation_id:-}" "${action:-unknown}" \
+            "${profile:-}" "$error_class" "$message" "$code" \
+            "$operation_phase" <<'PY'
+import json, sys
+invocation, action, profile, error_code, message, exit_code, phase = sys.argv[1:]
+unknown_submit = phase == "submit_called"
+unknown_reason = "unknown: submit outcome not established"
+record = {
+    "type": "result", "invocation_id": invocation or None,
+    "action": action, "profile": profile or None, "outcome": "failed",
+    "exit_code": int(exit_code),
+    "headless_dispatch_returned": True if unknown_submit else False,
+    "dispatch_status": None if unknown_submit else "not_dispatched",
+    "submission_status": None if unknown_submit else "not_attempted",
+    "scheduler_submission_accepted": None if unknown_submit else False,
+    "scientific_completion": None,
+    "scientific_completion_reason": "No verified scientific result is available because the CLI operation stopped before completion.",
+    "job_ids": [], "error_code": error_code, "error_message": message,
+}
+if unknown_submit:
+    record["dispatch_status_reason"] = unknown_reason
+    record["submission_status_reason"] = unknown_reason
+    record["scheduler_submission_accepted_reason"] = unknown_reason
+print(json.dumps(record, separators=(",", ":")))
+PY
+    fi
+    printf 'pseudoct: %s\n' "$message" >&2
+    exit "$code"
+}
+
+if [ "$#" -lt 1 ]; then
+    usage >&2
+    exit "$EXIT_USAGE"
+fi
+action=$1
+shift
+case "$action" in
+    validate|run) ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'pseudoct: command must be validate or run.\n' >&2; exit "$EXIT_USAGE" ;;
+esac
+
+profile=''
+mprage=''
+umap=''
+config=''
+correct_aliasing=''
+recenter=''
+cleanup_success=''
+artifact_root=''
+group_account=''
+host_key_file=''
+credential_handoff=''
+format=text
+seen_mprage=0
+seen_umap=0
+seen_config=0
+
+need_value() {
+    [ "$#" -ge 2 ] || error_record "$EXIT_USAGE" "An option is missing its value."
+}
+
+while [ "$#" -gt 0 ]; do
+    option=$1
+    shift
+    case "$option" in
+        --profile|--mprage|--umap|--config|--correct-aliasing|\
+        --recenter-before-normalization|--cleanup-on-success|\
+        --current-artifact-root|--group-account|--host-key-file|\
+        --credential-handoff|--format)
+            need_value "$option" "$@"
+            value=$1
+            shift
+            ;;
+        --profile=*) value=${option#*=}; option=--profile ;;
+        --mprage=*) value=${option#*=}; option=--mprage ;;
+        --umap=*) value=${option#*=}; option=--umap ;;
+        --config=*) value=${option#*=}; option=--config ;;
+        --correct-aliasing=*) value=${option#*=}; option=--correct-aliasing ;;
+        --recenter-before-normalization=*) value=${option#*=}; option=--recenter-before-normalization ;;
+        --cleanup-on-success=*) value=${option#*=}; option=--cleanup-on-success ;;
+        --current-artifact-root=*) value=${option#*=}; option=--current-artifact-root ;;
+        --group-account=*) value=${option#*=}; option=--group-account ;;
+        --host-key-file=*) value=${option#*=}; option=--host-key-file ;;
+        --credential-handoff=*) value=${option#*=}; option=--credential-handoff ;;
+        --format=*) value=${option#*=}; option=--format ;;
+        -h|--help) usage; exit 0 ;;
+        *) error_record "$EXIT_USAGE" "Unknown option: $option" ;;
+    esac
+    case "$option" in
+        --profile) [ -z "$profile" ] || error_record "$EXIT_USAGE" 'Specify --profile only once.'; profile=$value ;;
+        --mprage) [ "$seen_mprage" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --mprage only once.'; mprage=$value; seen_mprage=1 ;;
+        --umap) [ "$seen_umap" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --umap only once.'; umap=$value; seen_umap=1 ;;
+        --config) [ "$seen_config" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --config only once.'; config=$value; seen_config=1 ;;
+        --correct-aliasing) correct_aliasing=$value ;;
+        --recenter-before-normalization) recenter=$value ;;
+        --cleanup-on-success) cleanup_success=$value ;;
+        --current-artifact-root) artifact_root=$value ;;
+        --group-account) group_account=$value ;;
+        --host-key-file) host_key_file=$value ;;
+        --credential-handoff) credential_handoff=$value ;;
+        --format) format=$value ;;
+    esac
+done
+
+case " $profiles " in *" $profile "*) ;; *) error_record "$EXIT_USAGE" 'A supported --profile is required.' ;; esac
+case "$format" in text|jsonl) ;; *) error_record "$EXIT_USAGE" '--format must be text or jsonl.' ;; esac
+if [ "$seen_config" -eq 1 ]; then
+    [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] || \
+        error_record "$EXIT_USAGE" 'Use either --config or single-subject --mprage/--umap flags.'
+    [ -f "$config" ] && [ -r "$config" ] || \
+        error_record "$EXIT_USAGE" 'The job configuration file is unavailable.'
+else
+    [ "$seen_mprage" -eq 1 ] || error_record "$EXIT_USAGE" 'Specify --mprage or --config.'
+fi
+for flag_value in "$correct_aliasing" "$recenter" "$cleanup_success"; do
+    case "$flag_value" in ''|yes|no) ;; *) error_record "$EXIT_USAGE" 'Processing options accept only yes or no.' ;; esac
+done
+case "$profile" in
+    local-current|local-legacy|local-mprage-only) backend=local ;;
+    mlsc-current|mlsc-legacy|mlsc-mprage-only) backend=mlsc ;;
+    launchpad-legacy) backend=launchpad ;;
+esac
+case "$profile" in *mprage-only*) mprage_only=1 ;; *) mprage_only=0 ;; esac
+if [ "$mprage_only" -eq 1 ] && [ "$seen_umap" -eq 1 ]; then
+    error_record "$EXIT_USAGE" 'MPRAGE-only profiles do not accept --umap.'
+fi
+if [ -n "$artifact_root" ]; then
+    case "$profile" in mlsc-current|mlsc-mprage-only|local-current|local-mprage-only) ;; *) error_record "$EXIT_USAGE" '--current-artifact-root requires a current profile.' ;; esac
+fi
+if [ -n "$group_account" ] && [ "$backend" != mlsc ]; then
+    error_record "$EXIT_USAGE" '--group-account is available only for MLSC profiles.'
+fi
+if [ -n "$host_key_file" ] && [ "$backend" != mlsc ]; then
+    error_record "$EXIT_USAGE" '--host-key-file is available only for MLSC profiles.'
+fi
+if [ -n "$credential_handoff" ] && { [ "$action" != run ] || [ "$backend" = local ]; }; then
+    error_record "$EXIT_USAGE" '--credential-handoff is valid only for remote run.'
+fi
+case "$group_account$artifact_root$host_key_file$credential_handoff" in *$'\n'*|*$'\r'*) error_record "$EXIT_USAGE" 'CLI text values cannot contain line breaks.' ;; esac
+if [ -n "$credential_handoff" ]; then
+    credential_handoff=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$credential_handoff") || \
+        error_record "$EXIT_USAGE" 'Credential handoff path is invalid.'
+fi
+
+root_dir=$(CDPATH= cd -P -- "$(dirname -- "$(readlink -f -- "$0")")/.." 2>/dev/null && pwd -P) || \
+    error_record "$EXIT_RUNTIME" 'Cannot resolve pseudoCT installation root.'
+date_part=$(date '+%Y-%m-%d')
+stamp=$(date '+%H%M%S')
+scratch_parent=$root_dir/scratch/$date_part
+mkdir -p -- "$scratch_parent" 2>/dev/null || error_record "$EXIT_RUNTIME" 'Cannot create the local scratch directory.'
+umask 077
+tmp_dir=$(mktemp -d "$scratch_parent/$stamp-pseudoct-cli.XXXXXX" 2>/dev/null) || \
+    error_record "$EXIT_RUNTIME" 'Cannot create a private temporary directory.'
+chmod 700 "$tmp_dir" || error_record "$EXIT_RUNTIME" 'Cannot secure the temporary directory.'
+secret_dir=''
+handoff_registry=$tmp_dir/handoff-path.txt
+tty_state=''
+cleanup() {
+    if [ -n "$tty_state" ] && [ -r /dev/tty ]; then
+        stty "$tty_state" < /dev/tty 2>/dev/null || true
+    fi
+    if [ -n "$secret_dir" ] && [ -d "$secret_dir" ]; then
+        python3 - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
+import os, sys
+path = sys.argv[1]
+try:
+    with open(path, "r+b", buffering=0) as f:
+        size = os.fstat(f.fileno()).st_size
+        f.write(b"\0" * size)
+    os.unlink(path)
+except OSError:
+    pass
+try:
+    os.rmdir(os.path.dirname(path))
+except OSError:
+    pass
+PY
+    fi
+    if [ -n "$handoff_registry" ] && [ -f "$handoff_registry" ]; then
+        python3 - "$handoff_registry" <<'PY' >/dev/null 2>&1 || true
+import os, re, stat, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as registry:
+        path = registry.readline().rstrip("\n")
+    if not re.fullmatch(r"/dev/shm/pseudo_CT_credentials_[A-Za-z0-9_.-]+/credentials\.mat", path):
+        raise OSError("invalid private handoff path")
+    directory = os.path.dirname(path)
+    directory_info = os.lstat(directory)
+    if not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_mode & 0o077:
+        raise OSError("unsafe private handoff directory")
+    info = os.lstat(path)
+    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+        raise OSError("unsafe private handoff file")
+    fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
+    try:
+        remaining = os.fstat(fd).st_size
+        while remaining:
+            count = os.write(fd, b"\0" * min(remaining, 4096))
+            if count <= 0:
+                raise OSError("handoff overwrite failed")
+            remaining -= count
+    finally:
+        os.close(fd)
+    os.unlink(path)
+    os.rmdir(directory)
+except OSError:
+    pass
+PY
+    fi
+    if [ -n "${tmp_dir:-}" ] && [ -d "$tmp_dir" ]; then
+        rm -rf -- "$tmp_dir"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+invocation_id=$(uuidgen | tr 'A-F' 'a-f') || error_record "$EXIT_RUNTIME" 'Cannot generate an invocation UUID.'
+input_file=$tmp_dir/cli-input.txt
+validate_request=$tmp_dir/validate-request.mat
+validate_result=$tmp_dir/validate-result.mat
+submit_request=$tmp_dir/submit-request.mat
+submit_result=$tmp_dir/submit-result.mat
+summary_file=$tmp_dir/result-summary.txt
+
+if ! python3 - "$input_file" "$profile" "$invocation_id" "$config" \
+    "$mprage" "$umap" "$seen_config" "$seen_umap" "$correct_aliasing" \
+    "$recenter" "$cleanup_success" "$artifact_root" "$group_account" \
+    "$host_key_file" <<'PY'
+import json, os, sys
+output, profile, invocation, config_path, mprage, umap, has_config, has_umap, aliasing, recenter, cleanup, artifact_root, account, host_key = sys.argv[1:]
+
+def fail(message):
+    print("pseudoct: " + message, file=sys.stderr)
+    raise SystemExit(64)
+
+def one_line(value, label):
+    if not isinstance(value, str) or not value or any(c in value for c in "\0\r\n"):
+        fail(label + " must be non-empty text without line breaks.")
+    return os.path.abspath(os.path.expanduser(value))
+
+if has_config == "1":
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            job = json.load(f)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        fail("job configuration is not readable valid JSON.")
+    if not isinstance(job, dict) or set(job) - {"mprage", "umap"} or "mprage" not in job:
+        fail("job JSON must contain mprage[] and optional umap[] only.")
+    mprages = job["mprage"]
+    umaps = job.get("umap")
+    if not isinstance(mprages, list) or not mprages:
+        fail("job JSON mprage must be a non-empty array of paths.")
+    if umaps is not None and (not isinstance(umaps, list) or len(umaps) != len(mprages)):
+        fail("job JSON umap must be an array positionally paired with mprage.")
+    mprages = [one_line(v, "MPRAGE path") for v in mprages]
+    if umaps is not None:
+        umaps = [one_line(v, "UMAP path") for v in umaps]
+else:
+    mprages = [one_line(mprage, "MPRAGE path")]
+    umaps = [one_line(umap, "UMAP path")] if has_umap == "1" else None
+
+if "mprage-only" in profile and umaps is not None:
+    fail("MPRAGE-only profiles do not accept UMAP paths.")
+if "mprage-only" not in profile and umaps is not None and len(umaps) != len(mprages):
+    fail("UMAP paths must be positionally paired with MPRAGE paths.")
+if artifact_root:
+    artifact_root = one_line(artifact_root, "Current artifact root")
+if host_key:
+    host_key = one_line(host_key, "Host-key file")
+values = [profile, invocation, str(len(mprages)), "1" if umaps is not None else "0"]
+values.extend(mprages)
+if umaps is not None:
+    values.extend(umaps)
+values.extend(["1" if aliasing == "yes" else "0" if aliasing == "no" else "",
+               "1" if recenter == "yes" else "0" if recenter == "no" else "",
+               "1" if cleanup == "yes" else "0" if cleanup == "no" else "",
+               artifact_root, account, host_key])
+with open(output, "x", encoding="utf-8", newline="\n") as f:
+    f.write("\n".join(values) + "\n")
+os.chmod(output, 0o600)
+PY
+then
+    error_record "$EXIT_USAGE" 'Job configuration or input paths are invalid.'
+fi
+
+matlab_bin=${PSEUDOCT_MATLAB:-/usr/pubsw/common/matlab/7.11/bin/matlab}
+if [ ! -x "$matlab_bin" ]; then
+    if command -v "$matlab_bin" >/dev/null 2>&1; then
+        matlab_bin=$(command -v "$matlab_bin")
+    else
+        error_record "$EXIT_RUNTIME" 'MATLAB executable is unavailable; set PSEUDOCT_MATLAB to its path.'
+    fi
+fi
+
+matlab_support() {
+    support_mode=$1
+    PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE="$support_mode" \
+    PSEUDOCT_CLI_INPUT="$input_file" PSEUDOCT_CLI_REQUEST="$2" \
+    PSEUDOCT_CLI_RESULT="${3:-}" PSEUDOCT_CLI_SUMMARY="${4:-}" \
+    PSEUDOCT_CLI_INVOCATION="$invocation_id" PSEUDOCT_CLI_PROFILE="$profile" \
+    PSEUDOCT_CLI_ACTION="$5" PSEUDOCT_CLI_HANDOFF="${credential_handoff:-}" \
+    "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB' \
+        >"$tmp_dir/matlab-diagnostics-support-$support_mode.log" 2>&1
+try
+    root = getenv('PSEUDOCT_CLI_ROOT');
+    addpath(root, '-begin');
+    runtime_dirs = {'api'; 'cli'; 'gui'; 'orchestration'; 'backends'; ...
+        'config'; 'io'; 'qc'};
+    for ii = 1:length(runtime_dirs)
+        path_here = fullfile(root, 'src', runtime_dirs{ii});
+        if exist(path_here, 'dir') == 7
+            addpath(genpath(path_here), '-begin');
+        end
+    end
+    status = pseudoct_cli_bridge(getenv('PSEUDOCT_CLI_MODE'));
+catch ME
+    fprintf(2, 'pseudoct: MATLAB CLI support failed (%s).\n', ME.identifier);
+    status = 70;
+end
+if ~exist('status', 'var') || ~isnumeric(status) || ~isscalar(status)
+    status = 70;
+end
+exit(status);
+MATLAB
+}
+
+run_headless() {
+    phase=$1
+    request_path=$2
+    result_path=$3
+    set +e
+    python3 - "$root_dir/bin/pseudoct-headless" "$request_path" \
+        "$result_path" "$format" "$tmp_dir/matlab-diagnostics-$phase.log" <<'PY'
+import json
+import os
+import re
+import selectors
+import subprocess
+import sys
+
+launcher, request_path, result_path, output_format, diagnostics_path = sys.argv[1:]
+environment = os.environ.copy()
+environment["PSEUDOCT_CLI_OUTPUT"] = "1"
+if output_format == "jsonl":
+    environment["PSEUDOCT_OUTPUT_FORMAT"] = "jsonl"
+else:
+    environment.pop("PSEUDOCT_OUTPUT_FORMAT", None)
+
+def strip_prompts(text):
+    candidate = text.lstrip()
+    while candidate.startswith(">>"):
+        candidate = candidate[2:].lstrip()
+    return candidate
+
+def sanitize_message(text):
+    # Keep this in lockstep with local_sanitize_message in the shared MATLAB
+    # formatter. Structured callers sanitize only message fields; preserve
+    # stage markers in free text from generic slash-path redaction.
+    def short_hash(value):
+        hash_value = 5381
+        for character in value:
+            hash_value = (hash_value * 33 + ord(character)) % 4294967296
+        return format(hash_value, "08x")
+
+    stage_markers = []
+
+    def hold_stage_marker(match):
+        stage_markers.append(match.group(0))
+        return "PSEUDOCTSTAGEMARKER" + str(len(stage_markers) - 1) + "-X"
+
+    text = re.sub(r"(?i)\[(?:stage[ \t]+)?\d+/\d+\]",
+                  hold_stage_marker, text)
+    dicom_names = re.findall(
+        r"(?i)(?:[A-Za-z]:\\|/)?[^ \t,;:()]*\.dcm", text)
+    for name in dicom_names:
+        text = text.replace(name, "DICOM-" + short_hash(name))
+    text = re.sub(r"/[^ \t,;:()]+", "<path>", text)
+    text = re.sub(r"[A-Za-z]:\\[^ \t,;:()]+", "<path>", text)
+    text = re.sub(
+        r"(?i)(username|user|password|passphrase|account|token|secret)"
+        r"([ \t]*[:=][ \t]*|[ \t]+)[^ \t,;]+",
+        lambda match: match.group(1) + match.group(2) + "<redacted>", text)
+    text = re.sub(r"[\r\n]+", " | ", text)
+    for index, marker in enumerate(stage_markers):
+        text = text.replace("PSEUDOCTSTAGEMARKER" + str(index) + "-X", marker)
+    return text
+
+def sanitize_console_line(text):
+    # Newlines delimit captured transport lines; preserve the terminator after
+    # sanitizing the line content, matching the MATLAB sanitizer's treatment
+    # of message text rather than displaying a trailing separator.
+    if text.endswith("\r\n"):
+        return sanitize_message(text[:-2]) + "\r\n"
+    if text.endswith(("\n", "\r")):
+        return sanitize_message(text[:-1]) + text[-1:]
+    return sanitize_message(text)
+
+def forward_line(text, channel):
+    safe_text = sanitize_console_line(text)
+    print(safe_text, end="" if text.endswith(("\n", "\r")) else "\n",
+          file=sys.stderr if channel == "stderr" else sys.stdout, flush=True)
+
+def matlab_noise(text):
+    value = text.strip()
+    if not value:
+        return True
+    lowered = " ".join(value.split()).lower()
+    if lowered.startswith((
+            "matlab is", "copyright", "the mathworks, inc.",
+            "version ", "for product information", "to get started")):
+        return True
+    if lowered.startswith("pseudoct-headless: validation ready for "):
+        return True
+    if lowered in ("< m a t l a b (r) >", "august 16, 2010"):
+        return True
+    if value == ">>" or value.startswith(">>") and not strip_prompts(value):
+        return True
+    if "no window system found" in lowered or (
+            "java option" in lowered and "mwt" in lowered and
+            "ignored" in lowered):
+        return True
+    if lowered.startswith("adding ganymed-ssh2 to the java path"):
+        return True
+    if lowered.startswith("javaaddpath("):
+        return True
+    if lowered.startswith("just added ganymed-ssh2 to matlab's dynamic java classpath"):
+        return True
+    return False
+
+text_header_state = {"seen": False, "suppressing_duplicate": False}
+
+def is_header_continuation(text):
+    value = text.strip()
+    return (not value or value.startswith(("Started:", "Subjects:",
+                                           "TIME      SUBJECT STAGE")) or
+            value == "-" * 67)
+
+def write_line(channel, raw, diagnostics):
+    text = raw.decode("utf-8", "replace")
+    if channel == "stderr":
+        diagnostics.write("[stderr] " + text)
+        diagnostics.flush()
+        return
+    candidate = strip_prompts(text)
+    if matlab_noise(candidate):
+        diagnostics.write("[" + channel + "] " + text)
+        diagnostics.flush()
+        return
+    if channel == "stdout" and output_format != "jsonl":
+        header_line = candidate.rstrip("\r\n")
+        if text_header_state["suppressing_duplicate"]:
+            if is_header_continuation(header_line):
+                diagnostics.write("[stdout duplicate header] " + text)
+                diagnostics.flush()
+                return
+            text_header_state["suppressing_duplicate"] = False
+        if header_line.startswith("pseudoCT |"):
+            if text_header_state["seen"]:
+                text_header_state["suppressing_duplicate"] = True
+                diagnostics.write("[stdout duplicate header] " + text)
+                diagnostics.flush()
+                return
+            text_header_state["seen"] = True
+    if channel == "stdout" and output_format == "jsonl":
+        try:
+            value = json.loads(candidate)
+        except Exception:
+            forward_line(candidate, "stderr")
+            return
+        if isinstance(value, dict) and value.get("type") == "progress":
+            if isinstance(value.get("message"), str):
+                value["message"] = sanitize_message(value["message"])
+            for field_name in ("subject", "stage", "status", "job"):
+                field_value = value.get(field_name)
+                missing_context = field_value is None or field_value == "" or \
+                    (isinstance(field_value, str) and
+                     field_value.lower() in ("unavailable", "null"))
+                if field_name == "subject" and isinstance(field_value, str) and \
+                        field_value.lower() == "run":
+                    missing_context = True
+                if missing_context:
+                    value.pop(field_name, None)
+                    value.pop(field_name + "_reason", None)
+            print(json.dumps(value, separators=(",", ":"), ensure_ascii=False), flush=True)
+        else:
+            forward_line(candidate, "stderr")
+        return
+    if channel == "stdout":
+        try:
+            value = json.loads(candidate)
+        except Exception:
+            forward_line(candidate, "stdout")
+        else:
+            if isinstance(value, dict) and value.get("type") == "progress":
+                message = sanitize_message(str(value.get("message", "")))
+                fields = [value.get("timestamp", ""), value.get("level", ""),
+                          value.get("subject", ""), value.get("stage", ""),
+                          value.get("status", ""), message]
+                print(" | ".join(str(item) for item in fields if item not in (None, "")),
+                      flush=True)
+            else:
+                forward_line(candidate, "stdout")
+
+try:
+    diagnostics_fd = os.open(
+        diagnostics_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    diagnostics = os.fdopen(diagnostics_fd, "w", encoding="utf-8", newline="")
+except OSError:
+    print("pseudoct: could not open diagnostics capture",
+          file=sys.stderr, flush=True)
+    raise SystemExit(70)
+
+selector = None
+try:
+    process = subprocess.Popen([launcher, request_path, result_path], env=environment,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               bufsize=0)
+    selector = selectors.DefaultSelector()
+    streams = {}
+    for channel, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+        selector.register(stream, selectors.EVENT_READ, channel)
+        streams[stream.fileno()] = {"channel": channel, "stream": stream, "pending": b""}
+    while selector.get_map():
+        for key, _ in selector.select():
+            stream = key.fileobj
+            state = streams[stream.fileno()]
+            chunk = os.read(stream.fileno(), 4096)
+            if not chunk:
+                selector.unregister(stream)
+                if state["pending"]:
+                    write_line(state["channel"], state["pending"], diagnostics)
+                stream.close()
+                continue
+            state["pending"] += chunk
+            while b"\n" in state["pending"]:
+                line, state["pending"] = state["pending"].split(b"\n", 1)
+                write_line(state["channel"], line + b"\n", diagnostics)
+    run_status = process.wait()
+except Exception as error:
+    try:
+        diagnostics.write("[transport] launcher=" + repr(launcher) +
+                          " error=" + repr(error) + "\n")
+        diagnostics.flush()
+    except OSError:
+        pass
+    # The caller maps launch/transport failure to the documented runtime code 69.
+    run_status = 69
+finally:
+    if selector is not None:
+        try:
+            selector.close()
+        except Exception:
+            pass
+    try:
+        diagnostics.close()
+    except OSError:
+        pass
+raise SystemExit(run_status)
+PY
+    run_status=$?
+    set -u
+    return "$run_status"
+}
+
+if ! matlab_support prepare_validate "$validate_request" '' '' '' ; then
+    error_record "$EXIT_RUNTIME" 'MATLAB could not serialize the v2 request MAT.'
+fi
+run_headless validate "$validate_request" "$validate_result"
+validate_launcher_status=$?
+if [ ! -s "$validate_result" ]; then
+    error_record "$EXIT_RUNTIME" "Validation launcher returned no result MAT (status $validate_launcher_status)."
+fi
+if ! matlab_support verify_result '' "$validate_result" "$summary_file" validate; then
+    error_record "$EXIT_RUNTIME" 'Validation result MAT failed schema/binding verification.'
+fi
+operation_phase=validate_done
+
+if [ "$action" = run ]; then
+    python3 - "$summary_file" <<'PY' >/dev/null 2>&1
+import sys
+v = open(sys.argv[1], encoding="utf-8").read().splitlines()
+raise SystemExit(0 if v and v[0] == "ready" and v[8] == "validate" else 1)
+PY
+    validation_ready=$?
+    if [ "$validation_ready" -ne 0 ]; then
+        python3 - "$summary_file" "$invocation_id" "$profile" "$format" <<'PY'
+import json, sys
+values = open(sys.argv[1], encoding="utf-8").read().splitlines()
+if len(values) < 10:
+    raise SystemExit(69)
+status, code, auth, submission, backend, science, dispatch, ids, action, message = values[:10]
+code = "" if code == "-" else code
+ids = "" if ids == "-" else ids
+message = "" if message == "-" else message
+record = {"type":"result", "invocation_id":sys.argv[2], "action":"validate", "profile":sys.argv[3],
+          "outcome":"validation_failed", "headless_dispatch_returned":True,
+          "dispatch_status":dispatch, "submission_status":submission,
+          "scheduler_submission_accepted":False, "scientific_completion":None,
+          "scientific_completion_reason":"Validation did not run scientific processing.",
+          "job_ids":[int(x) for x in ids.split()] if ids else [],
+          "error_code":code or None, "error_message":message or None}
+if sys.argv[4] == "jsonl": print(json.dumps(record, separators=(",", ":")))
+else:
+    print("Validation failed: " + (code or status))
+    if message: print(message)
+PY
+        exit "$EXIT_VALIDATION"
+    fi
+
+    if [ "$backend" != local ]; then
+        if [ -z "$credential_handoff" ]; then
+            if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] || \
+                    ! (tty -s < /dev/tty 2>/dev/null); then
+                error_record "$EXIT_AUTH" 'Remote submission requires a terminal prompt or a single-use credential handoff.' AUTHENTICATION_REQUIRED
+            fi
+            printf 'Remote username: ' > /dev/tty
+            IFS= read -r username < /dev/tty || error_record "$EXIT_AUTH" 'Username prompt was cancelled.'
+            [ -n "$username" ] || error_record "$EXIT_AUTH" 'Username cannot be empty.'
+            printf 'Remote password (not echoed): ' > /dev/tty
+            tty_state=$(stty -g < /dev/tty 2>/dev/null) || error_record "$EXIT_AUTH" 'Cannot disable terminal echo for password input.'
+            stty -echo < /dev/tty 2>/dev/null || error_record "$EXIT_AUTH" 'Cannot disable terminal echo for password input.'
+            if IFS= read -r password < /dev/tty; then
+                stty "$tty_state" < /dev/tty 2>/dev/null || true
+                tty_state=''
+                printf '\n' > /dev/tty
+            else
+                stty "$tty_state" < /dev/tty 2>/dev/null || true
+                tty_state=''
+                error_record "$EXIT_AUTH" 'Password prompt was cancelled.'
+            fi
+            [ -n "$password" ] || error_record "$EXIT_AUTH" 'Password cannot be empty.'
+            secret_dir=$(mktemp -d /dev/shm/pseudoct-cli-credentials-XXXXXX 2>/dev/null) || \
+                error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
+            chmod 700 "$secret_dir" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
+            (umask 077; printf '%s\n%s\n' "$username" "$password" > "$secret_dir/login") || \
+                error_record "$EXIT_AUTH" 'Credential staging failed.'
+            chmod 600 "$secret_dir/login" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
+            unset username password
+            handoff_output=$handoff_registry
+            if ! PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE=store_credentials \
+                PSEUDOCT_CLI_SECRET_FILE="$secret_dir/login" \
+                PSEUDOCT_CLI_HANDOFF_OUTPUT="$handoff_output" \
+                "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB' \
+                    >"$tmp_dir/matlab-diagnostics-store-credentials.log" 2>&1
+try
+    root = getenv('PSEUDOCT_CLI_ROOT');
+    addpath(root, '-begin');
+    addpath(genpath(fullfile(root, 'src', 'api')), '-begin');
+    addpath(genpath(fullfile(root, 'src', 'cli')), '-begin');
+    status = pseudoct_cli_bridge('store_credentials');
+catch ME
+    fprintf(2, 'pseudoct: credential handoff failed (%s).\n', ME.identifier);
+    status = 70;
+end
+exit(status);
+MATLAB
+            then
+                error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.' AUTHENTICATION_FAILED
+            fi
+            credential_handoff=$(cat "$handoff_output")
+            [ -n "$credential_handoff" ] || error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.'
+            python3 - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
+import os, sys
+try:
+    p=sys.argv[1]
+    with open(p,"r+b",buffering=0) as f: f.write(b"\0"*os.fstat(f.fileno()).st_size)
+    os.unlink(p); os.rmdir(os.path.dirname(p))
+except OSError: pass
+PY
+            secret_dir=''
+        fi
+    fi
+    if ! matlab_support prepare_submit "$submit_request" "$validate_result" '' '' submit; then
+        error_record "$EXIT_RUNTIME" 'Validated job could not be serialized for submit.'
+    fi
+    operation_phase=submit_called
+    run_headless submit "$submit_request" "$submit_result"
+    submit_launcher_status=$?
+    if [ ! -s "$submit_result" ]; then
+        error_record "$EXIT_RUNTIME" "Submit launcher returned no result MAT (status $submit_launcher_status)."
+    fi
+    if ! matlab_support verify_result '' "$submit_result" "$summary_file" submit; then
+        error_record "$EXIT_RUNTIME" 'Submit result MAT failed schema/binding verification.'
+    fi
+fi
+
+python3 - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" <<'PY'
+import json, sys
+summary, invocation, profile, action, output_format, backend = sys.argv[1:]
+values = open(summary, encoding="utf-8").read().splitlines()
+if len(values) < 10:
+    print("pseudoct: verified result summary is incomplete.", file=sys.stderr)
+    raise SystemExit(69)
+status, error_code, auth, submission, result_backend, science, dispatch, ids, result_action, message = values[:10]
+error_code = "" if error_code == "-" else error_code
+ids = "" if ids == "-" else ids
+message = "" if message == "-" else message
+job_ids = [int(v) for v in ids.split()] if ids else []
+accepted = submission == "accepted"
+if result_action == "validate":
+    outcome = "validation_succeeded" if status == "ready" else "validation_failed"
+elif error_code in {"AUTHENTICATION_FAILED", "NO_ACCOUNTS", "ACCOUNT_QUERY_FAILED", "CREDENTIAL_ERASE_FAILED", "CREDENTIAL_STORAGE_FAILED", "HOST_KEY_UNAVAILABLE", "INVALID_GROUP_ACCOUNT"}:
+    outcome = "authentication_failed"
+elif error_code in {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB"}:
+    outcome = "validation_failed"
+elif science == "completed":
+    outcome = "scientific_completed"
+elif science == "failed":
+    outcome = "scientific_failed"
+elif result_backend == "local" and status == "failed":
+    outcome = "scientific_failed"
+elif accepted:
+    outcome = "submission_accepted_completion_unverified"
+elif submission in {"rejected", "unresolved"} or status == "failed":
+    outcome = "submission_failed"
+elif dispatch == "dispatched":
+    outcome = "dispatch_returned_submission_unconfirmed"
+else:
+    outcome = "dispatch_not_attempted"
+science_value = science if science in {"completed", "failed"} else None
+science_reason = None if science_value is not None else (
+    "Validation does not execute scientific processing." if action == "validate" else
+    "The bound result reports scientific_completion=" + science + "; dispatch or scheduler acknowledgement is not completion evidence.")
+record = {
+    "type": "result", "invocation_id": invocation,
+    "action": "validate" if action == "validate" else "submit",
+    "profile": profile, "outcome": outcome,
+    "headless_dispatch_returned": True,
+    "dispatch_status": dispatch,
+    "scheduler_submission_accepted": accepted,
+    "submission_status": submission,
+    "authentication_status": auth,
+    "scientific_completion": science_value,
+    "scientific_completion_status": science,
+    "scientific_completion_reason": science_reason,
+    "backend": result_backend, "job_ids": job_ids,
+    "group_account": None if result_backend != "mlsc" else None,
+    "group_account_reason": "Not exposed by the CLI result summary; inspect the bound MAT result.",
+    "error_code": error_code or None,
+    "error_message": message or None,
+}
+
+if result_action == "validate":
+    code = 0 if status == "ready" else 65
+elif error_code in {"AUTHENTICATION_FAILED", "NO_ACCOUNTS", "ACCOUNT_QUERY_FAILED", "CREDENTIAL_ERASE_FAILED", "CREDENTIAL_STORAGE_FAILED", "HOST_KEY_UNAVAILABLE", "INVALID_GROUP_ACCOUNT"}:
+    code = 66
+elif error_code in {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB"}:
+    code = 65
+elif status == "submitted" and not error_code and science == "completed":
+    code = 0
+elif result_backend == "local" or science == "failed":
+    code = 68
+elif accepted:
+    code = 68
+elif submission in {"rejected", "unresolved"} or status == "failed" or error_code:
+    code = 67
+else:
+    code = 69
+record["exit_code"] = code
+if output_format == "jsonl":
+    print(json.dumps(record, separators=(",", ":"), ensure_ascii=False))
+else:
+    print("pseudoct " + ("validation" if action == "validate" else "run") + ": " + outcome)
+    print("  profile: " + profile)
+    print("  headless dispatch returned: yes")
+    print("  dispatch status: " + dispatch)
+    print("  scheduler submission accepted: " + ("yes" if accepted else "no (" + submission + ")"))
+    if science_value is None:
+        print("  scientific completion: unavailable (" + science + ")")
+        print("  reason: " + science_reason)
+    else:
+        print("  scientific completion: " + science_value)
+    if job_ids: print("  scheduler job IDs: " + ", ".join(str(v) for v in job_ids))
+    if error_code: print("  error: " + error_code + ": " + message)
+raise SystemExit(code)
+PY
+result_status=$?
+exit "$result_status"

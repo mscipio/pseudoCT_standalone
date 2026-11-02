@@ -16,4 +16,3 @@ try
 catch
     status = 70;
 end
-exit(status);

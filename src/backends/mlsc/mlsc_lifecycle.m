@@ -50,12 +50,11 @@ function result = mlsc_lifecycle(subject, config, runtime, transport)
 %   secret-free incomplete-trailing indicator (logical flag plus
 %   pending-byte count, never the trailing content) is persisted in
 %   result.progress and terminal evidence so a terminal partial record
-%   remains diagnosable.  Stage-in, preparation, alias-recenter,
-%   normalization, alignment-mask, segmentation, bone, DARTEL-warp-reslice,
-%   pseudoCT, and attenuation-QC milestones render at stage 3/8, verify
-%   and copy-back milestones render only at
-%   stage 4/8, and a successful copy-back completion represents the
-%   verified return to shared temp.  The durable archive is generated only
+%   remains diagnosable. Original backend stage IDs remain 3/8 for remote
+%   compute milestones and 4/8 for verify/copy-back in detailed logs. A
+%   Console stage labels preserve these explicit backend IDs and totals;
+%   scientific progress events are never assigned synthetic stage numbers.
+%   The durable archive is generated only
 %   from the validated recognized milestone sequence (order preserved,
 %   at-most-once, from the parser accepted output) and never copies raw
 %   source bytes, so malformed, unknown, secret-bearing, or
@@ -158,6 +157,9 @@ end
 result = local_progress_record_trailing(result, progress_cursor);
 
 output_tracker = local_output_init(runtime, transport);
+[slurm_log_paths, slurm_log_cursors] = local_slurm_log_init( ...
+    result.log_paths, job_id);
+slurm_log_state = struct();
 local_emit_accepted(runtime, job_id);
 terminal_observed = false;
 accounting_deadline = [];
@@ -180,6 +182,15 @@ try
         result = local_append_state(result, squeue_state, transport);
         if strcmp(squeue_state, 'running') && isempty(result.timestamps.started_at)
             result.timestamps.started_at = local_timestamp(transport);
+        end
+        % Drain timestamped Slurm output before the timestamp-free milestone
+        % sidecar. Otherwise a buffered child log line can be displayed after
+        % a later milestone merely because its file was polled second.
+        try
+            [slurm_log_cursors, slurm_log_state] = local_slurm_log_poll( ...
+                slurm_log_paths, slurm_log_cursors, slurm_log_state, ...
+                runtime, job_id, false);
+        catch %#ok<CTCH>
         end
         output_tracker = local_output_note(output_tracker, runtime, ...
             job_id, squeue_state, transport);
@@ -283,6 +294,12 @@ try
     end
 catch %#ok<CTCH>
     result = local_apply_interrupted(result, transport);
+end
+try
+    [slurm_log_cursors, slurm_log_state] = local_slurm_log_poll( ...
+        slurm_log_paths, slurm_log_cursors, slurm_log_state, ...
+        runtime, job_id, true);
+catch %#ok<CTCH>
 end
 try
     [progress_cursor, progress_milestones] = local_progress_poll( ...
@@ -2225,6 +2242,17 @@ try
             catch %#ok<CTCH>
             end
         end
+        if isfield(source, 'console_profile')
+            try
+                value = source.console_profile;
+                if ischar(value) && any(strcmp(value, ...
+                        {'mlsc-current'; 'mlsc-legacy'; ...
+                         'mlsc-mprage-only'}))
+                    context.console_profile = value;
+                end
+            catch %#ok<CTCH>
+            end
+        end
     end
 catch %#ok<CTCH>
     context = struct();
@@ -2330,16 +2358,9 @@ try
     end
     try
         context = local_stage_output_context(runtime, job_id, 3);
-        elapsed = 0;
-        try
-            if isstruct(result) && isfield(result, 'clock_started') && ...
-                    isnumeric(result.clock_started) && ...
-                    isscalar(result.clock_started) && ...
-                    isfinite(result.clock_started)
-                elapsed = local_elapsed_seconds(result.clock_started, ...
-                    now_value);
-            end
-        catch %#ok<CTCH>
+        [elapsed_known, elapsed] = local_output_elapsed(result, now_value);
+        if ~elapsed_known
+            return;
         end
         if strcmp(tracker.last_state, 'running')
             pseudo_CT_output('INFO', context, ...
@@ -2431,6 +2452,39 @@ try
     pseudo_CT_output(level, context, 'MLSC job %d %s exit %s elapsed %s.', ...
         job_id, state, exit_text, local_elapsed_text(elapsed));
 catch %#ok<CTCH>
+end
+end
+
+function [known, elapsed] = local_output_elapsed(result, now_value)
+known = false;
+elapsed = 0;
+start_value = [];
+try
+    if isstruct(result) && isfield(result, 'clock_started') && ...
+            isnumeric(result.clock_started) && ...
+            isscalar(result.clock_started) && isfinite(result.clock_started)
+        start_value = result.clock_started;
+    elseif isstruct(result) && isfield(result, 'timestamps') && ...
+            isstruct(result.timestamps) && ...
+            isfield(result.timestamps, 'submitted_at') && ...
+            ischar(result.timestamps.submitted_at)
+        parts = regexp(result.timestamps.submitted_at, ...
+            '^([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2}:[0-9]{2})$', ...
+            'tokens', 'once');
+        if ~isempty(parts)
+            start_value = datenum([parts{1} ' ' parts{2}], ...
+                'yyyy-mm-dd HH:MM:SS');
+        end
+    end
+    if ~isempty(start_value) && isnumeric(now_value) && ...
+            isscalar(now_value) && isfinite(now_value) && ...
+            now_value >= start_value
+        elapsed = local_elapsed_seconds(start_value, now_value);
+        known = true;
+    end
+catch %#ok<CTCH>
+    known = false;
+    elapsed = 0;
 end
 end
 
@@ -2583,6 +2637,458 @@ catch %#ok<CTCH>
 end
 end
 
+function [paths, cursors] = local_slurm_log_init(log_paths, job_id)
+%LOCAL_SLURM_LOG_INIT Resolve the accepted job's existing Slurm log files.
+%   These are read-only local files; no command, SSH, or scheduler query is
+%   used. A cursor is independent for stdout and stderr.
+paths = struct('stdout', '', 'stderr', '');
+if isstruct(log_paths) && numel(log_paths) == 1
+    if isfield(log_paths, 'stdout') && ischar(log_paths.stdout)
+        paths.stdout = local_expand_job_id(log_paths.stdout, job_id);
+    end
+    if isfield(log_paths, 'stderr') && ischar(log_paths.stderr)
+        paths.stderr = local_expand_job_id(log_paths.stderr, job_id);
+    end
+end
+cursors = struct('stdout', local_slurm_log_cursor(), ...
+    'stderr', local_slurm_log_cursor());
+end
+
+function cursor = local_slurm_log_cursor()
+cursor = struct('offset', 0, 'pending', '', 'discarding_line', false, ...
+    'was_missing', false, 'identity_prefix', '', ...
+    'identity_datenum', [], 'identity_bytes', []);
+end
+
+function state = local_slurm_log_diagnostic_state()
+state = struct('diagnostic_level', '', 'diagnostic_braced', false, ...
+    'diagnostic_lines', 0, 'diagnostic_error_using', false, ...
+    'diagnostic_blank_seen', false);
+end
+
+function [cursors, state] = local_slurm_log_poll(paths, cursors, state, ...
+        runtime, job_id, flush_partial)
+%LOCAL_SLURM_LOG_POLL Incrementally consume the accepted job's Slurm logs.
+%   Missing/late/unreadable files and reader errors are non-fatal. Truncated
+%   files restart their byte cursor; rewritten logs can therefore repeat
+%   earlier output and are not promised exactly-once delivery.
+try
+    if ~isstruct(paths) || ~isstruct(cursors) || ~isstruct(state)
+        return;
+    end
+    if ~isfield(state, 'stdout') || ~isstruct(state.stdout)
+        state.stdout = local_slurm_log_diagnostic_state();
+    end
+    if ~isfield(state, 'stderr') || ~isstruct(state.stderr)
+        state.stderr = local_slurm_log_diagnostic_state();
+    end
+    [cursors.stdout, state.stdout] = local_slurm_log_tail(paths.stdout, ...
+        cursors.stdout, state.stdout, runtime, job_id, flush_partial);
+    [cursors.stderr, state.stderr] = local_slurm_log_tail(paths.stderr, ...
+        cursors.stderr, state.stderr, runtime, job_id, flush_partial);
+catch %#ok<CTCH>
+end
+end
+
+function [cursor, state] = local_slurm_log_tail(path_name, cursor, state, ...
+        runtime, job_id, flush_partial)
+if ~ischar(path_name) || size(path_name, 1) ~= 1 || isempty(path_name)
+    return;
+end
+try
+    if exist(path_name, 'file') ~= 2
+        cursor.was_missing = true;
+        return;
+    end
+    info = dir(path_name);
+    if isempty(info) || ~isfield(info, 'bytes')
+        return;
+    end
+    fid = fopen(path_name, 'rb');
+    if fid == -1
+        return;
+    end
+    try
+        prefix_bytes = fread(fid, min(1024, info(1).bytes), '*uint8');
+        identity_prefix = char(uint8(prefix_bytes(:)'));
+        identity_changed = cursor.was_missing || ...
+            info(1).bytes < cursor.offset || ...
+            local_slurm_log_identity_changed(cursor, info(1), ...
+            identity_prefix);
+        if identity_changed
+            cursor = local_slurm_log_cursor();
+            state = local_slurm_log_diagnostic_state();
+        end
+        cursor.was_missing = false;
+        cursor.identity_prefix = identity_prefix;
+        cursor.identity_bytes = info(1).bytes;
+        if isfield(info, 'datenum')
+            cursor.identity_datenum = info(1).datenum;
+        end
+        if fseek(fid, cursor.offset, 'bof') == 0
+            while true
+                bytes = fread(fid, 65536, '*uint8');
+                if isempty(bytes)
+                    break;
+                end
+                bytes = uint8(bytes(:)');
+                cursor.offset = cursor.offset + length(bytes);
+                [cursor, state] = local_slurm_log_bytes(cursor, state, ...
+                    char(bytes), runtime, job_id);
+            end
+        end
+        fclose(fid);
+    catch ME
+        try
+            fclose(fid);
+        catch %#ok<CTCH>
+        end
+        rethrow(ME);
+    end
+catch %#ok<CTCH>
+end
+if flush_partial
+    if ~cursor.discarding_line && ~isempty(cursor.pending)
+        line = cursor.pending;
+        if ~isempty(line) && line(end) == char(13)
+            line(end) = '';
+        end
+        state = local_slurm_log_forward(line, state, runtime, job_id);
+    end
+    cursor.pending = '';
+    cursor.discarding_line = false;
+end
+end
+
+function yes = local_slurm_log_identity_changed(cursor, info, prefix)
+yes = false;
+if isfield(cursor, 'identity_prefix') && ...
+        ~isempty(cursor.identity_prefix)
+    previous = cursor.identity_prefix;
+    common = min(length(previous), length(prefix));
+    if ~isequal(previous(1:common), prefix(1:common)) || ...
+            length(prefix) < length(previous)
+        yes = true;
+        return;
+    end
+end
+if isfield(cursor, 'identity_bytes') && ...
+        isequal(info.bytes, cursor.identity_bytes) && ...
+        isfield(cursor, 'identity_datenum') && ...
+        ~isempty(cursor.identity_datenum) && isfield(info, 'datenum') && ...
+        info.datenum ~= cursor.identity_datenum
+    yes = true;
+end
+end
+
+function [cursor, state] = local_slurm_log_bytes(cursor, state, bytes, ...
+        runtime, job_id)
+max_line_bytes = 8192;
+while ~isempty(bytes)
+    newline_at = find(bytes == char(10), 1);
+    if isempty(newline_at)
+        if ~cursor.discarding_line
+            if length(cursor.pending) + length(bytes) <= max_line_bytes
+                cursor.pending = [cursor.pending bytes]; %#ok<AGROW>
+            else
+                cursor.pending = '';
+                cursor.discarding_line = true;
+            end
+        end
+        return;
+    end
+    segment = bytes(1:newline_at - 1);
+    if cursor.discarding_line
+        cursor.discarding_line = false;
+        cursor.pending = '';
+    elseif length(cursor.pending) + length(segment) <= max_line_bytes
+        line = [cursor.pending segment]; %#ok<AGROW>
+        if ~isempty(line) && line(end) == char(13)
+            line(end) = '';
+        end
+        state = local_slurm_log_forward(line, state, runtime, job_id);
+        cursor.pending = '';
+    else
+        cursor.pending = '';
+    end
+    bytes = bytes(newline_at + 1:end);
+end
+end
+
+function state = local_slurm_log_forward(line, state, runtime, job_id)
+%LOCAL_SLURM_LOG_FORWARD Forward scientific output and relevant diagnostics.
+try
+    if ~isstruct(state) || ~isfield(state, 'diagnostic_level')
+        state = local_slurm_log_diagnostic_state();
+    end
+    clean_line = local_slurm_log_clean(line);
+    lower_body = lower(strtrim(local_slurm_log_body(clean_line)));
+    if local_slurm_log_is_runtime_noise(lower_body)
+        return;
+    end
+    [level, message, original_stage, event_time] = ...
+        local_slurm_log_event(line);
+    if isempty(strtrim(line))
+        if state.diagnostic_error_using
+            state.diagnostic_blank_seen = true;
+        end
+        return;
+    end
+    if isempty(level)
+        if state.diagnostic_error_using && ...
+                local_slurm_log_is_error_body_continuation(line, state)
+            level = state.diagnostic_level;
+            message = local_slurm_log_safe_message(line);
+            state.diagnostic_blank_seen = false;
+            state.diagnostic_lines = state.diagnostic_lines + 1;
+        elseif state.diagnostic_error_using
+            state.diagnostic_level = '';
+            state.diagnostic_braced = false;
+            state.diagnostic_lines = 0;
+            state.diagnostic_error_using = false;
+            state.diagnostic_blank_seen = false;
+            return;
+        elseif local_slurm_log_is_diagnostic_continuation(line, state)
+            level = state.diagnostic_level;
+            message = local_slurm_log_safe_message(line);
+            if ~isempty(strfind(line, '}'))
+                state.diagnostic_braced = false;
+            end
+            state.diagnostic_lines = state.diagnostic_lines + 1;
+        elseif ~isempty(line) && isstruct(state)
+            state.diagnostic_level = '';
+            state.diagnostic_braced = false;
+            state.diagnostic_lines = 0;
+        else
+            return;
+        end
+    elseif any(strcmp(level, {'WARN'; 'ERROR'}))
+        state.diagnostic_level = level;
+        state.diagnostic_braced = ~isempty(strfind(line, '{')) && ...
+            isempty(strfind(line, '}'));
+        state.diagnostic_lines = 1;
+        state.diagnostic_error_using = ...
+            local_slurm_log_is_error_using(message);
+        state.diagnostic_blank_seen = false;
+    else
+        state.diagnostic_level = '';
+        state.diagnostic_braced = false;
+        state.diagnostic_lines = 0;
+        state.diagnostic_error_using = false;
+        state.diagnostic_blank_seen = false;
+    end
+    if isempty(level) || isempty(message)
+        return;
+    end
+    context = local_output_context(runtime, job_id);
+    if ~isempty(original_stage)
+        context.stage_index = original_stage(1);
+        context.stage_count = original_stage(2);
+    end
+    if ~isempty(event_time)
+        context.console_timestamp = event_time;
+    end
+    pseudo_CT_output(level, context, '%s', message);
+catch %#ok<CTCH>
+end
+end
+
+function yes = local_slurm_log_is_error_body_continuation(line, state)
+yes = false;
+if ~ischar(line) || isempty(strtrim(line))
+    return;
+end
+if state.diagnostic_blank_seen && ...
+        local_slurm_log_is_record_boundary(line)
+    return;
+end
+if ~isempty(local_slurm_log_stack_prefix(line))
+    return;
+end
+yes = true;
+end
+
+function yes = local_slurm_log_is_record_boundary(line)
+text = strtrim(line);
+yes = ~isempty(regexp(text, ...
+    '^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]', ...
+    'once')) || ~isempty(regexp(text, ...
+    '^\[(run|subject([ \t]|\])|stage[ \t]|job[ \t]|mlsc[^\]]*)\]', ...
+    'once', 'ignorecase'));
+end
+
+function prefix = local_slurm_log_stack_prefix(line)
+text = lower(strtrim(line));
+prefix = '';
+if local_slurm_log_starts(text, '> in ')
+    prefix = '> in';
+elseif local_slurm_log_starts(text, 'error in ')
+    prefix = 'error in';
+elseif local_slurm_log_starts(text, 'in ')
+    prefix = 'in';
+elseif local_slurm_log_starts(text, 'caused by:')
+    prefix = 'caused by:';
+end
+end
+
+function yes = local_slurm_log_is_error_using(message)
+yes = ischar(message) && ~isempty(regexp(lower(strtrim(message)), ...
+    '^(\?+ *error|error)[ \t]+using([ \t]|$)', 'once'));
+end
+
+function [level, message, original_stage, event_time] = ...
+        local_slurm_log_event(line)
+level = '';
+message = '';
+original_stage = [];
+event_time = '';
+if ~ischar(line) || isempty(line) || length(line) > 8192
+    return;
+end
+line = local_slurm_log_clean(line);
+if isempty(line)
+    return;
+end
+time_match = regexp(line, ...
+    '^\[([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\]', ...
+    'tokens', 'once');
+if ~isempty(time_match)
+    event_time = time_match{1};
+end
+stage_token = regexp(line, '\[stage[ \t]+([0-9]+)/([0-9]+)\]', ...
+    'tokens', 'once');
+if ~isempty(stage_token)
+    original_stage = [str2double(stage_token{1}) str2double(stage_token{2})];
+end
+body = local_slurm_log_body(line);
+lower_body = lower(strtrim(body));
+if isempty(lower_body) || local_slurm_log_is_runtime_noise(lower_body)
+    return;
+end
+if ~isempty(regexp(lower_body, '^[^a-z]*warning[ \t]*:', 'once'))
+    level = 'WARN';
+    message = local_slurm_log_safe_message(body);
+elseif ~isempty(regexp(lower_body, ...
+        '^(\?+ *error|error)([ \t]*:|[ \t]+using([ \t]|$))', 'once'))
+    level = 'ERROR';
+    message = local_slurm_log_safe_message(body);
+elseif local_slurm_log_has(lower_body, ...
+        'aligning mprage and creating subject mask')
+    level = 'INFO'; message = 'Aligning MPRAGE and creating subject mask.';
+elseif local_slurm_log_has(lower_body, 'alignment and masking completed')
+    level = 'SUCCESS'; message = 'Alignment and masking completed.';
+elseif local_slurm_log_has(lower_body, 'running spm new segment')
+    level = 'INFO'; message = 'Running SPM New Segment.';
+elseif local_slurm_log_has(lower_body, 'segmentation completed')
+    level = 'SUCCESS'; message = 'Segmentation completed.';
+elseif local_slurm_log_has(lower_body, 'registering atlases with dartel')
+    level = 'INFO'; message = 'Registering atlases with DARTEL.';
+elseif local_slurm_log_has(lower_body, 'applying inverse warp')
+    level = 'INFO'; message = 'Applying inverse warp.';
+elseif local_slurm_log_has(lower_body, ...
+        'reslicing atlases into mprage space')
+    level = 'INFO'; message = 'Reslicing atlases into MPRAGE space.';
+elseif local_slurm_log_has(lower_body, 'atlas registration completed')
+    level = 'SUCCESS'; message = 'Atlas registration completed.';
+elseif local_slurm_log_has(lower_body, ...
+        'building attenuation map and qc image')
+    level = 'INFO'; message = 'Building attenuation map and QC image.';
+elseif local_slurm_log_has(lower_body, ...
+        'attenuation map and qc completed')
+    level = 'SUCCESS'; message = 'Attenuation map and QC completed.';
+end
+end
+
+function yes = local_slurm_log_is_diagnostic_continuation(line, state)
+yes = false;
+if ~ischar(line) || isempty(strtrim(line)) || ~isstruct(state) || ...
+        ~isfield(state, 'diagnostic_level') || ...
+        isempty(state.diagnostic_level) || ...
+        ~isfield(state, 'diagnostic_lines') || state.diagnostic_lines >= 32
+    return;
+end
+text = lower(strtrim(line));
+yes = (isfield(state, 'diagnostic_braced') && state.diagnostic_braced) || ...
+    local_slurm_log_starts(text, '> in ') || ...
+    local_slurm_log_starts(text, 'in ') || ...
+    local_slurm_log_starts(text, 'caused by:') || ...
+    local_slurm_log_starts(text, 'error in ');
+end
+
+function yes = local_slurm_log_starts(text, prefix)
+yes = length(text) >= length(prefix) && ...
+    strcmp(text(1:length(prefix)), prefix);
+end
+
+function body = local_slurm_log_body(line)
+body = line;
+body = regexprep(body, ...
+    '^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\][ \t]*(INFO|SUCCESS|WARN|ERROR)[ \t]*', ...
+    '', 'ignorecase');
+while true
+    if isempty(body) || body(1) ~= '['
+        break;
+    end
+    closing = find(body == ']', 1);
+    if isempty(closing)
+        break;
+    end
+    tag = lower(body(2:closing - 1));
+    if ~(strcmp(tag, 'run') || strcmp(tag, 'subject') || ...
+            local_slurm_log_starts(tag, 'subject ') || ...
+            local_slurm_log_starts(tag, 'stage ') || ...
+            local_slurm_log_starts(tag, 'job ') || ...
+            local_slurm_log_starts(tag, 'mlsc'))
+        break;
+    end
+    body = strtrim(body(closing + 1:end));
+end
+end
+
+function text = local_slurm_log_clean(text)
+keep = (text >= char(32) & text ~= char(127)) | text == char(9);
+text = strtrim(text(keep));
+end
+
+function text = local_slurm_log_safe_message(text)
+text = local_slurm_log_clean(text);
+text = regexprep(text, '[\t ]+', ' ');
+text = regexprep(text, '/[^ \t,;:(){}]+', '<path>');
+text = regexprep(text, '[A-Za-z]:\\[^ \t,;:(){}]+', '<path>');
+text = regexprep(text, ...
+    '(?i)[A-Za-z0-9_.-]+\.(nii(\.gz)?|dcm|mat|img|hdr|mnc|mgz|mgh)\b', ...
+    '<file>');
+text = regexprep(text, ...
+    '(?i)(username|user|password|passphrase|account|token|secret)([ \t]*[:=][ \t]*|[ \t]+)[^ \t,;]+', ...
+    '$1$2<redacted>');
+if length(text) > 512
+    text = text(1:512);
+end
+end
+
+function yes = local_slurm_log_is_runtime_noise(text)
+noise = {'java.lang'; 'libjvm'; 'matlab compiler runtime'; ...
+    'matlab runtime'; 'matlab compiler'; 'mcr runtime'; 'ganymed'; ...
+    'ssh connection'; 'ssh exception'; 'no display'; 'ld_library_path'; ...
+    'selected mlsc account'};
+yes = false;
+if ~isempty(regexp(text, ...
+        '^[{ \t]*(warning|error)[ \t]*:[ \t]*(java|ssh|mcr)\b', 'once'))
+    yes = true;
+    return;
+end
+for ii = 1:numel(noise)
+    if ~isempty(strfind(text, noise{ii}))
+        yes = true;
+        return;
+    end
+end
+end
+
+function yes = local_slurm_log_has(text, phrase)
+yes = ~isempty(strfind(text, phrase));
+end
+
 function [has_incomplete, pending_bytes] = local_progress_trailing( ...
         progress_cursor)
 %LOCAL_PROGRESS_TRAILING Bounded secret-free trailing-progress indicator.
@@ -2666,7 +3172,8 @@ end
 
 function local_progress_emit(runtime, job_id, milestone)
 try
-    [level, stage_index, message] = local_progress_display(milestone);
+    [level, stage_index, message] = ...
+        local_progress_display(milestone);
     if isempty(message)
         return;
     end
@@ -2676,7 +3183,8 @@ catch %#ok<CTCH>
 end
 end
 
-function [level, stage_index, message] = local_progress_display(milestone)
+function [level, stage_index, message] = ...
+        local_progress_display(milestone)
 level = '';
 stage_index = 3;
 message = '';

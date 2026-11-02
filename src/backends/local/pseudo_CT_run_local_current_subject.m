@@ -7,6 +7,14 @@ function Pf = pseudo_CT_run_local_current_subject(input_path, work_dir, ...
 %   compiled payload; this function only coordinates those phases.
 %   Minimum supported MATLAB: R2010b.
 
+% Narrow test seam for exercising the production child stream monitor without
+% invoking a compiled payload. Production calls always pass six arguments.
+if nargin == 2 && ischar(input_path) && ...
+        strcmp(input_path, '__current_stream_test__') && isstruct(work_dir)
+    Pf = local_current_stream_test_dispatch(work_dir);
+    return;
+end
+
 if nargin ~= 6 || ~isstruct(config) || numel(config) ~= 1 || ...
         ~isstruct(output_context) || numel(output_context) ~= 1
     error('pseudo_CT:LocalCurrentRequest', ...
@@ -16,7 +24,7 @@ if ~isfield(config, 'mode') || ~strcmp(config.mode, 'local') || ...
         ~isfield(config, 'implementation') || ...
         ~strcmp(config.implementation, 'current')
     error('pseudo_CT:LocalCurrentRequest', ...
-        'The selected profile is not local-current.');
+        'The selected profile does not use the local current implementation.');
 end
 if ~isfield(config, 'normalization') || ...
         ~isstruct(config.normalization) || ...
@@ -102,6 +110,7 @@ local_validate_handoff(handoff, job_manifest_path, ...
 selected_input = strtrim(handoff.input_selected);
 if logical(handoff.needs_normalization)
     normalization_context = local_stage_context(output_context, 2);
+    normalization_started = tic;
     pseudo_CT_output('INFO', normalization_context, ...
         'Normalizing MPRAGE with FreeSurfer.');
     normalized_path = strtrim(handoff.normalized_expected);
@@ -121,7 +130,13 @@ if logical(handoff.needs_normalization)
         error('pseudo_CT:LocalCurrentNormalization', ...
             'FreeSurfer did not produce a non-empty normalized NIfTI file.');
     end
+    pseudo_CT_output('SUCCESS', normalization_context, ...
+        'MPRAGE normalization completed (elapsed %s).', ...
+        local_current_elapsed(toc(normalization_started)));
 else
+    normalization_context = local_stage_context(output_context, 2);
+    pseudo_CT_output('INFO', normalization_context, ...
+        'Normalization input already normalized; skipping.');
     normalized_path = selected_input;
 end
 
@@ -182,19 +197,287 @@ end
 stage_context = local_stage_context(output_context, phase_stage);
 pseudo_CT_output('INFO', stage_context, ...
     'Running compiled current %s phase.', upper(phase));
-[status, detail] = system(command);
+if strcmp(phase, 'compute')
+    pseudo_CT_output('INFO', stage_context, ...
+        ['Current compute includes SPM segmentation, DARTEL atlas ', ...
+         'registration/warping, and attenuation generation.']);
+end
+phase_started = tic;
+stream_log = '';
+if isfield(output_context, 'log_file') && ...
+        ischar(output_context.log_file) && ...
+        size(output_context.log_file, 1) == 1 && ...
+        ~isempty(strtrim(output_context.log_file))
+    stream_log = strtrim(output_context.log_file);
+end
+status = local_run_streaming(command, stream_log, stage_context, ...
+    phase_started);
 if status ~= 0
-    if ischar(detail) && ~isempty(strtrim(detail))
+    if isfield(output_context, 'log_file') && ...
+            ischar(output_context.log_file) && ...
+            ~isempty(strtrim(output_context.log_file))
         pseudo_CT_output('ERROR', stage_context, ...
-            'Compiled current %s phase failed: %s', upper(phase), ...
-            strtrim(detail));
+            'Compiled current %s phase failed (exit status %d); details are in %s.', ...
+            upper(phase), status, strtrim(output_context.log_file));
+    else
+        pseudo_CT_output('ERROR', stage_context, ...
+            'Compiled current %s phase failed with exit status %d.', ...
+            upper(phase), status);
     end
-    error('pseudo_CT:LocalCurrentRunner', ...
-        'Compiled current %s phase failed with exit status %d.', ...
-        upper(phase), status);
+    local_raise_current_runner_error(upper(phase), status);
 end
 pseudo_CT_output('SUCCESS', stage_context, ...
-    'Compiled current %s phase completed.', upper(phase));
+    'Compiled current %s phase completed (elapsed %.1f s).', ...
+    upper(phase), toc(phase_started));
+end
+
+function status = local_current_stream_test_dispatch(request)
+required = {'command'; 'log_path'; 'context'};
+for ii = 1:length(required)
+    if ~isfield(request, required{ii})
+        error('pseudo_CT:LocalCurrentRunnerTest', ...
+            'Current stream test request is missing a required field.');
+    end
+end
+if ~ischar(request.command) || ~ischar(request.log_path) || ...
+        ~isstruct(request.context)
+    error('pseudo_CT:LocalCurrentRunnerTest', ...
+        'Current stream test request fields have invalid types.');
+end
+phase = 'TEST';
+if isfield(request, 'phase') && ischar(request.phase)
+    phase = upper(request.phase);
+end
+status = local_run_streaming(request.command, request.log_path, ...
+    request.context, tic);
+if status ~= 0 && isfield(request, 'fail_on_nonzero') && ...
+        isequal(request.fail_on_nonzero, true)
+    local_raise_current_runner_error(phase, status);
+end
+end
+
+function local_raise_current_runner_error(phase, status)
+error('pseudo_CT:LocalCurrentRunner', ...
+    'Compiled current %s phase failed with exit status %d.', phase, status);
+end
+
+function status = local_run_streaming(command, log_path, output_context, ...
+        phase_started)
+%LOCAL_RUN_STREAMING Tail the tee file through MATLAB's byte-oriented reader.
+scratch_dir = local_current_scratch_dir();
+status_path = fullfile(scratch_dir, 'runner.exit');
+status_tmp_path = [status_path '.tmp'];
+if isempty(log_path)
+    stream_path = fullfile(scratch_dir, 'runner.capture');
+else
+    stream_path = log_path;
+end
+if exist(stream_path, 'dir') == 7
+    error('pseudo_CT:LocalCurrentRunner', ...
+        'The current runner output path is a directory.');
+end
+[path_check, ~] = system(['test ! -L ' local_shell_quote(stream_path)]);
+if path_check ~= 0
+    error('pseudo_CT:LocalCurrentRunner', ...
+        'The current runner output path is a symbolic link.');
+end
+stream_info = dir(stream_path);
+byte_offset = 0;
+if ~isempty(stream_info)
+    byte_offset = stream_info(1).bytes;
+end
+if exist(status_path, 'file') == 2
+    delete(status_path);
+end
+if exist(status_tmp_path, 'file') == 2
+    delete(status_tmp_path);
+end
+
+pipeline_command = [command ' 2>&1 | tee -a ' ...
+    local_shell_quote(stream_path) ...
+    '; set -- ${PIPESTATUS[*]}; if [ "$1" -ne 0 ]; then ' ...
+    'exit "$1"; fi; exit "$2"'];
+launch_command = ['( /bin/bash -o pipefail -c ' ...
+    local_shell_quote(pipeline_command) ...
+    '; runner_status=$?; printf "%s\n" "$runner_status" > ' ...
+    local_shell_quote(status_tmp_path) '; mv -f ' ...
+    local_shell_quote(status_tmp_path) ' ' ...
+    local_shell_quote(status_path) '; exit "$runner_status" ) ' ...
+    '</dev/null >/dev/null 2>&1 & echo $!'];
+[launch_status, pid_text] = system(launch_command);
+runner_pid = str2double(strtrim(pid_text));
+if launch_status ~= 0 || ~isscalar(runner_pid) || ...
+        ~isfinite(runner_pid) || runner_pid <= 0
+    error('pseudo_CT:LocalCurrentRunner', ...
+        'The current runner could not be started.');
+end
+
+console_buffer = '';
+last_activity = tic;
+while true
+    previous_offset = byte_offset;
+    [byte_offset, console_buffer] = local_tail_current_output( ...
+        stream_path, byte_offset, console_buffer, false, output_context);
+    if byte_offset > previous_offset
+        last_activity = tic;
+    elseif toc(last_activity) >= 60
+        heartbeat = sprintf('Current processing still running (elapsed %s).', ...
+            local_current_elapsed(toc(phase_started)));
+        if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+            [heartbeat_visible, heartbeat_line] = ...
+                pseudo_CT_output_console_visible('INFO', heartbeat, output_context);
+            if heartbeat_visible
+                fprintf(1, '%s\n', heartbeat_line);
+            end
+        end
+        last_activity = tic;
+    end
+    [found, status] = local_read_current_runner_status(status_path);
+    if found
+        local_tail_current_output(stream_path, byte_offset, console_buffer, ...
+            true, output_context);
+        break;
+    end
+    [probe_status, ~] = system(sprintf('kill -0 %d', round(runner_pid)));
+    if probe_status ~= 0
+        [found, status] = local_read_current_runner_status(status_path);
+        if found
+            local_tail_current_output(stream_path, byte_offset, console_buffer, ...
+                true, output_context);
+            break;
+        end
+        local_tail_current_output(stream_path, byte_offset, console_buffer, ...
+            true, output_context);
+        error('pseudo_CT:LocalCurrentRunner', ...
+            'The current runner ended without reporting an exit status.');
+    end
+    pause(0.1);
+end
+
+if exist(status_path, 'file') == 2
+    delete(status_path);
+end
+if exist(status_tmp_path, 'file') == 2
+    delete(status_tmp_path);
+end
+if isempty(log_path) && exist(stream_path, 'file') == 2
+    delete(stream_path);
+end
+end
+
+function scratch_dir = local_current_scratch_dir()
+source_dir = fileparts(mfilename('fullpath'));
+project_root = fileparts(fileparts(fileparts(source_dir)));
+scratch_root = fullfile(project_root, 'scratch');
+day_dir = fullfile(scratch_root, datestr(now, 'yyyy-mm-dd'));
+paths = {scratch_root; day_dir};
+for ii = 1:length(paths)
+    [path_check, ~] = system(['test ! -L ' local_shell_quote(paths{ii})]);
+    if path_check ~= 0
+        error('pseudo_CT:LocalCurrentRunner', ...
+            'The local-current scratch path must not be a symbolic link.');
+    end
+    if exist(paths{ii}, 'dir') ~= 7
+        [made, message] = mkdir(paths{ii});
+        if ~made && exist(paths{ii}, 'dir') ~= 7
+            error('pseudo_CT:LocalCurrentRunner', ...
+                'Could not create local-current scratch directory: %s', message);
+        end
+    end
+end
+
+stamp = datestr(now, 'HHMMSS');
+for ii = 1:100
+    if ii == 1
+        suffix = '';
+    else
+        suffix = sprintf('-%d', ii);
+    end
+    candidate = fullfile(day_dir, [stamp '-local-current-runner' suffix]);
+    [made, ~] = system(['mkdir -- ' local_shell_quote(candidate) ' 2>/dev/null']);
+    if made == 0
+        scratch_dir = candidate;
+        return;
+    end
+end
+error('pseudo_CT:LocalCurrentRunner', ...
+    'Could not allocate a unique local-current scratch directory.');
+end
+
+function [byte_offset, console_buffer] = local_tail_current_output( ...
+        log_path, byte_offset, console_buffer, flush_console, output_context)
+fid = fopen(log_path, 'rb');
+if fid ~= -1
+    if fseek(fid, byte_offset, 'bof') == 0
+        while true
+            new_bytes = fread(fid, 65536, 'uint8');
+            if isempty(new_bytes)
+                break;
+            end
+            new_bytes = uint8(new_bytes(:)');
+            byte_offset = byte_offset + length(new_bytes);
+            console_buffer = [console_buffer char(new_bytes)]; %#ok<AGROW>
+            while true
+                newline_at = find(console_buffer == char(10), 1);
+                if isempty(newline_at)
+                    break;
+                end
+                console_line = console_buffer(1:newline_at - 1);
+                if ~isempty(console_line) && console_line(end) == char(13)
+                    console_line = console_line(1:end - 1);
+                end
+                local_print_current_console_line(console_line, output_context);
+                console_buffer = console_buffer(newline_at + 1:end);
+            end
+        end
+    end
+    fclose(fid);
+end
+if flush_console && ~isempty(console_buffer)
+    local_print_current_console_line(console_buffer, output_context);
+    console_buffer = '';
+end
+if flush_console && strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+    pseudo_CT_output_console_visible('FLUSH');
+end
+end
+
+function local_print_current_console_line(line, output_context)
+if ~strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+    return;
+end
+line_level = 'INFO';
+severity_probe = lower(strtrim(line));
+if strncmp(severity_probe, 'warn', 4)
+    line_level = 'WARN';
+elseif strncmp(severity_probe, 'error', 5) || ...
+        strncmp(severity_probe, '??? error', 9)
+    line_level = 'ERROR';
+end
+[console_visible, console_line] = pseudo_CT_output_console_visible( ...
+    line_level, line, output_context);
+if console_visible
+    if ~strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
+        fprintf(1, '%s\n', console_line);
+    end
+end
+end
+
+function [found, status] = local_read_current_runner_status(status_path)
+found = false;
+status = -1;
+fid = fopen(status_path, 'r');
+if fid == -1
+    return;
+end
+raw = fscanf(fid, '%c');
+fclose(fid);
+candidate = str2double(strtrim(char(raw)));
+if isscalar(candidate) && isfinite(candidate) && ...
+        candidate == floor(candidate) && candidate >= 0
+    found = true;
+    status = candidate;
+end
 end
 
 function local_validate_handoff(handoff, job_manifest_path, ...
@@ -284,7 +567,23 @@ end
 
 function context = local_stage_context(context, stage_index)
 context.stage_index = stage_index;
-context.stage_count = 8;
+context.stage_count = 9;
+if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
+        strcmp(context.console_profile, 'local-mprage-only')
+    context.stage_count = 8;
+end
+end
+
+function value = local_current_elapsed(seconds)
+seconds = max(0, floor(seconds));
+hours = floor(seconds / 3600);
+minutes = floor(rem(seconds, 3600) / 60);
+seconds = rem(seconds, 60);
+if hours > 0
+    value = sprintf('%02d:%02d:%02d', hours, minutes, seconds);
+else
+    value = sprintf('%02d:%02d', minutes, seconds);
+end
 end
 
 function safe = local_runner_argument_safe(value)

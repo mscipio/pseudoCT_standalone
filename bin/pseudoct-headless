@@ -84,27 +84,36 @@ cd -P -- "$install_root" || fail 'cannot enter installation root' 70
 
 # Keep this fixed: no paths or request values are interpolated into MATLAB
 # source or command-line expressions. The bootstrap keeps the JVM enabled.
-"$matlab_bin" -nodesktop -nosplash -nodisplay >/dev/null 2>&1 <<'MATLAB'
+"$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB'
 try
     run(fullfile(pwd, 'src', 'cli', 'pseudoct_headless_cli_r2010b.m'));
 catch
-    exit(70);
+    status = 70;
 end
-exit(70);
+if ~exist('status', 'var') || ~isnumeric(status) || ...
+        ~isscalar(status) || ~isfinite(status) || status ~= fix(status) || ...
+        status < 0 || status > 255
+    status = 70;
+end
+exit(status);
 MATLAB
 matlab_status=$?
 
 case "$matlab_status" in
+    0|2|3)
+        [ -f "$result_path" ] && [ -s "$result_path" ] ||
+            fail 'MATLAB returned without a usable result MAT file' 70
+        ;;
+esac
+
+case "$matlab_status" in
     0)
-        printf 'pseudoct-headless: dispatcher returned; inspect result fields\n'
         exit 0
         ;;
     2)
-        printf 'pseudoct-headless: request rejected; inspect result fields\n' >&2
         exit 2
         ;;
     3)
-        printf 'pseudoct-headless: operation failed; inspect result fields\n' >&2
         exit 3
         ;;
     70)

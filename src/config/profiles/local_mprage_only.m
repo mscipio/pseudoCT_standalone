@@ -77,4 +77,17 @@ config.launchpad.batch_templates = '';
 config.launchpad.queue = '';
 % Remote scratch root; empty for local use.
 config.launchpad.scratch = '';
+
+% Current compiled prepare/compute artifacts shared with local-current and
+% MLSC-current. Resolve every artifact from this installation's current root.
+artifact_dir_here = dependency_paths.current_root;
+config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
+    'run_mlsc_current_payload.sh');
+config.current.mcr_root = '/usr/pubsw/common/matlab/7.11';
+config.current.build_manifest = fullfile(artifact_dir_here, ...
+    'mlsc_current_build.mat');
+config.current.resource_manifest = fullfile(artifact_dir_here, ...
+    'mlsc_current_resources.mat');
+config.current.required_outputs = {'att_map.nii'; ...
+    'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
 end

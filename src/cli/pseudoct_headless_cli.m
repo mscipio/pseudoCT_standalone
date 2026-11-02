@@ -10,19 +10,19 @@ if isempty(request_path) || isempty(result_path)
 end
 
 try
-    % Keep request contents out of MATLAB's terminal output. This is a fixed
-    % expression; paths are passed as data, never interpolated into code.
-    captured_output = evalc( ...
-        'dispatch_result = pseudo_CT_headless(request_path, result_path);'); %#ok<NASGU>
-    clear captured_output
+    % Request paths remain data, never MATLAB source. The shared event logger
+    % writes concise milestones directly to stdout while retaining full logs.
+    dispatch_result = pseudo_CT_headless(request_path, result_path);
 
     if exist(result_path, 'file') ~= 2 || ~local_mat_v5(result_path)
+        fprintf(2, 'pseudoct-headless: result MAT file is missing or unreadable.\n');
         return;
     end
     variables = whos('-file', result_path);
     if length(variables) ~= 1 || ~strcmp(variables(1).name, 'result') || ...
             ~strcmp(variables(1).class, 'struct') || ...
             ~isequal(variables(1).size, [1 1])
+        fprintf(2, 'pseudoct-headless: result MAT schema is invalid.\n');
         return;
     end
     loaded = load(result_path, 'result');
@@ -30,6 +30,7 @@ try
             ~local_result_record(loaded.result) || ...
             ~isequal(dispatch_result, loaded.result)
         clear loaded
+        fprintf(2, 'pseudoct-headless: result record is invalid or inconsistent.\n');
         return;
     end
     result = loaded.result;
@@ -39,6 +40,7 @@ try
     if expected.has_binding
         if ~strcmp(result.invocation_id, expected.invocation_id) || ...
                 ~strcmp(result.profile, expected.profile)
+            fprintf(2, 'pseudoct-headless: result binding does not match the request.\n');
             return;
         end
         if expected.has_action
@@ -48,18 +50,30 @@ try
             try
                 validated = pseudo_CT_validate_headless_result(result_path, ...
                     expected.invocation_id, expected.profile);
-            catch
+            catch ME
+                fprintf(2, ...
+                    'pseudoct-headless: result validation failed (%s).\n', ...
+                    ME.identifier);
                 return;
             end
             if ~isequal(validated, result)
+                fprintf(2, 'pseudoct-headless: validated result changed unexpectedly.\n');
                 return;
             end
         end
     end
     status = local_status_code(result);
 catch
-    % Do not expose MATLAB exception text or paths; the shell maps this to 70.
+    % Do not expose exception text or paths; the shell maps this to 70.
     status = 70;
+end
+if status == 0 && strcmp(result.action, 'validate')
+    if ~strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
+        fprintf(1, 'pseudoct-headless: validation ready for %s.\n', result.profile);
+    end
+elseif any(status == [2 3])
+    fprintf(2, 'pseudoct-headless: %s: %s\n', ...
+        result.error_code, result.error_message);
 end
 end
 
@@ -109,7 +123,8 @@ try
             'once')) && isfield(request, 'profile') && ...
             ischar(request.profile) && size(request.profile, 1) == 1 && ...
             any(strcmp(request.profile, {'mlsc-current'; ...
-            'mlsc-mprage-only'; 'mlsc-legacy'; 'launchpad-legacy'}))
+            'mlsc-mprage-only'; 'mlsc-legacy'; 'launchpad-legacy'; ...
+            'local-current'; 'local-legacy'; 'local-mprage-only'}))
         expected.has_binding = true;
         expected.invocation_id = request.invocation_id;
         expected.profile = request.profile;
@@ -124,8 +139,15 @@ end
 end
 
 function status = local_status_code(result)
-if any(strcmp(result.status, {'ready'; 'submitted'}))
+if strcmp(result.status, 'ready') && strcmp(result.action, 'validate')
     status = 0;
+elseif strcmp(result.status, 'submitted') && strcmp(result.action, 'submit')
+    if strcmp(result.backend, 'local') && ...
+            ~strcmp(result.scientific_completion, 'completed')
+        status = 3;
+    else
+        status = 0;
+    end
 elseif any(strcmp(result.error_code, ...
         {'INVALID_REQUEST'; 'PROFILE_NOT_ALLOWED'}))
     status = 2;

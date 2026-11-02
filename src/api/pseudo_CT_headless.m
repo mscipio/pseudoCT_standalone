@@ -1,7 +1,8 @@
 function result = pseudo_CT_headless(request_path, result_path)
 %PSEUDO_CT_HEADLESS Execute one versioned MATLAB v5 headless request.
-%   VALIDATE is local-only. SUBMIT accepts a previously resolved job and
-%   consumes the optional secure, single-use credential handoff only here.
+%   VALIDATE is local-only. SUBMIT accepts a previously resolved job; remote
+%   profiles consume a secure, single-use credential handoff here, while local
+%   profiles submit without authentication or scheduler credentials.
 %   Minimum supported MATLAB: R2010b.
 
 result = local_empty_result();
@@ -27,6 +28,8 @@ try
     result = local_bind_result(request, result);
     if isfield(request, 'action') && ischar(request.action) && ...
             strcmp(request.action, 'submit') && ...
+            ~(isfield(request, 'profile') && ...
+            local_is_local_profile(request.profile)) && ...
             isfield(request, 'credential_handoff') && ...
             ischar(request.credential_handoff) && ...
             ~isempty(request.credential_handoff)
@@ -46,6 +49,12 @@ try
         result = local_submit(request, result, credentials);
     end
 catch ME
+    fprintf(2, 'pseudoct-headless: MATLAB exception: %s\n', ME.identifier);
+    for kk = 1:min(3, numel(ME.stack))
+        fprintf(2, '  at %s:%d\n', ...
+            ME.stack(kk).name, ME.stack(kk).line);
+    end
+
     clear credentials
     result.status = 'failed';
     result.error_code = local_error_code(ME.identifier);
@@ -118,7 +127,9 @@ if ~isstruct(request.output_config) || numel(request.output_config) ~= 1 || ...
 end
 if strcmp(request.action, 'validate')
     if ~isempty(request.credential_handoff) || ~isempty(request.host_key_file) || ...
-            ~isempty(request.group_account) || ~isempty(request.resolved_job)
+        ~isempty(request.group_account) || ...
+        ~isstruct(request.resolved_job) || numel(request.resolved_job) ~= 1 || ...
+        ~isempty(fieldnames(request.resolved_job))
         error('pseudo_CT:HeadlessRequest', ...
             'Validate requests cannot contain submit-only fields.');
     end
@@ -135,16 +146,25 @@ else
             ~isempty(fieldnames(request.options)) || ...
             ~isempty(fieldnames(request.output_config)) || ...
             ~isempty(request.current_artifact_root) || ...
-            ~isstruct(request.resolved_job) || numel(request.resolved_job) ~= 1 || ...
-            isempty(request.credential_handoff)
+            ~isstruct(request.resolved_job) || numel(request.resolved_job) ~= 1
         error('pseudo_CT:HeadlessRequest', ...
-            'Submit requests require a resolved job and one-time credential handoff.');
+            'Submit requests require one previously validated resolved job.');
     end
     local_resolved_job(request.resolved_job);
     if ~strcmp(request.resolved_job.profile, request.profile) || ...
             ~strcmp(request.resolved_job.invocation_id, request.invocation_id)
         error('pseudo_CT:HeadlessRequest', ...
             'Submit binding does not match the resolved job.');
+    end
+    if local_is_local_profile(request.profile)
+        if ~isempty(request.credential_handoff) || ...
+                ~isempty(request.group_account) || ~isempty(request.host_key_file)
+            error('pseudo_CT:HeadlessRequest', ...
+                'Local submit requests cannot contain authentication or scheduler fields.');
+        end
+    elseif isempty(request.credential_handoff)
+        error('pseudo_CT:HeadlessRequest', ...
+            'Remote submit requests require a one-time credential handoff.');
     end
     if strcmp(request.profile, 'launchpad-legacy') && ...
             (~isempty(request.group_account) || ~isempty(request.host_key_file))
@@ -176,6 +196,11 @@ if isfield(request.options, 'recenter_before_normalization') && ...
     validation_request.recenter_before_normalization = ...
         request.options.recenter_before_normalization;
 end
+if isfield(request.options, 'cleanup_on_success') && ...
+        ~isempty(request.options.cleanup_on_success)
+    validation_request.cleanup_on_success = ...
+        request.options.cleanup_on_success;
+end
 validated = pseudo_CT_orchestrate('validate', validation_request);
 result.status = 'ready';
 result.error_code = '';
@@ -193,20 +218,33 @@ result.diagnostics = struct('code', '', 'message', '');
 end
 
 function result = local_submit(request, result, credentials)
-if ~isstruct(credentials) || numel(credentials) ~= 1 || ...
-        ~isfield(credentials, 'username') || ~isfield(credentials, 'password')
-    error('pseudo_CT:HeadlessRequest', 'A single-use credential handoff is required.');
+if local_is_local_profile(request.profile)
+    api_request = struct('resolved_job', request.resolved_job);
+else
+    if ~isstruct(credentials) || numel(credentials) ~= 1 || ...
+            ~isfield(credentials, 'username') || ~isfield(credentials, 'password')
+        error('pseudo_CT:HeadlessRequest', ...
+            'A single-use credential handoff is required.');
+    end
+    provider = local_host_key_provider(request.host_key_file);
+    api_request = struct('resolved_job', request.resolved_job, ...
+        'credentials', credentials, 'group_account', request.group_account, ...
+        'host_key_provider', provider);
 end
-provider = local_host_key_provider(request.host_key_file);
-api_request = struct('resolved_job', request.resolved_job, ...
-    'credentials', credentials, 'group_account', request.group_account, ...
-    'host_key_provider', provider);
 dispatch = pseudo_CT_orchestrate('submit', api_request);
 result.status = 'submitted';
 if isfield(dispatch, 'error_code') && ~isempty(dispatch.error_code)
     result.status = 'failed';
     result.error_code = dispatch.error_code;
     result.error_message = dispatch.error_message;
+elseif local_is_local_profile(request.profile) && ...
+        isfield(dispatch, 'scientific_completion') && ...
+        ~strcmp(dispatch.scientific_completion, 'completed')
+    % Local execution is synchronous. A returned dispatcher is not success
+    % unless the authoritative completion record confirms completion.
+    result.status = 'failed';
+    result.error_code = 'SUBMIT_FAILED';
+    result.error_message = local_error_message(result.error_code);
 else
     result.error_code = '';
     result.error_message = '';
@@ -227,7 +265,8 @@ clear credentials provider api_request
 end
 
 function local_options(options)
-allowed = {'correct_aliasing'; 'recenter_before_normalization'};
+allowed = {'correct_aliasing'; 'recenter_before_normalization'; ...
+    'cleanup_on_success'};
 names = fieldnames(options);
 for ii = 1:length(names)
     if ~any(strcmp(names{ii}, allowed))
@@ -421,7 +460,13 @@ end
 
 function valid = local_allowed_profile(value)
 valid = local_plain_text(value) && any(strcmp(value, ...
-    {'mlsc-current'; 'mlsc-mprage-only'; 'mlsc-legacy'; 'launchpad-legacy'}));
+    {'mlsc-current'; 'mlsc-mprage-only'; 'mlsc-legacy'; 'launchpad-legacy'; ...
+    'local-current'; 'local-legacy'; 'local-mprage-only'}));
+end
+
+function valid = local_is_local_profile(value)
+valid = ischar(value) && size(value, 1) == 1 && any(strcmp(value, ...
+    {'local-current'; 'local-legacy'; 'local-mprage-only'}));
 end
 
 function valid = local_enum(value, choices)

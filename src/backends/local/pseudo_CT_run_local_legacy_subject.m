@@ -44,6 +44,7 @@ end
 
 base_context = struct('log_file', '', 'subject_index', subject_index, ...
     'subject_count', subject_count, 'scope', 'subject');
+base_context.console_profile = 'local-legacy';
 try
     base_context.log_file = job.log_file;
 catch %#ok<CTCH>
@@ -295,6 +296,9 @@ if ~(isnumeric(backend_pid) && isscalar(backend_pid) && isfinite(backend_pid) &&
     return;
 end
 pseudo_CT_output('INFO', invoke_context, 'Legacy pseudo-CT started.');
+pseudo_CT_output('INFO', invoke_context, ...
+    ['Legacy backend is running segmentation, atlas ', ...
+     'registration/warping, and attenuation generation.']);
 try
     [backend_done, runner_status, backend_failure] = ...
         local_wait_legacy_backend(backend_pid, backend_status_path, invoke_context, backend_started, test_seam);
@@ -319,10 +323,8 @@ end
 if runner_status ~= 0
     pseudo_CT_output('ERROR', invoke_context, 'Legacy pseudo-CT failed (elapsed %s).', ...
         local_elapsed(toc(backend_started)));
-    backend_tail = local_read_log_tail(backend_log);
-    if ischar(backend_tail) && ~isempty(strtrim(backend_tail))
-        pseudo_CT_output('ERROR', invoke_context, 'Backend failure detail: %s', strtrim(backend_tail));
-    end
+    % Backend output is already retained verbatim in the run log; report its
+    % path instead of echoing the verbose stream or duplicating it.
     pseudo_CT_output('ERROR', invoke_context, 'Backend exit status: %d.', runner_status);
     pseudo_CT_output('INFO', invoke_context, '    %s', backend_log);
     return;
@@ -523,8 +525,8 @@ function [pid, launch_error] = local_launch_legacy_backend(runner_cmd, log_path,
 % runner and its descendants inherit the normal host limit and a verbose
 % backend can fill the per-run log over ~1 h runs without the wrapper
 % failing its writes. The log simply grows in temp_dir and is retained
-% for diagnostics (removed only by the stage-8 cleanup policy). No log
-% parsing into states; the 4 KiB tail stays opaque failure detail.
+% for diagnostics (removed only by the stage-8 cleanup policy). The monitor
+% forwards appended bytes verbatim; it does not parse log content.
 %
 % Interrupt ownership: the runner backgrounds inside the wrapper
 % ('runner > log 2>&1 & runner_pid=$!'), the wrapper traps TERM and
@@ -602,6 +604,13 @@ failure_reason = '';
 last_heartbeat = 0;
 use_seam = (nargin >= 5 && isstruct(seam) && ~isempty(fieldnames(seam)));
 seam_iter = 0;
+backend_log = fullfile(fileparts(status_path), 'legacy_backend.log');
+run_log = '';
+if isfield(invoke_context, 'log_file') && ischar(invoke_context.log_file)
+    run_log = invoke_context.log_file;
+end
+log_offset = 0;
+console_buffer = '';
 while true
     seam_iter = seam_iter + 1;
     if use_seam && seam_iter > 5000
@@ -610,6 +619,8 @@ while true
     if use_seam && isfield(seam, 'throw_at') && ~isempty(seam.throw_at) && isfinite(seam.throw_at) && seam_iter == seam.throw_at
         error('fixture:Interrupted', 'Simulated backend wait interrupt.');
     end
+    [log_offset, console_buffer] = local_forward_legacy_backend_output( ...
+        backend_log, run_log, log_offset, invoke_context, console_buffer, false);
     if use_seam && isfield(seam, 'exit_tick') && ~isempty(seam.exit_tick)
         if isfinite(seam.exit_tick) && seam_iter >= seam.exit_tick
             if isfield(seam, 'exit_code') && ~isempty(seam.exit_code)
@@ -617,6 +628,8 @@ while true
             else
                 code = 0;
             end
+            local_forward_legacy_backend_output( ...
+                backend_log, run_log, log_offset, invoke_context, console_buffer, true);
             completed = true;
             exit_status = code;
             return;
@@ -624,6 +637,8 @@ while true
     else
         [found, code] = local_read_legacy_backend_exit(status_path);
         if found
+            local_forward_legacy_backend_output( ...
+                backend_log, run_log, log_offset, invoke_context, console_buffer, true);
             completed = true;
             exit_status = code;
             return;
@@ -648,11 +663,15 @@ while true
         else
             [found2, code2] = local_read_legacy_backend_exit(status_path);
             if found2
+                local_forward_legacy_backend_output( ...
+                    backend_log, run_log, log_offset, invoke_context, console_buffer, true);
                 completed = true;
                 exit_status = code2;
                 return;
             end
         end
+        local_forward_legacy_backend_output( ...
+            backend_log, run_log, log_offset, invoke_context, console_buffer, true);
         failure_reason = 'Backend process disappeared before reporting an exit status.';
         return;
     end
@@ -678,6 +697,102 @@ while true
         else
             pause(30);
         end
+    end
+end
+end
+
+function [byte_offset, console_buffer] = local_forward_legacy_backend_output( ...
+        log_path, run_log_path, byte_offset, output_context, console_buffer, flush_console)
+% Append raw bytes unchanged, while filtering complete backend lines live.
+persistent log_warning_emitted;
+if isempty(log_warning_emitted)
+    log_warning_emitted = false;
+end
+fid = fopen(log_path, 'rb');
+if fid ~= -1
+    try
+        seek_status = fseek(fid, byte_offset, 'bof');
+        if seek_status == 0
+            while true
+                new_bytes = fread(fid, 65536, 'uint8');
+                if isempty(new_bytes)
+                    break;
+                end
+                new_bytes = uint8(new_bytes(:)');
+                byte_offset = byte_offset + length(new_bytes);
+                if ischar(run_log_path) && ~isempty(run_log_path)
+                    run_fid = fopen(run_log_path, 'ab');
+                    if run_fid == -1
+                        write_failed = true;
+                    else
+                        try
+                            written = fwrite(run_fid, new_bytes, 'uint8');
+                            write_failed = written ~= length(new_bytes);
+                        catch %#ok<CTCH>
+                            write_failed = true;
+                        end
+                        try
+                            close_status = fclose(run_fid);
+                            write_failed = write_failed || close_status ~= 0;
+                        catch %#ok<CTCH>
+                            write_failed = true;
+                        end
+                    end
+                    if write_failed && ~log_warning_emitted
+                        pseudo_CT_output('WARN', output_context, ...
+                            'Legacy backend output could not be fully appended to the run log.');
+                        log_warning_emitted = true;
+                    end
+                end
+                console_buffer = [console_buffer char(new_bytes)]; %#ok<AGROW>
+                while true
+                    newline_at = find(console_buffer == char(10), 1);
+                    if isempty(newline_at)
+                        break;
+                    end
+                    console_line = console_buffer(1:newline_at - 1);
+                    if ~isempty(console_line) && console_line(end) == char(13)
+                        console_line = console_line(1:end - 1);
+                    end
+                    local_print_legacy_console_line(console_line, output_context);
+                    console_buffer = console_buffer(newline_at + 1:end);
+                end
+            end
+        end
+    catch %#ok<CTCH>
+    end
+    try
+        fclose(fid);
+    catch %#ok<CTCH>
+    end
+end
+if flush_console && ~isempty(console_buffer)
+    local_print_legacy_console_line(console_buffer, output_context);
+    console_buffer = '';
+end
+if flush_console && strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+    pseudo_CT_output_console_visible('FLUSH');
+end
+end
+
+function local_print_legacy_console_line(line, output_context)
+if ~strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+    return;
+end
+% Preserve the shared filter's always-visible warning/error levels.
+line_level = 'INFO';
+severity_probe = lower(strtrim(line));
+if strncmp(severity_probe, 'warn', 4)
+    line_level = 'WARN';
+elseif strncmp(severity_probe, 'error', 5) || ...
+        strncmp(severity_probe, '??? error', 9)
+    line_level = 'ERROR';
+end
+[console_visible, console_line] = pseudo_CT_output_console_visible( ...
+    line_level, line, output_context);
+if console_visible
+    if ~strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
+        fprintf(1, '%s\n', console_line);
     end
 end
 end
@@ -736,38 +851,4 @@ try
     system(sprintf('kill %d', round(pid)));
 catch %#ok<CTCH>
 end
-end
-
-function tail_text = local_read_log_tail(log_path)
-% Opaque failure detail only: returns the tail of the per-run backend log
-% without parsing it into states. The per-run log itself is uncapped (the
-% wrapper sets no file-size limit); the 4 KiB window below limits display
-% only. The log is retained in temp_dir for diagnostics and removed only
-% by the stage-8 cleanup policy.
-tail_text = '';
-if exist(log_path, 'file') ~= 2
-    return;
-end
-fid = fopen(log_path, 'r');
-if fid == -1
-    return;
-end
-try
-    fseek(fid, 0, 'eof');
-    total = ftell(fid);
-    window = 4096;
-    if total > window
-        fseek(fid, -window, 'eof');
-    else
-        fseek(fid, 0, 'bof');
-    end
-    tail_text = char(fread(fid, '*char')');
-catch %#ok<CTCH>
-    tail_text = '';
-end
-try
-    fclose(fid);
-catch %#ok<CTCH>
-end
-tail_text = strtrim(tail_text);
 end
