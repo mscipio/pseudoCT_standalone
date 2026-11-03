@@ -170,6 +170,22 @@ pre {
 }
 
 pre code { background: transparent; padding: 0; }
+pre:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* Long inline identifiers wrap instead of overflowing narrow screens */
+p code, li code, td code, figcaption code { overflow-wrap: anywhere; }
+
+/* Wide tables scroll horizontally inside their own region */
+.table-scroll {
+  overflow-x: auto;
+  margin: 18px 0 26px;
+}
+.table-scroll table { margin: 0; min-width: 560px; }
+.table-scroll:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.top-nav a:focus-visible,
+.sidebar-card a:focus-visible,
+a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
 .callout {
   margin: 24px 0;
@@ -207,8 +223,8 @@ figure img {
   border-radius: 5px;
   background: #fff;
 }
-figure.narrow img { max-width: 760px; }
-figure.qc-figure img { max-width: 980px; }
+figure.narrow img { width: auto; max-width: min(760px, 100%); height: auto; }
+figure.qc-figure img { width: auto; max-width: min(980px, 100%); height: auto; }
 figure.wide img { width: 100%; }
 figcaption {
   margin-top: 8px;
@@ -249,6 +265,8 @@ figcaption {
   margin: 24px 0;
 }
 .output-grid > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 16px 17px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -327,4 +345,17 @@ th { background: var(--surface-soft); }
     border-bottom: 1px solid var(--border);
   }
   td:last-child { border-bottom: 0; }
+
+  .table-scroll { overflow-x: visible; }
+  .table-scroll table { min-width: 0; }
+  td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: var(--muted);
+    font-size: .8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
 }

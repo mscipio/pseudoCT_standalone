@@ -72,6 +72,22 @@ source_time = local_record_time(source_line);
     local_stage_marker(source_line, context);
 body = local_strip_context_tags(body);
 
+% Canonical Local Current events (emitted by the orchestrator/adapter) carry
+% their own public stage (stage_index/stage_count) and a semantic status
+% (stage_status: START, DONE, SKIPPED, INFO, WARN, ERROR, LOG) and an
+% optional display text (stage_message). The presenter only formats them.
+canonical_status = '';
+canonical_message = '';
+if isfield(context, 'stage_status') && ischar(context.stage_status)
+    canonical_status = upper(strtrim(context.stage_status));
+end
+if isfield(context, 'stage_message') && ischar(context.stage_message)
+    canonical_message = context.stage_message;
+end
+if strcmp(canonical_status, 'LOG')
+    return;  % detail belongs to the run log only
+end
+
 % Recover stable subject identity from either the explicit MATLAB context or
 % the tagged orchestration record. Compiled output inherits the caller's
 % subject context from the local backend monitor.
@@ -145,6 +161,18 @@ if new_run
 end
 if ~isempty(profile_match) && isempty(state.active_profile)
     state = local_reset_run_state(state, profile_match{1}, run_id);
+end
+% Local Current: a raw [stage N/M] whose total is not an orchestration total
+% (9 or 10) is a compiled-child counter (for example the stage 6/8 of a child
+% WARN). It never becomes a public stage; the event keeps the active
+% canonical stage carried by its context, or no stage.
+if strcmp(state.active_profile, 'local-current') && explicit_stage > 0 && ...
+        ~any(explicit_stage_total == [9 10])
+    [explicit_stage, explicit_stage_total] = local_stage_marker('', context);
+    if ~any(explicit_stage_total == [9 10])
+        explicit_stage = 0;
+        explicit_stage_total = 0;
+    end
 end
 
 warning_start = ~isempty(regexp(lower(strtrim(body)), ...
@@ -288,7 +316,17 @@ if local_is_presenter_profile(state.active_profile)
         [~, ~, ~, kind, display_body] = ...
             local_classify_local(state.active_profile, level, body);
     end
-    if isempty(kind) && explicit_stage > 0 && strcmp(level, 'INFO')
+    unstructured_child = isfield(context, 'console_unstructured') && ...
+        isequal(context.console_unstructured, true);
+    [kind, display_body] = local_apply_canonical_status( ...
+        canonical_status, canonical_message, kind, display_body);
+    if strcmp(state.active_profile, 'local-current')
+        % A compiled-child [stage N/8] tag inside the text is never public.
+        display_body = regexprep(display_body, ...
+            '\[stage[ \t]+[0-9]+/8\][ \t]*', '', 'ignorecase');
+    end
+    if isempty(kind) && explicit_stage > 0 && strcmp(level, 'INFO') && ...
+            ~unstructured_child
         kind = 'active';
         display_body = body;
     end
@@ -338,11 +376,35 @@ if local_is_presenter_profile(state.active_profile)
 
     if local_is_local_profile(state.active_profile) && ...
             ~isempty(subject_slot) && state.subject_failed(subject_slot) && ...
-            any(strcmp(kind, {'stage'; 'active'; 'milestone'; 'done'}))
+            any(strcmp(kind, {'stage'; 'active'; 'milestone'; 'done'; 'skipped'}))
         return;
     end
 
-    event_stage = local_event_stage(explicit_stage, explicit_stage_total);
+    % Compiled-child milestones are subordinate, unnumbered steps; the raw
+    % [N/M] tag stays in the detailed log and diagnostics.
+    % Local Current orchestration is explicitly [stage N/9]; a line whose own
+    % tag carries the compiled internal total (8) is a compiled-child event.
+    % Decided by the explicit total and profile, never by message text.
+    if strcmp(state.active_profile, 'local-current') && explicit_stage > 0
+        % Public stage is carried by the event itself: the console cell is
+        % printed on stage entry only; the event record always keeps it.
+        if isempty(subject_index)
+            row_subject = 0;
+        else
+            row_subject = subject_index;
+        end
+        [state, event_stage, record_stage] = local_stage_cells(state, ...
+            row_subject, explicit_stage, explicit_stage_total);
+    else
+        compiled_counter = explicit_stage > 0 && explicit_stage_total == 8 && ...
+            strcmp(state.active_profile, 'local-current');
+        if unstructured_child || compiled_counter
+            event_stage = '';
+        else
+            event_stage = local_event_stage(explicit_stage, explicit_stage_total);
+        end
+        record_stage = event_stage;
+    end
 
     if strcmp(kind, 'error') && ~isempty(subject_slot)
         state.subject_failed(subject_slot) = true;
@@ -375,6 +437,9 @@ if local_is_presenter_profile(state.active_profile)
         level = 'WARN';
     end
     status = local_console_status(kind, level);
+    if isempty(status) && strcmp(state.active_profile, 'local-current')
+        status = 'INFO';
+    end
     display_body = local_sanitize_message(local_format_duration( ...
         strtrim(display_body)));
     if strcmp(kind, 'run-failed')
@@ -387,7 +452,6 @@ if local_is_presenter_profile(state.active_profile)
     console_line = local_format_row(event_clock, event_subject, ...
         stage_text, status, display_body);
     visible = true;
-    record_stage = event_stage;
     event_record = local_event_record(level, event_subject, record_stage, ...
         status, display_body, source_time, local_event_job(context));
     state = local_queue_event(state, event_record);
@@ -448,6 +512,7 @@ state.warning_repeats = struct('subject', {}, 'stage', {}, ...
     'stage_total', {}, 'job', {}, 'kind', {}, 'text', {}, ...
     'first_time', {}, 'count', {});
 state.warning_group_active = false;
+state.last_row_key = [-1 -1];
 state.event_records = local_empty_events();
 end
 
@@ -477,6 +542,7 @@ state.warning_repeats = struct('subject', {}, 'stage', {}, ...
     'stage_total', {}, 'job', {}, 'kind', {}, 'text', {}, ...
     'first_time', {}, 'count', {});
 state.warning_group_active = false;
+state.last_row_key = [-1 -1];
 state.event_records = event_records;
 end
 
@@ -733,8 +799,10 @@ if strcmp(level, 'SUCCESS')
         kind = 'subject-end';
     elseif local_starts_with(text_lower, 'run completed:')
         kind = 'run-end';
+    elseif local_starts_with(text_lower, 'compiled current compute phase completed (elapsed ')
+        % Emitted by the backend only after the child exit status was 0.
+        kind = 'done';
     elseif local_starts_with(text_lower, 'compiled current prepare phase completed') || ...
-            local_starts_with(text_lower, 'compiled current compute phase completed') || ...
             local_starts_with(text_lower, 'mlsc current compute completed')
         kind = '';
     end
@@ -912,8 +980,9 @@ function [state, repeated] = local_track_repeated_warning(state, ...
 repeated = false;
 for ii = 1:length(state.warning_repeats)
     entry = state.warning_repeats(ii);
-    if entry.subject == subject_index && entry.stage == stage_number && ...
-            entry.stage_total == stage_total && ...
+    % Per-subject grouping: the stage is not part of the key; the row keeps
+    % the stage of the first occurrence.
+    if entry.subject == subject_index && ...
             strcmp(entry.job, job) && ...
             strcmp(entry.kind, kind) && strcmp(entry.text, text)
         state.warning_repeats(ii).count = entry.count + 1;
@@ -953,11 +1022,11 @@ for ii = 1:length(state.warning_repeats)
         end
         [event_date, event_clock] = local_event_clock(emission_time);
         state = local_emit_date_separator(state, event_date);
-        stage_text = local_event_stage(entry.stage, entry.stage_total);
+        [state, stage_text, record_stage] = local_flush_stage(state, entry);
         event_line = local_format_row(event_clock, subject_name, stage_text, ...
             'WARN', local_sanitize_message(message));
         record = local_event_record('WARN', subject_name, ...
-            stage_text, 'WARN', ...
+            record_stage, 'WARN', ...
             local_sanitize_message(message), emission_time, entry.job);
         local_emit_console_event(event_line, record);
         state = local_queue_event(state, record);
@@ -1076,11 +1145,11 @@ end
 [event_date, event_clock] = local_event_clock(entry.time);
 state = local_emit_date_separator(state, event_date);
 message = local_warning_message(entry.text);
-stage_text = local_event_stage(entry.stage, entry.stage_total);
+[state, stage_text, record_stage] = local_flush_stage(state, entry);
 event_line = local_format_row(event_clock, subject_name, stage_text, 'WARN', ...
     local_sanitize_message(message));
 record = local_event_record('WARN', subject_name, ...
-    stage_text, 'WARN', ...
+    record_stage, 'WARN', ...
     local_sanitize_message(message), entry.time, entry.job);
 local_emit_console_event(event_line, record);
 state = local_queue_event(state, record);
@@ -1095,11 +1164,11 @@ end
 state = local_emit_date_separator(state, event_date);
 notice = ['Further continuation text of this warning is truncated on the ' ...
     'console; full text remains in the detailed log.'];
-stage_text = local_event_stage(entry.stage, entry.stage_total);
+[state, stage_text, record_stage] = local_flush_stage(state, entry);
 event_line = local_format_row(event_clock, subject_name, stage_text, 'WARN', ...
     local_sanitize_message(notice));
 record = local_event_record('WARN', subject_name, ...
-    stage_text, 'WARN', ...
+    record_stage, 'WARN', ...
     local_sanitize_message(notice), entry.time, entry.job);
 local_emit_console_event(event_line, record);
 state = local_queue_event(state, record);
@@ -1117,6 +1186,52 @@ end
 state.last_date = event_date;
 end
 
+function [kind, display_body] = local_apply_canonical_status(status, message, kind, display_body)
+%LOCAL_APPLY_CANONICAL_STATUS Map an explicit event status to a row kind.
+%   No message text is interpreted. WARN/ERROR keep their level-derived kind
+%   (warning grouping and QFORM0 de-duplication stay in the usual path).
+if isempty(status)
+    return;
+end
+switch status
+    case {'START', 'ACTIVE'}
+        kind = 'active';
+    case 'DONE'
+        kind = 'done';
+    case 'SKIPPED'
+        kind = 'skipped';
+    case 'INFO'
+        kind = 'milestone';
+    otherwise
+        return;
+end
+if ~isempty(message)
+    display_body = message;
+end
+end
+
+function [state, row_stage, record_stage] = local_stage_cells(state, subject, stage_number, stage_total)
+%LOCAL_STAGE_CELLS Row cell is non-blank only when the active (subject,
+%   stage) differs from the previously presented row; the record is full.
+record_stage = local_event_stage(stage_number, stage_total);
+key = [subject stage_number];
+if isequal(key, state.last_row_key)
+    row_stage = '';
+else
+    row_stage = record_stage;
+    state.last_row_key = key;
+end
+end
+
+function [state, row_stage, record_stage] = local_flush_stage(state, entry)
+record_stage = local_event_stage(entry.stage, entry.stage_total);
+row_stage = record_stage;
+if strcmp(state.active_profile, 'local-current') && entry.stage > 0
+    [state, row_stage, record_stage] = local_stage_cells(state, ...
+        entry.subject, entry.stage, entry.stage_total);
+end
+end
+
 function status = local_console_status(kind, level)
 status = '';
 if strcmp(kind, 'remote-terminal')
@@ -1130,6 +1245,8 @@ elseif strcmp(kind, 'verified') || ...
     status = 'VERIFIED';
 elseif strcmp(kind, 'done')
     status = 'DONE';
+elseif strcmp(kind, 'skipped')
+    status = 'SKIPPED';
 elseif any(strcmp(kind, {'stage'; 'active'}))
     status = 'ACTIVE';
 elseif strcmp(kind, 'accepted')
@@ -1247,6 +1364,10 @@ stage_number = 0;
 stage_total = 0;
 match = regexp(line, '\[stage[ \t]+([0-9]+)/([0-9]+)\]', ...
     'tokens', 'once', 'ignorecase');
+if isstruct(context) && isfield(context, 'stage_status') && ...
+        isfield(context, 'stage_index') && isfield(context, 'stage_count')
+    match = [];  % canonical event: its own public stage is authoritative
+end
 if ~isempty(match)
     candidate = [str2double(match{1}) str2double(match{2})];
 elseif isstruct(context) && isfield(context, 'stage_index') && ...
@@ -1305,7 +1426,18 @@ for ii = 1:length(dicom_names)
     identifier = local_short_hash(dicom_names{ii});
     text = strrep(text, dicom_names{ii}, ['DICOM-' identifier]);
 end
-text = regexprep(text, '/[^ \t,;:()]+', '<path>');
+% Redact path-shaped tokens only: absolute paths, and relative multi-segment
+% tokens with a subject-data directory segment (MR_PET, MR, pseudo_muMAP, tmp)
+% or a segment ending in a file extension; keep prose such as
+% registration/warping and exactly the approved MR_PET/pseudoct-run-*.log
+% disclosure. Mirrors bin/pseudoct.
+boundary = '(?<![^\s=''"(\[<,;:])';
+text = regexprep(text, [boundary '(?:~|\.{1,2})?/[^ \t,;:()]+'], '<path>');
+text = regexprep(text, [boundary ...
+    '(?!MR_PET/pseudoct-run-[0-9A-Za-z-]+\.log(?![\w.\-/]))' ...
+    '(?=[\w.\-/]*?(?:(?<![\w.\-])(?:MR_PET|MR|pseudo_muMAP|tmp)(?![\w.\-])' ...
+    '|\.(?=[0-9]*[A-Za-z])[A-Za-z0-9]{1,5}(?![\w.\-])))' ...
+    '[\w.\-]+(?:/[\w.\-]+)+'], '<path>');
 text = regexprep(text, '[A-Za-z]:\\[^ \t,;:()]+', '<path>');
 text = regexprep(text, ...
     '(?i)(username|user|password|passphrase|account|token|secret)([ \t]*[:=][ \t]*|[ \t]+)[^ \t,;]+', ...

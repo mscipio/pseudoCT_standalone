@@ -316,7 +316,11 @@ if ~isempty(jobs)
 end
 pseudo_CT_orchestrate('validate', validation_request);
 
-%% === Create one correlated run log per requested subject ===
+%% === Create one persistent, owner-only run log per requested subject ===
+% Log contract: <subject-root>/MR_PET/pseudoct-run-<UTC>-<invocationUUID>.log.
+% Never deleted by this code, never pruned; created only after validation and
+% destination resolution, so a failure before this point leaves no log.
+[log_utc, log_uuid] = local_run_log_identity();
 all_log_files = {};
 processing_dirs = {};
 for ii = 1:length(jobs)
@@ -333,13 +337,16 @@ for ii = 1:length(jobs)
         save_dir = jobs(ii).save_dir;
     end
     jobs(ii).subject_started = tic;
-    local_ensure_directory(processing_dir);
+    % The destination is trusted at this point (validated inputs plus the
+    % existing resolver).  Create only MR_PET (when missing) and the single
+    % owner-only run log first; tmp/ and DICOM directories follow the log.
+    [jobs(ii).log_file, log_name] = local_create_run_log(processing_dir, ...
+        log_utc, log_uuid);
+    local_record_public_log(log_name, ii);
     local_ensure_directory(temp_dir);
     if strcmp(config.io_policy.output, 'nifti-and-dicom')
         local_ensure_directory(save_dir);
     end
-    jobs(ii).log_file = fullfile(processing_dir, ...
-        sprintf('pseudo_CT_%s_%s.log', profile_name, run_id));
     all_log_files{end + 1} = jobs(ii).log_file; %#ok<AGROW>
     processing_dirs{end + 1} = processing_dir; %#ok<AGROW>
     header_context = struct('log_file', jobs(ii).log_file, 'scope', 'run');
@@ -351,9 +358,12 @@ for ii = 1:length(collection_stats.skipped_subjects)
     skipped_input = collection_stats.skipped_subjects{ii};
     [pathr, ~, ~] = fileparts(deblank(skipped_input));
     [processing_dir, temp_dir, ~] = pseudo_CT_resolve_output_dirs(pathr);
-    local_ensure_directory(processing_dir);
     skipped_log = fullfile(processing_dir, ...
-        sprintf('pseudo_CT_%s_%s.log', profile_name, run_id));
+        sprintf('pseudoct-run-%s-%s.log', log_utc, log_uuid));
+    if ~any(strcmp(skipped_log, all_log_files))
+        % A destination already logged by this run is reused, never reopened.
+        [skipped_log, ~] = local_create_run_log(processing_dir, log_utc, log_uuid);
+    end
     all_log_files{end + 1} = skipped_log; %#ok<AGROW>
     processing_dirs{end + 1} = processing_dir; %#ok<AGROW>
     context = struct('log_file', skipped_log, 'scope', 'subject');
@@ -443,7 +453,8 @@ switch config.mode
                 % Legacy output: disp(sprintf('\nPreparing Launchpad pseudo-CT subject %d of %d:\n%s\n', ...
                 %     ii, length(jobs), jobs(ii).mprage_fn));
             end
-            jobs(ii).seed_nii = dcm2nii(jobs(ii).mprage_fn, fullfile(jobs(ii).temp_dir, 'mprage.nii'), 'Overwrite', true);
+            jobs(ii).seed_nii = local_convert_dicom(jobs(ii).mprage_fn, ...
+                fullfile(jobs(ii).temp_dir, 'mprage.nii'), context);
             P(ii, 1:length(jobs(ii).seed_nii)) = jobs(ii).seed_nii;
             % Legacy output: disp(sprintf('\n\nThis is the temporary working directory where intermediate results will be saved:\n%s\n', temp_dir));
             pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
@@ -547,8 +558,8 @@ switch config.mode
             context = local_stage_context(context, 1);
             stage_started = tic;
             pseudo_CT_output('INFO', context, 'Preparing input MPRAGE.');
-            jobs(ii).seed_nii = dcm2nii(jobs(ii).mprage_fn, ...
-                fullfile(jobs(ii).temp_dir, 'mprage.nii'), 'Overwrite', true);
+            jobs(ii).seed_nii = local_convert_dicom(jobs(ii).mprage_fn, ...
+                fullfile(jobs(ii).temp_dir, 'mprage.nii'), context);
             pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
                 local_elapsed(toc(stage_started)));
         end
@@ -871,6 +882,15 @@ function success = local_run_subject(job, dir_batch_templates, ...
 success = 0;
 context = local_subject_context(job, subject_index, subject_count);
 context.console_profile = profile_name;
+% Local Current public stage total follows the resolved output policy:
+% 10 stages with DICOM output, 9 for NIfTI-only (no DICOM stage).
+if strcmp(profile_name, 'local-current')
+    if strcmp(config.io_policy.output, 'nifti-only')
+        context.public_stage_total = 9;
+    else
+        context.public_stage_total = 10;
+    end
+end
 subject_started = job.subject_started;
 
 [pathr, ~, ~] = fileparts(deblank(job.mprage_fn));
@@ -925,9 +945,9 @@ clear USERNAME PASSWORD HOSTNAME
 % Convert DICOM to NIfTI
 context = local_stage_context(context, 1);
 stage_started = tic;
-pseudo_CT_output('INFO', context, 'Preparing input MPRAGE.');
-P = dcm2nii(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), 'Overwrite', true);
-pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
+pseudo_CT_output('INFO', local_status_context(context, 'START'), 'Preparing input MPRAGE.');
+P = local_convert_dicom(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), context);
+pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'Input prepared (elapsed %s).', ...
     local_elapsed(toc(stage_started)));
 
 [temp_working_dir, ~, ~] = fileparts(deblank(P));
@@ -955,47 +975,63 @@ end
 [temp_working_dir, ~, ~] = fileparts(deblank(Pf(end, :)));
 if strcmp(config.io_policy.output, 'nifti-and-dicom')
     try
-        context = local_stage_context(context, 7);
+        dicom_stage = 7;
+        if strcmp(profile_name, 'local-current')
+            dicom_stage = 9;   % public stage; stage 10 is output promotion
+        end
+        context = local_stage_context(context, dicom_stage);
         stage_started = tic;
-        pseudo_CT_output('INFO', context, 'Writing DICOM output.');
+        pseudo_CT_output('INFO', local_status_context(context, 'START'), 'Writing DICOM output.');
         pseudo_CT_write_mu_map_dicom(fullfile(temp_working_dir, 'att_map.nii'), ...
-            save_dir, job.umap_fn, temp_dir, config.fwhm);
-        pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
+            save_dir, job.umap_fn, temp_dir, config.fwhm, context);
+        pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'DICOM output written (elapsed %s).', ...
             local_elapsed(toc(stage_started)));
     catch ME
         % Legacy output: disp(ME.message);
-        pseudo_CT_output('ERROR', context, 'DICOM output failed: %s', ME.message);
+        pseudo_CT_output('ERROR', local_status_context(context, 'ERROR'), 'DICOM output failed: %s', ME.message);
         return;
     end
 else
-    pseudo_CT_output('INFO', context, 'Skipping DICOM output by profile policy.');
+    % Not a DICOM stage: report the policy skip without attributing it to the
+    % (long finished) input stage that this context still carries.
+    skip_context = rmfield(context, {'stage_index', 'stage_count'});
+    skip_context = local_status_context(skip_context, 'INFO');
+    pseudo_CT_output('INFO', skip_context, 'Skipping DICOM output by profile policy.');
 end
 
 % Promote final outputs and clean up according to the selected profile.
-context = local_stage_context(context, 8);
+% Promotion is the scientific stage; temporary cleanup is housekeeping and
+% is reported separately (a cleanup problem never reads as promotion failure
+% and never as "cleanup completed").
+promote_stage = 8;
+if strcmp(profile_name, 'local-current')
+    promote_stage = context.public_stage_total;   % 10, or 9 for NIfTI-only
+end
+context = local_stage_context(context, promote_stage);
 stage_started = tic;
-pseudo_CT_output('INFO', context, 'Promoting outputs and cleaning up.');
+pseudo_CT_output('INFO', local_status_context(context, 'START'), 'Promoting outputs and cleaning up.');
 promotion_success = pseudo_CT_promote_final_outputs(temp_working_dir, processing_dir, P, context);
 if ~promotion_success
     % Legacy output: disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', temp_working_dir));
-    pseudo_CT_output('ERROR', context, 'Output promotion failed; temporary files were preserved.');
-    pseudo_CT_output('INFO', context, '    %s', temp_working_dir);
+    pseudo_CT_output('ERROR', local_status_context(context, 'ERROR'), 'Output promotion failed; temporary files were preserved.');
+    pseudo_CT_output('INFO', local_status_context(context, 'INFO'), '    %s', temp_working_dir);
     return;
-elseif config.cleanup_on_success
+end
+% Legacy output: disp(sprintf('The final pseudo-CT NIfTI/QC files were saved in:\n%s\n', processing_dir));
+pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'Outputs promoted (elapsed %s).', ...
+    local_elapsed(toc(stage_started)));
+if config.cleanup_on_success
     [remove_success, msg] = rmdir(temp_working_dir, 's');
     if ~remove_success
         % Legacy output: disp(sprintf('There was an error removing the temporary directory %s\n%s', ...
         %     temp_working_dir, msg));
-        pseudo_CT_output('WARN', context, 'Temporary cleanup failed: %s', msg);
+        pseudo_CT_output('WARN', local_status_context(context, 'WARN'), 'Temporary cleanup failed: %s', msg);
+    else
+        pseudo_CT_output('INFO', local_status_context(context, 'INFO'), 'Temporary files removed.');
     end
 end
 
 % Legacy output: disp(sprintf('\n\nYour att-map Dicom images have been saved in:\n%s\n', save_dir));
-if promotion_success
-    % Legacy output: disp(sprintf('The final pseudo-CT NIfTI/QC files were saved in:\n%s\n', processing_dir));
-end
-pseudo_CT_output('SUCCESS', context, 'Outputs promoted and cleanup completed (elapsed %s).', ...
-    local_elapsed(toc(stage_started)));
 
 if show_dialog && ~isdeployed
     % Legacy output: warndlg('Pseudo-CT image finished!!', 'Pseudo-CT finished!!');
@@ -1181,6 +1217,15 @@ pseudo_CT_apply_background_mask(temp_dir, context);
 end
 
 
+function seed_nii = local_convert_dicom(input_file, output_file, context)
+%LOCAL_CONVERT_DICOM Run dcm2nii with its console output kept off the table.
+%   Shared with the stage-9 reference conversion (see
+%   PSEUDO_CT_CONVERT_DICOM_QUIET): converter lines go to the subject run log
+%   only; the public table keeps the stage events.
+seed_nii = pseudo_CT_convert_dicom_quiet(input_file, output_file, context);
+end
+
+
 function context = local_subject_context(job, subject_index, subject_count)
 context = struct('log_file', job.log_file, 'subject_index', subject_index, ...
     'subject_count', subject_count, 'scope', 'subject');
@@ -1188,15 +1233,32 @@ end
 
 
 function context = local_stage_context(context, stage_index)
+% Stage tag for the event context. Local Current uses its public stage
+% numbering (stage_count = public_stage_total: 10 with DICOM output, 9 for
+% NIfTI-only; the adapter reports stages 2-8). Other profiles keep their own
+% internal counters.
 context.stage_index = stage_index;
 context.stage_count = 8;
 if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
         strcmp(context.console_profile, 'local-current')
     context.stage_count = 9;
+    if isfield(context, 'public_stage_total')
+        context.stage_count = context.public_stage_total;
+    end
 elseif isfield(context, 'console_profile') && ...
         ischar(context.console_profile) && ...
         strcmp(context.console_profile, 'local-mprage-only')
     context.stage_count = 8;
+end
+end
+
+function context = local_status_context(context, status)
+% Canonical semantic status (START, DONE, WARN, ERROR, INFO) of a Local
+% Current stage event; the console presenter formats it without interpreting
+% the message. Other profiles are unchanged. Returns a copy (never stored).
+if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
+        strcmp(context.console_profile, 'local-current')
+    context.stage_status = status;
 end
 end
 
@@ -1213,6 +1275,70 @@ pseudo_CT_output('INFO', context, 'Log header: MR_PET path');
 pseudo_CT_output('INFO', context, '    %s', processing_dir);
 pseudo_CT_output('INFO', context, 'Log header: temporary path');
 pseudo_CT_output('INFO', context, '    %s', temp_dir);
+end
+
+
+function [utc_stamp, uuid] = local_run_log_identity()
+%LOCAL_RUN_LOG_IDENTITY UTC stamp and invocation UUID for the run-log name.
+%   The CLI exports its invocation UUID; direct MATLAB callers get a fresh one.
+[status, out] = system('date -u +%Y%m%dT%H%M%SZ');
+utc_stamp = strtrim(out);
+if status ~= 0 || isempty(regexp(utc_stamp, '^\d{8}T\d{6}Z$', 'once'))
+    error('pseudo_CT:RunLogIdentityFailed', ...
+        'The run-log timestamp could not be established; no processing was started.');
+end
+uuid = lower(strtrim(getenv('PSEUDOCT_CLI_INVOCATION_ID')));
+if isempty(regexp(uuid, ...
+        '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 'once'))
+    uuid = lower(char(java.util.UUID.randomUUID().toString()));
+end
+end
+
+
+function [log_file, log_name] = local_create_run_log(processing_dir, utc_stamp, uuid)
+%LOCAL_CREATE_RUN_LOG Exclusively create the owner-only run log.
+%   A missing MR_PET is created 0700 (an existing one keeps its mode).  The
+%   file is created 0600 with noclobber (O_EXCL), so an existing file or
+%   symlink is never overwritten or followed.  No fallback location exists;
+%   failure messages carry no filesystem path.
+log_name = sprintf('pseudoct-run-%s-%s.log', utc_stamp, uuid);
+log_file = fullfile(processing_dir, log_name);
+failure_message = ['The per-run log could not be created in the subject ', ...
+    'MR_PET directory; no processing was started.'];
+if exist(processing_dir, 'dir') ~= 7
+    status = system(sprintf('umask 077 && mkdir -- %s >/dev/null 2>&1', ...
+        local_shell_quote(processing_dir)));
+    if status ~= 0 && exist(processing_dir, 'dir') ~= 7
+        error('pseudo_CT:RunLogCreateFailed', '%s', failure_message);
+    end
+end
+quoted = local_shell_quote(log_file);
+status = system(sprintf(['exec 2>/dev/null; umask 077 && set -C && : > %s && chmod 600 %s && ', ...
+    '[ -f %s ] && [ ! -L %s ]'], quoted, quoted, quoted, quoted));
+if status ~= 0
+    error('pseudo_CT:RunLogCreateFailed', '%s', failure_message);
+end
+end
+
+
+function quoted = local_shell_quote(text)
+quoted = ['''' strrep(text, '''', '''\''''') ''''];
+end
+
+
+function local_record_public_log(log_name, subject_index)
+%LOCAL_RECORD_PUBLIC_LOG Publish only the relative MR_PET log path.
+%   Detailed paths stay inside the subject's own log.  The CLI exports a
+%   private index file; direct MATLAB callers just see the relative line.
+relative_path = ['MR_PET/' log_name];
+index_file = getenv('PSEUDOCT_CLI_LOG_INDEX');
+if ~isempty(index_file)
+    fid = fopen(index_file, 'a');
+    if fid ~= -1
+        fprintf(fid, '%d\t%s\n', subject_index, relative_path);
+        fclose(fid);
+    end
+end
 end
 
 

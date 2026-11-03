@@ -19,7 +19,7 @@
 % final Dicom images;
 %
 %  mMR_nii2mu_dicom_blur_david(nifti_in,dir_out,tfm_file,tfm_file,mu_ref,interp_flag, scale_vali, sigma, ssh_log)
-function mMR_nii2mu_dicom_blur_david(nifti_in,dir_out,mu_ref,interp_flag, scale_val, sigma, temp_dir)
+function mMR_nii2mu_dicom_blur_david(nifti_in,dir_out,mu_ref,interp_flag, scale_val, sigma, temp_dir, output_context)
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % load the input file
@@ -111,7 +111,13 @@ spm_write_vol(V_scale, Im_scale);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%
 % Convert the ref_file into nifti:
-Pnew = dcm2nii(mu_ref, fullfile(temp_dir, 'ref_file.nii'), 'Overwrite', true);
+if nargin >= 8 && isstruct(output_context)
+    % Pipeline callers pass their event context: converter output goes to the
+    % run log only, never to the public console/JSONL.
+    Pnew = pseudo_CT_convert_dicom_quiet(mu_ref, fullfile(temp_dir, 'ref_file.nii'), output_context);
+else
+    Pnew = dcm2nii(mu_ref, fullfile(temp_dir, 'ref_file.nii'), 'Overwrite', true);
+end
 
 %%%%%%%%%%%%%%%%%%%%%%%
 % Now reslice the V_scale into the ref_file:

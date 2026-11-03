@@ -11,4 +11,8 @@ end
 
 interp_f = 1;
 scale_val = 1;
-mMR_nii2mu_dicom_blur_david(att_map_file, save_dir, umap_fn, interp_f, scale_val, FWHM, temp_dir);
+if nargin > 5 && isstruct(varargin{2})
+    mMR_nii2mu_dicom_blur_david(att_map_file, save_dir, umap_fn, interp_f, scale_val, FWHM, temp_dir, varargin{2});
+else
+    mMR_nii2mu_dicom_blur_david(att_map_file, save_dir, umap_fn, interp_f, scale_val, FWHM, temp_dir);
+end

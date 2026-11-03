@@ -271,6 +271,11 @@ trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
 invocation_id=$(uuidgen | tr 'A-F' 'a-f') || error_record "$EXIT_RUNTIME" 'Cannot generate an invocation UUID.'
+# Private index of relative MR_PET run-log paths reported by the lifecycle.
+# Only this scratch index is removed by cleanup(); the subject's persistent
+# pseudoct-run-*.log files are never deleted by the CLI.
+run_log_index=$tmp_dir/run-logs.txt
+: > "$run_log_index" || error_record "$EXIT_RUNTIME" 'Cannot create the private run-log index.'
 input_file=$tmp_dir/cli-input.txt
 validate_request=$tmp_dir/validate-request.mat
 validate_result=$tmp_dir/validate-result.mat
@@ -386,7 +391,8 @@ run_headless() {
     result_path=$3
     set +e
     python3 - "$root_dir/bin/pseudoct-headless" "$request_path" \
-        "$result_path" "$format" "$tmp_dir/matlab-diagnostics-$phase.log" <<'PY'
+        "$result_path" "$format" "$tmp_dir/matlab-diagnostics-$phase.log" \
+        "$invocation_id" "$run_log_index" "$profile" <<'PY'
 import json
 import os
 import re
@@ -394,9 +400,50 @@ import selectors
 import subprocess
 import sys
 
-launcher, request_path, result_path, output_format, diagnostics_path = sys.argv[1:]
+launcher, request_path, result_path, output_format, diagnostics_path, \
+    invocation_id, run_log_index, run_profile = sys.argv[1:]
 environment = os.environ.copy()
 environment["PSEUDOCT_CLI_OUTPUT"] = "1"
+# Non-secret correlation only: names the per-run log and a private index of
+# its relative MR_PET path (the CLI scratch copy is removed on exit; the
+# subject's own run log never is).
+environment["PSEUDOCT_CLI_INVOCATION_ID"] = invocation_id
+environment["PSEUDOCT_CLI_LOG_INDEX"] = run_log_index
+
+# The public stage of a Local Current event (10 stages with DICOM output, 9
+# for NIfTI-only) is assigned by the Local Current adapter/orchestrator and
+# carried by the canonical event; the presenter blanks the STAGE cell on
+# continuation rows while every JSONL record keeps the full stage. This
+# transport passes stage values through: no raw-number remapping and no
+# policy reading.
+BARE_COMPILED_MARKER = re.compile(r"(?<!stage )(?<!stage\t)\[\d+/\d+\]", re.I)
+
+def remap_stage(value):
+    return value
+
+# Presenter text table row: TIME(8)  SUBJECT(7) STAGE(8)  STATUS ... with a
+# bracketed [n/m] STAGE cell. These are public rows, not compiled markers.
+TABLE_ROW = re.compile(r"^(\d\d:\d\d:\d\d {2}.{7} )(.{8})( {2}.*)$", re.S)
+
+def table_row_stage(text):
+    match = TABLE_ROW.match(text)
+    if match and re.fullmatch(r"\[\d+/\d+\]\s*", match.group(2)):
+        return match
+    return None
+
+def remap_table_row(text):
+    return text
+
+def remap_stage_markers(text):
+    return text
+
+def redact_secrets(text):
+    # Credentials are filtered before anything is persisted, including the raw
+    # private capture below.
+    return re.sub(
+        r"(?i)(username|user|password|passphrase|account|token|secret)"
+        r"([ \t]*[:=][ \t]*|[ \t]+)[^ \t,;]+",
+        lambda match: match.group(1) + match.group(2) + "<redacted>", text)
 if output_format == "jsonl":
     environment["PSEUDOCT_OUTPUT_FORMAT"] = "jsonl"
 else:
@@ -430,7 +477,19 @@ def sanitize_message(text):
         r"(?i)(?:[A-Za-z]:\\|/)?[^ \t,;:()]*\.dcm", text)
     for name in dicom_names:
         text = text.replace(name, "DICOM-" + short_hash(name))
-    text = re.sub(r"/[^ \t,;:()]+", "<path>", text)
+    # Redact path-shaped tokens only: absolute (/x, ~/x, ./x, ../x) tokens and
+    # relative multi-segment tokens that have a segment naming a subject-data
+    # directory (MR_PET, MR, pseudo_muMAP, tmp) or a segment ending in a file
+    # extension. Relative prose such as registration/warping is preserved, as
+    # is exactly the approved MR_PET/pseudoct-run-*.log disclosure.
+    boundary = r"(?<![^\s=\'\"(\[<,;:])"
+    text = re.sub(boundary + r"(?:~|\.{1,2})?/[^ \t,;:()]+", "<path>", text)
+    text = re.sub(
+        boundary + r"(?!MR_PET/pseudoct-run-[0-9A-Za-z-]+\.log(?![\w.\-/]))"
+        r"(?=[\w.\-/]*?(?:(?<![\w.\-])(?:MR_PET|MR|pseudo_muMAP|tmp)(?![\w.\-])"
+        r"|\.(?=[0-9]*[A-Za-z])[A-Za-z0-9]{1,5}(?![\w.\-])))"
+        r"[\w.\-]+(?:/[\w.\-]+)+",
+        "<path>", text)
     text = re.sub(r"[A-Za-z]:\\[^ \t,;:()]+", "<path>", text)
     text = re.sub(
         r"(?i)(username|user|password|passphrase|account|token|secret)"
@@ -491,6 +550,19 @@ def is_header_continuation(text):
                                            "TIME      SUBJECT STAGE")) or
             value == "-" * 67)
 
+class RedactingWriter:
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, text):
+        return self.stream.write(redact_secrets(text))
+
+    def flush(self):
+        return self.stream.flush()
+
+    def close(self):
+        return self.stream.close()
+
 def write_line(channel, raw, diagnostics):
     text = raw.decode("utf-8", "replace")
     if channel == "stderr":
@@ -500,6 +572,15 @@ def write_line(channel, raw, diagnostics):
     candidate = strip_prompts(text)
     if matlab_noise(candidate):
         diagnostics.write("[" + channel + "] " + text)
+        diagnostics.flush()
+        return
+    if channel == "stdout" and BARE_COMPILED_MARKER.search(candidate) and \
+            not candidate.lstrip().startswith("{") and \
+            not table_row_stage(candidate.rstrip("\r\n")):
+        # Compiled-runner [N/8] and SPM batch markers are log-only: they are
+        # not orchestration stages and never appear in public output. Public
+        # presenter table rows and JSON progress records are exempt.
+        diagnostics.write("[stdout compiled marker] " + text)
         diagnostics.flush()
         return
     if channel == "stdout" and output_format != "jsonl":
@@ -525,7 +606,15 @@ def write_line(channel, raw, diagnostics):
             return
         if isinstance(value, dict) and value.get("type") == "progress":
             if isinstance(value.get("message"), str):
-                value["message"] = sanitize_message(value["message"])
+                value["message"] = remap_stage_markers(
+                    sanitize_message(value["message"]))
+            if "stage" in value:
+                mapped_stage = remap_stage(value["stage"])
+                if mapped_stage is None:
+                    value.pop("stage", None)
+                    value.pop("stage_reason", None)
+                else:
+                    value["stage"] = mapped_stage
             for field_name in ("subject", "stage", "status", "job"):
                 field_value = value.get(field_name)
                 missing_context = field_value is None or field_value == "" or \
@@ -545,12 +634,15 @@ def write_line(channel, raw, diagnostics):
         try:
             value = json.loads(candidate)
         except Exception:
-            forward_line(candidate, "stdout")
+            body = candidate.rstrip("\r\n")
+            forward_line(remap_table_row(body) + candidate[len(body):], "stdout")
         else:
             if isinstance(value, dict) and value.get("type") == "progress":
-                message = sanitize_message(str(value.get("message", "")))
+                message = remap_stage_markers(
+                    sanitize_message(str(value.get("message", ""))))
+                public_stage = remap_stage(value.get("stage", ""))
                 fields = [value.get("timestamp", ""), value.get("level", ""),
-                          value.get("subject", ""), value.get("stage", ""),
+                          value.get("subject", ""), public_stage or "",
                           value.get("status", ""), message]
                 print(" | ".join(str(item) for item in fields if item not in (None, "")),
                       flush=True)
@@ -560,7 +652,8 @@ def write_line(channel, raw, diagnostics):
 try:
     diagnostics_fd = os.open(
         diagnostics_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    diagnostics = os.fdopen(diagnostics_fd, "w", encoding="utf-8", newline="")
+    diagnostics = RedactingWriter(
+        os.fdopen(diagnostics_fd, "w", encoding="utf-8", newline=""))
 except OSError:
     print("pseudoct: could not open diagnostics capture",
           file=sys.stderr, flush=True)
@@ -740,9 +833,20 @@ PY
     fi
 fi
 
-python3 - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" <<'PY'
-import json, sys
-summary, invocation, profile, action, output_format, backend = sys.argv[1:]
+python3 - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" "$run_log_index" <<'PY'
+import json, re, sys
+summary, invocation, profile, action, output_format, backend, log_index = sys.argv[1:]
+run_logs = []
+try:
+    with open(log_index, encoding="utf-8") as index:
+        for entry in index.read().splitlines():
+            number, _, relative = entry.partition("\t")
+            if number.isdigit() and re.fullmatch(
+                    r"MR_PET/pseudoct-run-\d{8}T\d{6}Z-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\.log",
+                    relative):
+                run_logs.append({"subject": int(number), "path": relative})
+except OSError:
+    pass
 values = open(summary, encoding="utf-8").read().splitlines()
 if len(values) < 10:
     print("pseudoct: verified result summary is incomplete.", file=sys.stderr)
@@ -827,6 +931,10 @@ else:
     else:
         print("  scientific completion: " + science_value)
     if job_ids: print("  scheduler job IDs: " + ", ".join(str(v) for v in job_ids))
+    for item in run_logs:
+        print("  run log" + (" (subject %d)" % item["subject"] if len(run_logs) > 1 else "") + ": " + item["path"])
+    if not run_logs and outcome in {"scientific_failed", "submission_failed"}:
+        print("  No subject run log was created because the output location could not be established.")
     if error_code: print("  error: " + error_code + ": " + message)
 raise SystemExit(code)
 PY

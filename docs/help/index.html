@@ -20,6 +20,8 @@
         </div>
         <nav class="top-nav" aria-label="Primary navigation">
           <a href="#quick-start">Quick start</a>
+          <a href="#interfaces">Interfaces</a>
+          <a href="#cli">CLI</a>
           <a href="#inputs">Inputs</a>
           <a href="#mlsc">MLSC</a>
           <a href="#processing">Processing</a>
@@ -35,16 +37,25 @@
           <strong>Contents</strong>
           <a href="#overview">Overview</a>
           <a href="#software">Software &amp; versions</a>
+          <a href="#interfaces">Choosing an interface</a>
           <a href="#quick-start">Quick start</a>
           <a href="#profiles">Execution profiles</a>
           <a href="#mlsc">MLSC workflow</a>
           <a href="#inputs">Preparing input data</a>
-          <a href="#single-subject">Single-subject workflow</a>
+          <a href="#single-subject">MATLAB GUI workflow</a>
           <a href="#batch">Batch processing</a>
+          <a href="#scripting">MATLAB scripting</a>
+          <a href="#headless-api">Headless API</a>
+          <a href="#cli">Terminal CLI</a>
+          <a href="#validation-submission">Validation &amp; submission</a>
+          <a href="#remote-auth">Remote authentication</a>
           <a href="#processing">During processing</a>
+          <a href="#monitoring">Monitoring (CLI/headless)</a>
           <a href="#outputs">Outputs</a>
           <a href="#qc">Quality control</a>
           <a href="#troubleshooting">Troubleshooting</a>
+          <a href="#piano">PIANO integration</a>
+          <a href="#limitations">Known limitations</a>
           <a href="#advanced">More information</a>
         </div>
       </aside>
@@ -151,6 +162,60 @@
           </div>
         </section>
 
+        <section id="interfaces">
+          <h2>Choosing an interface</h2>
+          <p>
+            The same pseudoCT orchestration is reachable four ways. All use the
+            same canonical execution profiles; pick the one that matches how you
+            work.
+          </p>
+          <div class="table-scroll" role="region" aria-label="Interface comparison" tabindex="0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Interface</th>
+                  <th>Best for</th>
+                  <th>Interactive?</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label="Interface"><strong>MATLAB GUI</strong> (<code>run_pseudo_CT</code> with no arguments)</td>
+                  <td data-label="Best for">Routine single-subject processing by an operator</td>
+                  <td data-label="Interactive?">Yes: profile dialog, file pickers, remote login</td>
+                  <td data-label="Details"><a href="#single-subject">MATLAB GUI workflow</a></td>
+                </tr>
+                <tr>
+                  <td data-label="Interface"><strong>MATLAB scripting</strong> (<code>run_pseudo_CT</code> with named arguments)</td>
+                  <td data-label="Best for">Repeatable runs and batches from the MATLAB command window</td>
+                  <td data-label="Interactive?">Not necessarily noninteractive: omitted subjects open the GUI; remote runs may prompt for login</td>
+                  <td data-label="Details"><a href="#scripting">MATLAB scripting</a></td>
+                </tr>
+                <tr>
+                  <td data-label="Interface"><strong>Headless API</strong> (<code>pseudo_CT_headless</code>)</td>
+                  <td data-label="Best for">Programmatic callers that exchange MAT-file requests and results</td>
+                  <td data-label="Interactive?">No; remote submit needs a credential handoff</td>
+                  <td data-label="Details"><a href="#headless-api">Headless API</a></td>
+                </tr>
+                <tr>
+                  <td data-label="Interface"><strong>Terminal CLI</strong> (<code>bin/pseudoct</code>)</td>
+                  <td data-label="Best for">Shell and automation use with text or JSON Lines output</td>
+                  <td data-label="Interactive?">Remote <code>run</code> prompts for credentials on <code>/dev/tty</code></td>
+                  <td data-label="Details"><a href="#cli">Terminal CLI</a></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            Related topics: <a href="#profiles">execution profiles</a>,
+            <a href="#validation-submission">validation and submission</a>,
+            <a href="#remote-auth">remote authentication</a>, and
+            <a href="#monitoring">monitoring</a>. The minimum MATLAB version is
+            R2010b.
+          </p>
+        </section>
+
         <section id="quick-start">
           <h2>Quick start</h2>
           <ol class="steps">
@@ -171,8 +236,9 @@
               processing. PseudoCT v3 — Local remains available as an alternate.
             </li>
             <li>
-              Select the first DICOM of the MPRAGE series, or select the single
-              preprocessed NIfTI file.
+              Click <strong>Browse MPRAGE...</strong> and select the first DICOM
+              of the MPRAGE series, or select the single preprocessed NIfTI
+              file.
             </li>
             <li>Confirm that the UMAP has been found automatically.</li>
             <li>
@@ -180,8 +246,8 @@
               have a specific reason not to.
             </li>
             <li>
-              Click <strong>OK</strong> and keep MATLAB open until the run
-              finishes.
+              Click <strong>Run pseudoCT</strong> and keep MATLAB open until the
+              run finishes.
             </li>
             <li>
               Inspect both the TIFF fusion image and the final DICOM pseudoCT
@@ -275,8 +341,8 @@
             (<code>mlsc-legacy</code>), and
             <strong>PseudoCT v2 (Aether) — Launchpad</strong>
             (<code>launchpad-legacy</code>); site resources may be unavailable.
-            The development profile is available only by explicit canonical
-            key, not in the routine selector. Scripts use canonical profile
+            The development profile (<code>devel</code>) is not in the routine
+            selector and is not one of the seven CLI/headless keys. Scripts use canonical profile
             keys, not display labels. The bare key
             <code>mlsc</code> is a deprecated alias for
             <code>mlsc-legacy</code>; deprecated Launchpad aliases are not
@@ -293,6 +359,73 @@
             legacy Aether backend. The same explicit artifact overrides and
             fail-closed integrity checks apply; missing or invalid files never
             trigger a legacy fallback.
+          </p>
+
+          <h3 id="profile-keys">Profile keys at a glance</h3>
+          <p>
+            The terminal CLI and the headless API accept exactly these seven
+            canonical keys:
+          </p>
+          <div class="table-scroll" role="region" aria-label="Execution profile keys" tabindex="0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Environment / lineage</th>
+                  <th>MPRAGE-only?</th>
+                  <th>Output policy</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label="Key"><code>local-current</code></td>
+                  <td data-label="Environment / lineage">Local / current compiled payload</td>
+                  <td data-label="MPRAGE-only?">No</td>
+                  <td data-label="Output policy">NIfTI + DICOM</td>
+                </tr>
+                <tr>
+                  <td data-label="Key"><code>local-legacy</code></td>
+                  <td data-label="Environment / lineage">Local / legacy v2 (Aether)</td>
+                  <td data-label="MPRAGE-only?">No</td>
+                  <td data-label="Output policy">NIfTI + DICOM</td>
+                </tr>
+                <tr>
+                  <td data-label="Key"><code>local-mprage-only</code></td>
+                  <td data-label="Environment / lineage">Local / current</td>
+                  <td data-label="MPRAGE-only?">Yes</td>
+                  <td data-label="Output policy">NIfTI only</td>
+                </tr>
+                <tr>
+                  <td data-label="Key"><code>mlsc-current</code></td>
+                  <td data-label="Environment / lineage">MLSC / current compiled payload</td>
+                  <td data-label="MPRAGE-only?">No</td>
+                  <td data-label="Output policy">NIfTI + DICOM</td>
+                </tr>
+                <tr>
+                  <td data-label="Key"><code>mlsc-legacy</code></td>
+                  <td data-label="Environment / lineage">MLSC / legacy v2 (Aether)</td>
+                  <td data-label="MPRAGE-only?">No</td>
+                  <td data-label="Output policy">NIfTI + DICOM</td>
+                </tr>
+                <tr>
+                  <td data-label="Key"><code>mlsc-mprage-only</code></td>
+                  <td data-label="Environment / lineage">MLSC / inherits current</td>
+                  <td data-label="MPRAGE-only?">Yes</td>
+                  <td data-label="Output policy">NIfTI only</td>
+                </tr>
+                <tr>
+                  <td data-label="Key"><code>launchpad-legacy</code></td>
+                  <td data-label="Environment / lineage">Launchpad / legacy v2 (Aether)</td>
+                  <td data-label="MPRAGE-only?">No</td>
+                  <td data-label="Output policy">NIfTI + DICOM</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small-note">
+            A <code>devel</code> profile file is discovered by profile
+            listing, but it is not one of the seven CLI/headless keys and is
+            hidden from the routine GUI selector.
           </p>
 
           <div class="profile-card">
@@ -318,7 +451,8 @@
             </div>
             <p>
               Runs the full MPRAGE + UMAP workflow locally on the workstation
-              using the current MATLAB source (<code>local-current</code>).
+              using the shared compiled current-science payload
+              (<code>local-current</code>).
               This remains an available alternative to PseudoCT v3 — MLSC.
             </p>
           </div>
@@ -553,23 +687,66 @@
         </section>
 
         <section id="single-subject">
-          <h2>Single-subject workflow</h2>
+          <h2>MATLAB GUI workflow (single subject)</h2>
           <p>
-            After selecting <strong>PseudoCT v3 — Local</strong>, the Load
-            Images dialog is shown.
+            Start the GUI by calling <code>run_pseudo_CT</code> with no
+            arguments:
+          </p>
+          <pre tabindex="0"><code>run_pseudo_CT</code></pre>
+          <ol class="steps">
+            <li>
+              The <strong>Pseudo-CT Profile</strong> dialog opens
+              ("Select a pseudo-CT execution profile"). Choose a workflow, then
+              click <strong>Run Selected</strong>. <strong>Cancel</strong>
+              selects no profile and starts nothing.
+            </li>
+            <li>
+              The subject-input dialog opens. Click
+              <strong>Browse MPRAGE...</strong> and select the first DICOM file
+              of the series, or the single NIfTI file.
+            </li>
+            <li>
+              For standard profiles the UMAP is discovered automatically; if no
+              UMAP is found, the dialog reports it and you use
+              <strong>Browse UMAP...</strong> to supply one explicitly.
+            </li>
+            <li>
+              Review the MPRAGE correction options, then click
+              <strong>Run pseudoCT</strong>. This single action performs local
+              validation first and then submission. There is no separate
+              Validate button; if validation fails, a
+              "Run validation failed" message asks you to fix the inputs or
+              options and click <strong>Run pseudoCT</strong> again.
+            </li>
+            <li>
+              For a remote profile, the <strong>MLSC submit login</strong>
+              dialog asks for credentials (see
+              <a href="#remote-auth">Remote authentication</a>).
+            </li>
+            <li>
+              Keep MATLAB open until the run finishes. Outputs are written to
+              <code>MR_PET</code>, <code>MR_PET/tmp</code> (working files), and
+              <code>MR/pseudo_muMAP</code> (final DICOM) next to the input
+              data; see <a href="#outputs">Outputs</a>.
+            </li>
+          </ol>
+          <p class="small-note">
+            Some screenshots below were captured with earlier button labels
+            (for example "Load MPRAGE" and "OK"); the labels in the list above
+            are the current ones.
           </p>
 
           <figure>
             <img
               src="assets/load-images-empty.png"
-              alt="Initial Load Images dialog before selecting an MPRAGE"
+              alt="Initial subject-input dialog before selecting an MPRAGE"
             />
             <figcaption>Initial subject-input dialog.</figcaption>
           </figure>
 
           <h3>1. Load the MPRAGE</h3>
           <p>
-            Click <strong>Load MPRAGE</strong>. For DICOM input, select the
+            Click <strong>Browse MPRAGE...</strong>. For DICOM input, select the
             first file in the MPRAGE series. For NIfTI input, select the single
             <code>.nii</code> or <code>.nii.gz</code> file.
           </p>
@@ -590,7 +767,8 @@
             When the expected directory structure is present, pseudoCT
             automatically searches the sibling <code>MR/UMAP</code> folder and
             populates the UMAP field. In normal use, you should not need to
-            click <strong>Load UMAP</strong> manually. MPRAGE-only profiles
+            click <strong>Browse UMAP...</strong> manually; use it only when
+            discovery finds no UMAP or you want a different one. MPRAGE-only profiles
             skip this step by policy because they do not use a UMAP reference.
           </p>
 
@@ -628,9 +806,10 @@
 
           <h3>4. Start processing</h3>
           <p>
-            Once the input paths are correct, click <strong>OK</strong>. MATLAB
-            must remain open for the duration of the run. Cancelling or
-            closing the dialog starts no processing.
+            Once the input paths are correct, click
+            <strong>Run pseudoCT</strong>. Local validation runs first, then
+            submission. MATLAB must remain open for the duration of the run.
+            Cancelling or closing the dialog starts no processing.
           </p>
         </section>
 
@@ -669,6 +848,275 @@
           </div>
         </section>
 
+        <section id="scripting">
+          <h2>MATLAB scripting</h2>
+          <p>
+            Call <code>run_pseudo_CT</code> from the MATLAB command window with
+            name/value arguments (MATLAB R2010b minimum):
+          </p>
+          <pre tabindex="0"><code>run_pseudo_CT( ...
+    'profile', 'local-current', ...
+    'subjects', {'/path/to/MPRAGE.dcm'}, ...
+    'umap_files', {'/path/to/UMAP.dcm'});</code></pre>
+          <p>
+            Explicit UMAP paths are paired positionally with the subjects and
+            are not replaced. Empty or omitted UMAP values trigger local
+            discovery. When a profile and explicit subjects are given, as in
+            the example above, validation requires a readable UMAP for every
+            subject; if none is supplied or discovered, validation fails with
+            an error and the run does not start. Skipping a subject without a
+            UMAP applies only to the internal subject-list collection path
+            (<code>collect_jobs</code> / <code>build_jobs_from_subject_list</code>),
+            not to this call. MPRAGE-only profiles accept no UMAP.
+          </p>
+
+          <div class="callout warning">
+            <strong>Scripting is not necessarily noninteractive</strong>
+            <p>
+              If <code>subjects</code> is omitted or empty, the single-subject
+              GUI opens. <code>'subjects', 'batch'</code> opens a multi-select
+              file picker. A remote profile run without headless mode can
+              prompt for MLSC login. For unattended use, see the
+              <a href="#headless-api">Headless API</a> or the
+              <a href="#cli">Terminal CLI</a>.
+            </p>
+          </div>
+
+          <h3>Named arguments</h3>
+          <div class="table-scroll" role="region" aria-label="run_pseudo_CT named arguments" tabindex="0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Default</th>
+                  <th>Accepted type</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td data-label="Name"><code>profile</code></td><td data-label="Default"><code>''</code></td><td data-label="Accepted type">char</td></tr>
+                <tr><td data-label="Name"><code>subjects</code></td><td data-label="Default"><code>''</code></td><td data-label="Accepted type">char or cell (<code>'batch'</code> opens the picker)</td></tr>
+                <tr><td data-label="Name"><code>umap_files</code></td><td data-label="Default"><code>[]</code></td><td data-label="Accepted type">empty, char, or cell</td></tr>
+                <tr><td data-label="Name"><code>resolved_jobs</code></td><td data-label="Default"><code>struct([])</code></td><td data-label="Accepted type">struct</td></tr>
+                <tr><td data-label="Name"><code>correct_aliasing</code></td><td data-label="Default"><code>[]</code></td><td data-label="Accepted type">empty or scalar 0/1 (numeric or logical)</td></tr>
+                <tr><td data-label="Name"><code>recenter_before_normalization</code></td><td data-label="Default"><code>[]</code></td><td data-label="Accepted type">empty or scalar 0/1 (numeric or logical)</td></tr>
+                <tr><td data-label="Name"><code>cleanup_on_success</code></td><td data-label="Default"><code>[]</code></td><td data-label="Accepted type">empty or scalar 0/1 (numeric or logical)</td></tr>
+                <tr><td data-label="Name"><code>mlsc_host_key_provider</code></td><td data-label="Default"><code>[]</code></td><td data-label="Accepted type">empty, char, or function handle</td></tr>
+                <tr><td data-label="Name"><code>mlsc_current_artifact_root</code></td><td data-label="Default"><code>''</code></td><td data-label="Accepted type">char</td></tr>
+                <tr><td data-label="Name"><code>headless_mode</code></td><td data-label="Default"><code>false</code></td><td data-label="Accepted type">scalar logical</td></tr>
+                <tr><td data-label="Name"><code>headless_credentials</code></td><td data-label="Default"><code>struct()</code></td><td data-label="Accepted type">scalar struct</td></tr>
+                <tr><td data-label="Name"><code>group_account</code></td><td data-label="Default"><code>''</code></td><td data-label="Accepted type">char</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small-note">
+            Omitted processing options use the selected profile's defaults.
+            Scripts use canonical profile keys, not display labels.
+          </p>
+        </section>
+
+        <section id="headless-api">
+          <h2>Headless API</h2>
+          <p>
+            <code>pseudo_CT_headless(request_path, result_path)</code> is the
+            noninteractive MATLAB entry point (R2010b minimum). The request is
+            a MAT v5 file containing one scalar struct named
+            <code>request</code>; the result is a MAT file written at the path
+            you choose.
+          </p>
+          <ul class="checklist">
+            <li>
+              Request schema: <code>pseudoCT.headless-request/v2</code>. Result
+              schema: <code>pseudoCT.headless-result/v2</code>.
+            </li>
+            <li>
+              <strong>Two actions:</strong> <code>validate</code> then
+              <code>submit</code>. Validation returns a resolved job in the
+              result; <code>submit</code> must carry that resolved job (and
+              empty subjects, UMAP, options, output config, and artifact-root
+              override) bound to the same profile and invocation ID.
+            </li>
+            <li>
+              Validation is local-only and does not authenticate.
+            </li>
+            <li>
+              A remote <code>submit</code> requires a credential handoff
+              (<code>credential_handoff</code>). The request holds only the
+              handoff path, never credential values.
+            </li>
+            <li>
+              Profiles are limited to the <a href="#profile-keys">seven
+              canonical keys</a>.
+            </li>
+          </ul>
+          <p>
+            Result <code>status</code> is <code>ready</code>,
+            <code>submitted</code>, or <code>failed</code>. A bad argument
+            count or path at the API boundary throws before a result is
+            saved; request-level failures are saved as a failed result.
+          </p>
+          <p>
+            The shell wrapper <code>bin/pseudoct-headless REQUEST.mat
+            RESULT.mat</code> runs this API through MATLAB (the
+            <code>PSEUDOCT_MATLAB</code> environment variable, or the default
+            MATLAB 7.11). Its launcher codes are 64 (wrong argument count),
+            65 (request missing or unreadable), 66 (invalid result path), 69
+            (MATLAB unavailable), and 70 (runtime or bootstrap failure); codes
+            0, 2, and 3 pass through from the MATLAB result only when a usable
+            result file exists.
+          </p>
+          <p>
+            Full request fields, result fields, and error codes are in the
+            <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md"
+              >headless and CLI reference</a
+            >.
+          </p>
+        </section>
+
+        <section id="cli">
+          <h2>Terminal CLI</h2>
+          <p>
+            <code>bin/pseudoct</code> wraps the headless API for shell use. It
+            has two commands, <code>validate</code> and <code>run</code>.
+          </p>
+          <pre tabindex="0"><code>bin/pseudoct --help
+
+# Validate one subject (local only, no authentication)
+bin/pseudoct validate --profile local-current \
+    --mprage /path/to/MPRAGE.dcm --umap /path/to/UMAP.dcm
+
+# Validate, then submit
+bin/pseudoct run --profile local-current \
+    --mprage /path/to/MPRAGE.dcm --umap /path/to/UMAP.dcm
+
+# Multiple subjects from a config file, JSON Lines output
+bin/pseudoct run --profile mlsc-current --config job.json --format jsonl</code></pre>
+
+          <h3>Options</h3>
+          <div class="table-scroll" role="region" aria-label="CLI options" tabindex="0">
+            <table>
+              <thead>
+                <tr><th>Option</th><th>Meaning</th></tr>
+              </thead>
+              <tbody>
+                <tr><td data-label="Option"><code>--profile NAME</code></td><td data-label="Meaning">Required. One of the <a href="#profile-keys">seven canonical keys</a>.</td></tr>
+                <tr><td data-label="Option"><code>--mprage FILE</code> <code>--umap FILE</code></td><td data-label="Meaning">One subject. <code>--umap</code> may be omitted so the UMAP is discovered during validation.</td></tr>
+                <tr><td data-label="Option"><code>--config job.json</code></td><td data-label="Meaning">Multi-subject JSON object.</td></tr>
+                <tr><td data-label="Option"><code>--correct-aliasing yes|no</code></td><td data-label="Meaning">Override the profile default.</td></tr>
+                <tr><td data-label="Option"><code>--recenter-before-normalization yes|no</code></td><td data-label="Meaning">Override the profile default.</td></tr>
+                <tr><td data-label="Option"><code>--cleanup-on-success yes|no</code></td><td data-label="Meaning">Override the profile default.</td></tr>
+                <tr><td data-label="Option"><code>--current-artifact-root PATH</code></td><td data-label="Meaning">Validation override for the current-lineage MLSC artifact (<code>mlsc-current</code>, <code>mlsc-mprage-only</code>); rejected for local-current profiles.</td></tr>
+                <tr><td data-label="Option"><code>--group-account ACCOUNT</code></td><td data-label="Meaning">MLSC account selection for <code>run</code>.</td></tr>
+                <tr><td data-label="Option"><code>--host-key-file FILE</code></td><td data-label="Meaning">Optional MLSC strict host-key input.</td></tr>
+                <tr><td data-label="Option"><code>--credential-handoff FILE</code></td><td data-label="Meaning">Existing authorized single-use handoff; see <a href="#remote-auth">Remote authentication</a>.</td></tr>
+                <tr><td data-label="Option"><code>--format text|jsonl</code></td><td data-label="Meaning">Output format (default <code>text</code>).</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>The <code>job.json</code> file</h3>
+          <p>
+            A JSON object with a required, non-empty <code>mprage</code> array
+            of strings and an optional <code>umap</code> array of equal length.
+            No other keys are allowed.
+          </p>
+          <pre tabindex="0"><code>{
+  "mprage": ["/data/subj1/MR/MPRAGE/0001.dcm", "/data/subj2/MR/MPRAGE/0001.dcm"],
+  "umap":   ["/data/subj1/MR/UMAP/0001.dcm",   "/data/subj2/MR/UMAP/0001.dcm"]
+}</code></pre>
+
+          <h3>Exit codes</h3>
+          <div class="table-scroll" role="region" aria-label="CLI exit codes" tabindex="0">
+            <table>
+              <thead>
+                <tr><th>Code</th><th>Meaning</th></tr>
+              </thead>
+              <tbody>
+                <tr><td data-label="Code"><code>0</code></td><td data-label="Meaning">Validated, or run completed and verified</td></tr>
+                <tr><td data-label="Code"><code>64</code></td><td data-label="Meaning">Usage or configuration error</td></tr>
+                <tr><td data-label="Code"><code>65</code></td><td data-label="Meaning">Invalid request</td></tr>
+                <tr><td data-label="Code"><code>66</code></td><td data-label="Meaning">Authentication failure</td></tr>
+                <tr><td data-label="Code"><code>67</code></td><td data-label="Meaning">Submission failure</td></tr>
+                <tr><td data-label="Code"><code>68</code></td><td data-label="Meaning">Scientific failure or completion unverified</td></tr>
+                <tr><td data-label="Code"><code>69</code></td><td data-label="Meaning">Launcher or runtime failure</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Where CLI files go</h3>
+          <p>
+            The CLI's own request, result, summary, and diagnostic files are
+            kept in a private (mode 700) directory
+            <code>&lt;install-root&gt;/scratch/YYYY-MM-DD/&lt;time&gt;-pseudoct-cli.XXXXXX</code>
+            and removed when the command exits. Scientific outputs are not
+            placed there; see <a href="#outputs">Outputs</a>.
+          </p>
+        </section>
+
+        <section id="validation-submission">
+          <h2>Validation and submission</h2>
+          <ul class="checklist">
+            <li>
+              <strong>Validate</strong> is local-only and never authenticates.
+              It checks the profile, inputs, output writability, runtime, and
+              artifact integrity, and returns a resolved job
+              (<code>pseudoCT.resolved-job/v1</code>) describing exactly what
+              would run.
+            </li>
+            <li>
+              <strong>Submit</strong> (CLI <code>run</code>) requires a
+              validated job, rechecks it, and fails closed if the inputs have
+              changed since validation. <code>bin/pseudoct run</code> and the
+              GUI's <strong>Run pseudoCT</strong> both validate first and then
+              submit.
+            </li>
+            <li>
+              <strong>Local submit is synchronous:</strong> it returns when the
+              local run ends, and succeeds only if scientific completion is
+              <code>completed</code>.
+            </li>
+          </ul>
+          <div class="callout warning">
+            <strong>Accepted is not completed</strong>
+            <p>
+              For remote profiles, scheduler job IDs with
+              <code>submission_status</code> <code>accepted</code> mean the
+              scheduler took the job. They do not mean the science finished.
+              Treat a run as successful only when
+              <code>scientific_completion</code> is <code>completed</code>
+              (verified), and still inspect the <a href="#qc">QC</a> output.
+            </p>
+          </div>
+        </section>
+
+        <section id="remote-auth">
+          <h2>Remote authentication</h2>
+          <ul class="checklist">
+            <li>
+              <strong>GUI:</strong> remote MLSC profiles show the
+              <strong>MLSC submit login</strong> dialog; Launchpad uses a
+              "Login for: &lt;host&gt;" dialog. Cancelling stops before any
+              submission.
+            </li>
+            <li>
+              <strong>CLI:</strong> a remote <code>run</code> prompts for
+              credentials on <code>/dev/tty</code> with echo disabled. Values
+              are staged briefly in an owner-only directory under
+              <code>/dev/shm</code> and erased after use.
+            </li>
+            <li>
+              <strong>Noninteractive callers:</strong>
+              <code>--credential-handoff FILE</code> (and the API's
+              <code>credential_handoff</code> field) consumes an
+              <em>existing, authorized, single-use handoff</em>. It is not a
+              password file and not a way to store a password.
+            </li>
+            <li>
+              Never put passwords in command arguments, scripts, profiles,
+              request files, or logs. Validation never authenticates.
+            </li>
+          </ul>
+        </section>
+
         <section id="processing">
           <h2>During processing</h2>
           <p>
@@ -691,9 +1139,11 @@
 
           <h3>Interrupting a run</h3>
           <p>
-            It is safe to interrupt pseudoCT, but interruption stops the current
-            processing run. Intermediate files generated up to that point are
-            retained.
+            There is no documented cancellation API. The CLI exits when it
+            receives an interruption signal, but whether a running child process
+            is stopped, and whether intermediate files are kept, depends on the
+            profile and has not been verified. Check for leftover processes
+            before running again.
           </p>
           <p>
             Starting pseudoCT again for the same subject restarts processing
@@ -704,11 +1154,66 @@
           <div class="callout warning">
             <strong>Keep MATLAB running</strong>
             <p>
-              Closing MATLAB or interrupting execution stops the local run. For
+              Closing MATLAB ends the MATLAB session that drives the run. For
               MLSC, MATLAB must remain open while the cluster job is monitored and
               while local finalization is performed.
             </p>
           </div>
+        </section>
+
+        <section id="monitoring">
+          <h2>Monitoring CLI and headless runs</h2>
+          <p>
+            A run reports stage-by-stage progress while it works and ends with
+            a final result. Local Current console progress uses ten stages
+            (nine for NIfTI-only output); long-running steps print
+            <code>INFO</code> heartbeat rows naming the active operation, and
+            in JSONL each stage event carries the full label, for example
+            <code>"[6/10]"</code>. This ten-stage CLI presentation has been
+            verified by offline replay of recorded formatter inputs and captured
+            presenter output; the repository does not include a real scientific
+            run record for this presentation. With <code>--format jsonl</code> the CLI writes one
+            JSON object per line on standard output.
+          </p>
+          <ul class="checklist">
+            <li>
+              <strong>Progress records</strong> carry <code>type</code>,
+              <code>timestamp</code>, <code>level</code>, and
+              <code>message</code>, plus <code>subject</code>,
+              <code>stage</code>, <code>status</code>, and <code>job</code>
+              when known (omitted otherwise).
+            </li>
+            <li>
+              <strong>Final record:</strong> the last line is a
+              <code>type=result</code> record with the invocation ID, action,
+              profile, outcome, <code>exit_code</code>,
+              <code>submission_status</code>,
+              <code>scientific_completion</code>, <code>job_ids</code>,
+              <code>error_code</code>, and <code>error_message</code>. Read
+              success from <code>exit_code</code> 0 and
+              <code>scientific_completion</code>, not from submission alone.
+            </li>
+            <li>
+              <strong>Errors:</strong> CLI errors are printed to standard
+              error, and JSONL error paths also emit a
+              <code>type=result</code> record on standard output.
+            </li>
+          </ul>
+          <div class="callout info">
+            <strong>Standard-error caveat</strong>
+            <p>
+              The launcher captures the child MATLAB process's standard error
+              into a private diagnostics file and does not forward it. Do not
+              rely on seeing child diagnostics on your terminal.
+            </p>
+          </div>
+          <p>
+            No cancellation API is provided. The CLI exits on interruption
+            signals, but whether a running child process is stopped and
+            whether intermediate files are kept depends on the profile and is
+            not verified; check for leftover processes before re-running (see
+            <a href="#processing">During processing</a>).
+          </p>
         </section>
 
         <section id="outputs">
@@ -812,8 +1317,31 @@
             During processing, intermediate files are staged under
             <code>MR_PET/tmp/</code>. On a successful run this temporary
             directory is cleaned up. If processing is interrupted, intermediate
-            files are retained.
+            files may remain; this depends on the profile and is not verified.
           </p>
+
+          <h3 id="output-locations">Where outputs go, by interface</h3>
+          <ul class="checklist">
+            <li>
+              <strong>Scientific outputs</strong> (all interfaces) are resolved
+              relative to each input: <code>&lt;subject-root&gt;/MR_PET</code>
+              for NIfTI, QC, version, and log files, working files in
+              <code>&lt;subject-root&gt;/MR_PET/tmp</code>, and the DICOM series
+              in <code>&lt;MR&gt;/pseudo_muMAP</code> (not for MPRAGE-only
+              profiles).
+            </li>
+            <li>
+              <strong>CLI scratch files:</strong> the CLI's request, result,
+              summary, and diagnostic files live under
+              <code>&lt;install-root&gt;/scratch/...</code> and are removed on
+              exit.
+            </li>
+            <li>
+              <strong>Headless API:</strong> the result is saved as a
+              <code>RESULT.mat</code> at the path the caller chooses; its parent
+              folder must already exist and be writable.
+            </li>
+          </ul>
         </section>
 
         <section id="qc">
@@ -971,6 +1499,61 @@
                 </td>
               </tr>
               <tr>
+                <td>CLI exits <code>64</code> (usage/configuration)</td>
+                <td>
+                  Check the command-line options. For <code>--config</code>,
+                  the JSON may contain only <code>mprage</code> (required,
+                  non-empty) and <code>umap</code> (optional), and the two
+                  arrays must be the same length.
+                </td>
+              </tr>
+              <tr>
+                <td>CLI exits <code>65</code> or validation fails (invalid request)</td>
+                <td>
+                  Typical causes: a missing UMAP, a profile not allowed, or
+                  unreadable input or output paths. Fix the input and run
+                  <code>validate</code> again.
+                </td>
+              </tr>
+              <tr>
+                <td>CLI exits <code>66</code> (authentication)</td>
+                <td>
+                  Login was rejected or no usable credentials were provided.
+                  See <a href="#remote-auth">Remote authentication</a>. A
+                  <code>--credential-handoff</code> is single-use and must
+                  already exist and be authorized.
+                </td>
+              </tr>
+              <tr>
+                <td>CLI exits <code>67</code> (submission failure)</td>
+                <td>
+                  Submission failed, was rejected, or its acceptance is
+                  unresolved. Check the final <code>type=result</code> record
+                  for <code>submission_status</code>, any job IDs,
+                  <code>error_code</code> and <code>error_message</code>
+                  before retrying, to avoid duplicate submission.
+                </td>
+              </tr>
+              <tr>
+                <td>CLI exits <code>68</code> (scientific failure / unverified)</td>
+                <td>
+                  The job was dispatched or accepted but completion is not
+                  verified. Accepted is not completed; inspect
+                  <code>scientific_completion</code>, the run log, and
+                  <code>MR_PET</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>CLI exits <code>69</code> (launcher/runtime)</td>
+                <td>
+                  MATLAB could not be started. Set
+                  <code>PSEUDOCT_MATLAB</code> to an executable MATLAB; the
+                  default is <code>/usr/pubsw/common/matlab/7.11/bin/matlab</code>.
+                  The headless launcher also uses 70 for runtime or bootstrap
+                  failures.
+                </td>
+              </tr>
+              <tr>
                 <td>MLSC finishes without an attenuation map</td>
                 <td>
                   A finished cluster job alone is not sufficient. Confirm
@@ -994,6 +1577,51 @@
           </div>
         </section>
 
+        <section id="piano">
+          <h2>PIANO integration</h2>
+          <p>
+            The recommended public interface for PIANO is
+            <code>bin/pseudoct</code> with <code>--format jsonl</code>; PIANO
+            should not invoke the MATLAB GUI directly or reimplement pseudoCT
+            orchestration. The intended flow is:
+          </p>
+          <ol class="steps">
+            <li>PIANO collects the profile, inputs, and processing options.</li>
+            <li>PIANO invokes <code>validate</code> before enabling submission.</li>
+            <li>For remote profiles, PIANO obtains credentials through its own login dialog.</li>
+            <li>The backend securely creates the CLI-supported single-use credential handoff.</li>
+            <li>PIANO runs the CLI with <code>--format jsonl</code>.</li>
+            <li>PIANO parses progress and result records.</li>
+            <li>PIANO presents subject, stage, status, scheduler job IDs, and errors.</li>
+            <li>PIANO distinguishes accepted submissions from verified scientific completion.</li>
+          </ol>
+          <div class="callout warning">
+            <strong>Not yet implemented or verified</strong>
+            <p>
+              The PIANO backend credential-handoff adapter and end-to-end
+              PIANO integration are not yet implemented or verified.
+            </p>
+          </div>
+        </section>
+
+        <section id="limitations">
+          <h2>Known limitations</h2>
+          <p>
+            The Local Current ten-stage console model (nine when DICOM output
+            is omitted) is implemented. The ten-stage CLI presentation has
+            been verified by offline replay of recorded formatter inputs and
+            captured presenter output; the repository does not include a real
+            scientific run record for this presentation.
+          </p>
+          <ul class="checklist">
+            <li>MLSC and Launchpad keep separate, unverified presentation behaviour (<code>WAIT</code> heartbeats and their own stage numbering) and must not be assumed to match Local Current.</li>
+          </ul>
+          <p>
+            Treat the run log, the final result record, and the
+            <a href="#qc">QC outputs</a> as the reliable record of a run.
+          </p>
+        </section>
+
         <section id="advanced">
           <h2>More information</h2>
           <p>
@@ -1001,6 +1629,9 @@
             implementation, validation, numerical-parity, release-history, and
             developer documentation are maintained with the source repository.
             See the
+            <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md"
+              >headless and CLI reference</a
+            >, the
             <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/installation.md"
               >MLSC pipeline documentation</a
             >, the

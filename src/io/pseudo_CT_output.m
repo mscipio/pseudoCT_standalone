@@ -24,6 +24,13 @@ end
 message = sprintf(format_string, varargin{:});
 message = regexprep(message, '[\r\n]+', ' | ');
 timestamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
+% Optional original event time for replayed external diagnostics (for example
+% buffered dcm2nii lines); invalid values fall back to the current time.
+if isfield(context, 'record_timestamp') && ischar(context.record_timestamp) && ...
+        ~isempty(regexp(context.record_timestamp, ...
+        '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$', 'once'))
+    timestamp = context.record_timestamp;
+end
 tags = '';
 if isfield(context, 'subject_index') && isfield(context, 'subject_count') && ...
         ~isempty(context.subject_index) && ~isempty(context.subject_count)
@@ -43,7 +50,12 @@ if isempty(tags) && isfield(context, 'scope') && ~isempty(context.scope)
 end
 
 line = sprintf('[%s] %-7s %s%s', timestamp, level, tags, message);
-if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+cli_output = strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1');
+if cli_output && isfield(context, 'console_detail_only') && ...
+        isequal(context.console_detail_only, true)
+    % Detailed diagnostics (external converter output): written to the run log
+    % only; the shared presenter never sees them, in text or JSONL.
+elseif cli_output
     console_source_line = line;
     if isfield(context, 'console_timestamp') && ...
             ischar(context.console_timestamp) && ...

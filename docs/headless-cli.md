@@ -1,7 +1,9 @@
 # Standalone headless CLI
 
 `bin/pseudoct-headless REQUEST.mat RESULT.mat` runs the versioned MATLAB v5
-headless interface through MATLAB R2010b. The launcher works from another
+Headless MAT v2 API through MATLAB R2010b. The public `bin/pseudoct` CLI builds
+on this structured API through `bin/pseudoct-headless` and adds a shell-facing
+contract for text/JSONL progress and exit codes. The launcher works from another
 directory and derives the installation root from itself. It uses a fixed
 `-nodesktop -nosplash -nodisplay` bootstrap, keeps Java enabled, and does not
 interpolate request values into MATLAB code. The default executable is
@@ -21,7 +23,8 @@ never command-line arguments or environment values.
 ## Request v2 and validate→submit
 
 The request MAT file must contain exactly one scalar `request` struct saved
-with `-v6` (MAT v5-compatible). Its exact fields are:
+with `-v6` (MAT v5-compatible). Schema `pseudoCT.headless-request/v2` has
+exactly these 13 fields:
 
 | Field | Contract |
 |---|---|
@@ -33,11 +36,11 @@ with `-v6` (MAT v5-compatible). Its exact fields are:
 | `umap_files` | For validate, omitted/empty means local autodiscovery; otherwise one path per subject, positionally paired. Empty cell entries request discovery for those subjects. An explicit path is preserved exactly and never replaced. Submit requires an empty value. |
 | `output_config` | Scalar struct, empty or exactly `struct('layout','profile-default')` for validate. Submit requires an empty struct. |
 | `options` | Scalar struct with optional `correct_aliasing`, `recenter_before_normalization`, and `cleanup_on_success`; each is empty or scalar numeric/logical `0` or `1`. Submit requires an empty struct. |
-| `resolved_job` | Empty scalar struct for validate; the `result.resolved_job` returned by successful validate for submit. It carries bound MPRAGE/UMAP records, options, output paths, and artifact/input identities, but no credentials or live sessions. |
+| `resolved_job` | Empty scalar struct for validate; the `result.resolved_job` returned by successful validate for submit. It uses `pseudoCT.resolved-job/v1` and carries bound MPRAGE/UMAP records, options, output paths, and artifact/input identities, but no credentials or live sessions. |
 | `group_account` | Empty for validate, local profiles, and Launchpad. Optional free text for MLSC submit; empty selects the first account returned by MLSC, while a supplied value is trimmed and matched exactly. |
-| `credential_handoff` | Empty for validate and local submit; required path to a private, single-use handoff MAT for remote submit. Never embed username/password values in the request. |
+| `credential_handoff` | Empty for validate and local submit; required path to a private, single-use handoff for remote submit. The request contains only this path, never credential values. |
 | `host_key_file` | Empty unless MLSC submit opts into strict host-key verification with a known-hosts record. Must be empty for Launchpad. |
-| `current_artifact_root` | Optional override for `mlsc-current` and `mlsc-mprage-only` validation only; empty otherwise. Existing artifact integrity checks remain authoritative. |
+| `current_artifact_root` | Optional override for `mlsc-current` and `mlsc-mprage-only` validation only; a non-empty value is rejected for local profiles. Existing artifact integrity checks remain authoritative. |
 
 `validate` is local-only: it checks the selected profile, explicit inputs,
 positionally paired UMAPs, output locations, runtime dependencies and applicable
@@ -54,8 +57,10 @@ Local profiles execute synchronously without credentials or scheduler submission
 Authentication occurs only during remote submit. MLSC uses one authenticated session
 for exact account selection and submission/monitoring; invalid account text
 stops before submission. Launchpad retains its existing SSH/PBS behavior and
-does not perform MLSC account discovery. A credential handoff is consumed and
-removed before authentication; replay and unsafe storage fail closed.
+does not perform MLSC account discovery. Validation disallows credential fields;
+remote submit requires the separate handoff, which is single-use and private.
+The MATLAB handoff is stored under `/dev/shm` (tmpfs, owner-only) and consumed on
+read. Replay and unsafe storage fail closed.
 
 Create the request with all exact fields. Example for one standard-profile
 subject with an explicit reference:
@@ -102,24 +107,24 @@ save('/private/requests/submit.mat', 'request', '-v6');
 
 Use a new request/result file for submit. A failed or stale validate result must
 not be submitted. For `launchpad-legacy`, leave `group_account` and
-`host_key_file` empty. Never put credentials, host-key contents, or secrets in
-MAT files other than the protected handoff, shell text, logs, source, results,
-or environment variables.
+`host_key_file` empty. Never put credential values or host-key contents in the
+request, result, command line, environment, or logs; the request carries only a
+handoff path.
 
 ## Result v2
 
-The result MAT contains exactly one scalar `result` struct saved as `-v6`. Its
-exact fields are `schema`, `invocation_id`, `action`, `profile`, `status`,
+The result MAT contains exactly one scalar `result` struct saved as `-v6`. Schema
+`pseudoCT.headless-result/v2` has exactly these 17 fields:
+`schema`, `invocation_id`, `action`, `profile`, `status`,
 `error_code`, `error_message`, `authentication_status`, `submission_status`,
 `backend`, `group_account`, `job_ids`, `scientific_completion`,
-`dispatch_status`, `resolved_job`, `evidence`, and `diagnostics`. The schema is
-`pseudoCT.headless-result/v2`; the MATLAB validator
-`pseudo_CT_validate_headless_result` checks the exact field/type contract and
-binds the result and resolved job to the invocation and profile.
+`dispatch_status`, `resolved_job`, `evidence`, and `diagnostics`. The MATLAB
+validator `pseudo_CT_validate_headless_result` checks the exact field/type
+contract and binds the result and resolved job to the invocation and profile.
 
 | Field | Meaning |
 |---|---|
-| `status` | `ready` for successful validation; `submitted` when the submit dispatcher returned without a reported operation error; otherwise `failed`. A local submit is `submitted` only when scientific completion is `completed`. Inspect evidence fields; status alone does not prove remote acceptance or scientific completion. |
+| `status` | `ready`, `submitted`, or `failed`. `ready` means validation succeeded; `submitted` means the submit dispatcher returned without a reported operation error. A local submit is successful only when scientific completion is `completed`. Status alone does not prove remote acceptance or scientific completion. |
 | `error_code` | Empty or a fixed code such as `INVALID_REQUEST`, `PROFILE_NOT_ALLOWED`, `INVALID_GROUP_ACCOUNT`, `AUTHENTICATION_FAILED`, `STALE_RESOLVED_JOB`, `HOST_KEY_UNAVAILABLE`, or `SUBMIT_FAILED`. |
 | `error_message` | Fixed generic, non-secret message; exception text and credentials are not returned. |
 | `authentication_status` | `not_attempted`, `authenticated`, `failed`, `not_observed`, or `not_applicable`. |
@@ -133,15 +138,30 @@ binds the result and resolved job to the invocation and profile.
 | `evidence` | Non-secret validation and backend evidence. |
 | `diagnostics` | Exact `code` and generic `message` fields, consistent with the result error fields. |
 
+The exact enums are: `status` = `ready|submitted|failed`;
+`authentication_status` = `not_attempted|authenticated|failed|not_observed|not_applicable`;
+`submission_status` = `not_attempted|accepted|rejected|unresolved|not_observed`;
+`backend` = `local|mlsc|launchpad`;
+`scientific_completion` = `not_applicable|not_observed|completed|failed`; and
+`dispatch_status` = `not_dispatched|dispatched|failed`.
+
 The API validator is also available directly as
 `pseudo_CT_validate_headless_result(RESULT_MAT, INVOCATION_ID, PROFILE)`.
 Treat its bound fields—not the CLI exit status—as authoritative for completion.
-For a local submit, scientific success requires `status='submitted'`,
-`dispatch_status='dispatched'`, `scientific_completion='completed'`, and an empty
-`error_code`. A remote dispatch or accepted scheduler ID does not prove
-scientific success.
+Dispatch return (`dispatch_status='dispatched'`) is not scheduler acceptance.
+For remote work, a positive backend job ID together with
+`submission_status='accepted'` represents scheduler acceptance; neither proves
+scientific completion. For a local submit, the operation is synchronous and
+successful only with `scientific_completion='completed'`; a successful result
+also has `status='submitted'`, `dispatch_status='dispatched'`, and an empty
+`error_code`.
 
 ## Exit codes
+
+These are the exit codes of the lower-level `bin/pseudoct-headless` launcher.
+The user-facing `bin/pseudoct` command uses a different set (`0`, `64`-`69`;
+launcher/runtime failure is `69`), described under
+[User-facing `pseudoct` command](#user-facing-pseudoct-command).
 
 | Code | Meaning |
 |---:|---|
@@ -180,26 +200,188 @@ bin/pseudoct run --profile local-current --config job.json --format jsonl
 
 Processing overrides are `--correct-aliasing yes|no`,
 `--recenter-before-normalization yes|no`, and `--cleanup-on-success yes|no`;
-they map to the corresponding v2 request options. Current profiles also accept
-`--current-artifact-root PATH`. `run` always validates first and reuses that
-invocation UUID and bound resolved job for submit. Remote profiles accept an
-authorized `--credential-handoff PATH`, or prompt for a username and
-non-echoed password on a terminal and create the existing single-use handoff.
-Passwords are never CLI arguments, environment values, JSON, or logs.
+they map to the corresponding v2 request options. `--current-artifact-root PATH`
+is for `mlsc-current` and `mlsc-mprage-only` validation only; a non-empty root
+is rejected for local profiles. `run` always validates first and reuses that
+invocation UUID and bound resolved job for submit. Remote `run` can use an
+authorized `--credential-handoff PATH` or prompt for a username and non-echoed
+password on `/dev/tty`, then create the existing single-use handoff. The request
+contains only the handoff path, never credential values; validation disallows
+credential fields. Remote headless submit requires a supplied handoff. The
+MATLAB handoff is stored under `/dev/shm` (tmpfs, owner-only) and consumed on
+read. Local profiles do not authenticate. The GUI's MLSC submit flow uses the
+`MLSC submit login` dialog.
 
-`--format text` (default) uses the shared progress formatter. `--format jsonl`
-emits JSON progress records and one final result record on stdout; diagnostics
-remain on stderr. Result records report dispatch, scheduler acknowledgement,
-and scientific completion independently. For remote jobs, an accepted
-submission without completion evidence exits 68 (unverified), not 0. Exit 0
-means validation succeeded or scientific completion was verified; codes 64-69
-distinguish usage/configuration, invalid request, authentication, submission,
-scientific failure/unverified completion, and CLI runtime failure respectively.
+`--format text` (default) uses the shared progress formatter. Help and normal
+text/progress/final output, including JSONL records, go to stdout; CLI errors go
+to stderr. **Child launcher stderr is captured into a private diagnostics file
+and is not forwarded to stderr.** JSONL result records report dispatch,
+scheduler acknowledgement, and scientific completion independently. A remote
+dispatch return is not scheduler acceptance, and acceptance does not establish
+scientific completion. An accepted remote submission without completion
+evidence exits 68 (unverified), not 0. Exit 0 means validation succeeded or
+scientific completion was verified.
 
-Each JSONL progress record requires `type` (`progress`), `timestamp`, `level`,
-and `message`. `subject`, `stage`, `status`, and `job` are included only when
-known; absent context is omitted rather than emitted as `null` with a reason.
-Subject values are run-local labels such as `S01`, not patient-identifying
-filenames. `stage` uses the explicit `[n/m]` label when available, and `job`
-contains the accepted scheduler job ID when known. Consumers should treat these
-context fields as optional and must not infer missing values.
+Each JSONL progress record has `type` (`progress`), `timestamp`, `level`, and
+`message`, with optional `subject`, `stage`, `status`, and `job` fields omitted
+when unknown. Subject values are run-local labels such as `S01`, not
+patient-identifying filenames. `stage` uses the explicit `[n/m]` label when
+available, and `job` contains the accepted scheduler job ID when known.
+Consumers should treat these context fields as optional and must not infer
+missing values.
+
+The normal final JSONL record has `type`=`result` and fields:
+`invocation_id`, `action`, `profile`, `outcome`, `exit_code`,
+`headless_dispatch_returned`, `dispatch_status`,
+`scheduler_submission_accepted`, `submission_status`, `authentication_status`,
+`scientific_completion`, `scientific_completion_status`,
+`scientific_completion_reason`, `backend`, `job_ids`, `group_account`,
+`group_account_reason`, `error_code`, and `error_message`. Early error records
+also have `type`=`result` and use the smaller shape `invocation_id`, `action`,
+`profile`, `outcome`, `exit_code`, `headless_dispatch_returned`, `dispatch_status`,
+`submission_status`, `scheduler_submission_accepted`,
+`scientific_completion`, `scientific_completion_reason`, `job_ids`,
+`error_code`, and `error_message`. An error after submit may additionally carry
+`dispatch_status_reason`, `submission_status_reason`, and
+`scheduler_submission_accepted_reason` when the outcome is unknown.
+
+The CLI exit codes are `0` (validated or verified-completed), `64`
+(usage/configuration), `65` (invalid request), `66` (authentication), `67`
+(submission failure), `68` (scientific failure or completion unverified), and
+`69` (launcher/runtime failure). These are distinct from the lower-level
+`bin/pseudoct-headless` shell codes:
+
+| Code | `pseudoct-headless` meaning |
+|---:|---|
+| `0`, `2`, `3` | Pass through the MATLAB operation status only when a usable result MAT is present. |
+| `64` | Wrong number of command-line arguments. |
+| `65` | Request MAT missing or unreadable. |
+| `66` | Invalid result path. |
+| `69` | MATLAB executable unavailable. |
+| `70` | Runtime, bootstrap, or unexpected startup failure. |
+
+## PIANO integration developer reference
+
+Use `bin/pseudoct` as the process boundary; do not invoke the GUI or recreate
+orchestration in PIANO. Supported commands are `validate` and `run`. The CLI
+options are `--profile`, `--mprage`, `--umap`, `--config`, `--correct-aliasing`,
+`--recenter-before-normalization`, `--cleanup-on-success`,
+`--current-artifact-root`, `--group-account`, `--host-key-file`,
+`--credential-handoff`, `--format text|jsonl`, and `-h|--help`. See the CLI
+examples above and run `bin/pseudoct --help` for usage. JSONL progress, normal
+result, and early-error record structures are specified above. Records are on
+stdout; CLI errors go to stderr, but child launcher stderr is privately captured
+and **not** forwarded there. Use the CLI exit-code list above for
+`bin/pseudoct`; use the separate shell-code table only when invoking
+`bin/pseudoct-headless` directly.
+
+Validation is local-only and does not authenticate. Local profiles do not
+authenticate. Remote CLI `run` prompts on `/dev/tty` or consumes an authorized
+single-use handoff; a headless remote submit cannot prompt and requires the
+caller to supply credentials through a handoff. The GUI's MLSC submit flow uses
+the `MLSC submit login` dialog. A
+successful validation returns a `pseudoCT.resolved-job/v1` handoff for submit;
+submit rechecks it and fails closed if its bound inputs/artifacts are stale.
+Dispatch return, scheduler acceptance (positive job ID and
+`submission_status='accepted'`), and verified scientific completion are
+separate outcomes. Local submit is synchronous and succeeds only when
+`scientific_completion='completed'`.
+
+Scientific outputs are written to `<subject-root>/MR_PET`, temporary data to
+`<subject-root>/MR_PET/tmp`, and DICOM output to `<MR>/pseudo_muMAP`. CLI
+request/result/summary/diagnostic scratch is under
+`<install-root>/scratch/YYYY-MM-DD/<time>-pseudoct-cli.XXXXXX` and is removed
+on CLI exit by its cleanup handler. The `pseudoct-headless` result MAT is written
+at the caller-chosen path. **No cancellation API is provided.**
+
+The PIANO backend credential-handoff adapter and end-to-end integration are not
+yet implemented or verified. The supported credential flow is single-use and
+private; request files contain no credential values. Do not treat this
+developer reference as evidence that PIANO integration or remote processing has
+been tested.
+
+## Persistent run log
+
+Each processed subject gets exactly one run log in that subject's own `MR_PET`
+directory:
+
+```text
+<subject-root>/MR_PET/pseudoct-run-<UTC-YYYYMMDDTHHMMSSZ>-<invocationUUID>.log
+```
+
+`<invocationUUID>` is the CLI invocation ID (a fresh UUID for direct MATLAB
+callers). No CLI option controls the log.
+
+- **Persistence:** the log is kept on success, failure, and interruption.
+  `cleanup_on_success` and the CLI exit handler never delete it (they remove
+  only temporary request/result/credential/handoff scratch and, when enabled,
+  `MR_PET/tmp`). There is no pruning, retention quota, or automatic deletion;
+  you may delete a log manually.
+- **Permissions and safety:** files are created `0600`. A newly created `MR_PET`
+  is `0700`; an existing `MR_PET` keeps its mode. Creation is exclusive: an
+  existing file or symlink is never overwritten or followed.
+- **When it is created:** only after the inputs are validated and the subject's
+  destination is resolved. Only `MR_PET` (if missing) and the log are created
+  first; `tmp/` and DICOM directories are created afterward.
+- **Failure before output:** if the failure occurs before the destination is
+  established (usage, validation, or the resolver), or the log cannot be
+  created, no subject log exists and the failure is reported only in public CLI
+  output. There is no fallback storage location.
+- **Privacy:** the log may contain detailed filesystem paths, which can include
+  patient-identifying directory names; that is allowed only inside the subject's
+  own log. Public output shows only the relative path, for example
+  `run log: MR_PET/pseudoct-run-20261102T154500Z-<uuid>.log` (text mode only). With
+  several subjects each text entry is labeled by subject number. The JSONL
+  schema above is unchanged and carries no log-path field; JSONL consumers
+  find the log at the documented location in each subject's `MR_PET`.
+- **Credentials** are never written to the log or to the CLI's private capture
+  (redacted before persistence).
+- **Output contract unchanged:** stdout carries progress and results; CLI
+  errors go to stderr; child launcher stderr is privately captured and never
+  forwarded.
+
+### Public stage model
+
+Local Current console progress uses a fixed ten-stage model (nine stages when
+DICOM output is omitted, i.e. NIfTI-only; the numbering is then contiguous
+over the stages that apply):
+
+| Stage | Name |
+|---:|---|
+| 1 | Prepare input MPRAGE |
+| 2 | MPRAGE recentering (`SKIPPED` or `DONE` only) |
+| 3 | Aliasing correction (`SKIPPED` or `DONE` only) |
+| 4 | FreeSurfer MPRAGE normalization |
+| 5 | MPRAGE alignment and subject masking |
+| 6 | SPM New Segment |
+| 7 | DARTEL atlas registration and reslicing (inverse warp and reslicing are `INFO` sub-steps) |
+| 8 | Attenuation-map and QC generation |
+| 9 | DICOM output generation (omitted for NIfTI-only output) |
+| 10 | Output promotion and cleanup |
+
+The text console prints the stage number only on stage entry; continuation rows
+leave the stage cell blank. Every row has a status: `ACTIVE`, `DONE`,
+`SKIPPED`, `INFO`, `WARN`, `ERROR`, or `VERIFIED`. Long-running computation
+heartbeats are `INFO` rows that name the active operation, for example
+`SPM New Segment still running (elapsed 10:00).` The `WAIT` status is used only
+by MLSC and Launchpad heartbeats, not by Local Current. A FreeSurfer
+normalization failure is reported as a stage-4 `ERROR` with no stage-4 `DONE`.
+Stage 10 reports `DONE` ("Outputs promoted") only after promotion succeeded; it
+does not claim that cleanup completed, and a cleanup failure is a separate
+`WARN` row.
+
+In JSONL, every stage event carries the full label in `stage` (for example
+`"[6/10]"`), with the same schema as before and no new fields. The per-subject
+`MR_PET/pseudoct-run-*.log` keeps the complete raw diagnostics.
+
+The ten-stage CLI presentation has been verified by offline replay of recorded
+formatter inputs and captured presenter output. The repository does not include
+a real scientific run record for this presentation. MLSC and Launchpad stage
+numbering is not yet verified.
+
+## Local Current logging verification
+
+The Local Current ten-stage model (nine when DICOM output is omitted) is
+implemented. MLSC and Launchpad keep separate, unverified presentation
+behaviour (`WAIT` heartbeats and their own stage numbering) and must not be
+assumed to match Local Current.
