@@ -374,14 +374,27 @@ In JSONL, every stage event carries the full label in `stage` (for example
 `"[6/10]"`), with the same schema as before and no new fields. The per-subject
 `MR_PET/pseudoct-run-*.log` keeps the complete raw diagnostics.
 
-The ten-stage CLI presentation has been verified by offline replay of recorded
-formatter inputs and captured presenter output. The repository does not include
-a real scientific run record for this presentation. MLSC and Launchpad stage
-numbering is not yet verified.
+The real-run verification and its separate supporting offline replay are
+documented in [Local Current logging verification](#local-current-logging-verification).
 
 ## Local Current logging verification
 
-The Local Current ten-stage model (nine when DICOM output is omitted) is
-implemented. MLSC and Launchpad keep separate, unverified presentation
-behaviour (`WAIT` heartbeats and their own stage numbering) and must not be
-assumed to match Local Current.
+On 2026-11-03, a real scientific Local Current run was executed with the CLI;
+the CLI exit code was 0 (recorded exit-code file: `PSEUDOCT_EXIT_CODE=0`), and
+one subject completed (1 succeeded, 0 failed). The console presented
+`[1/10]` through `[10/10]`, each once on entry. The per-subject persistent log
+under `MR_PET/` was present with owner-only permissions (`0600`) and recorded
+the warning summary. Warnings were grouped by occurrence (for example,
+"(2 occurrences)"); the persistent log contains a `Warning summary` block.
+The attenuation map `att_map.nii` has SHA-256
+`1517efbe3fbb8e0f4df3fb3b2a4e40c387ba09fbcbac326496fe47cf8a6981ff`, which
+matched the expected value exactly. Converter limit: no separate
+converter-diagnostics section exists; `dcm2nii` input, output, and completion
+lines are recorded in the run log. Offline replay of recorded formatter inputs
+remains a separate supporting check and is not the basis of the claim. Earlier
+real MLSC Current (2026-11-01/02) and Launchpad Legacy (2026-11-02) executions
+predate the finalized logging contract and used an eight-stage presentation;
+they establish scientific execution only and are not acceptance of the new
+presentation. The persistent detailed log labels some compiled-stage messages
+with an internal eight-stage counter (`[stage N/8]`) while the console uses ten
+public stages; this is a provenance difference and is not corrected here.

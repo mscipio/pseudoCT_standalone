@@ -1169,10 +1169,13 @@ bin/pseudoct run --profile mlsc-current --config job.json --format jsonl</code><
             (nine for NIfTI-only output); long-running steps print
             <code>INFO</code> heartbeat rows naming the active operation, and
             in JSONL each stage event carries the full label, for example
-            <code>"[6/10]"</code>. This ten-stage CLI presentation has been
-            verified by offline replay of recorded formatter inputs and captured
-            presenter output; the repository does not include a real scientific
-            run record for this presentation. With <code>--format jsonl</code> the CLI writes one
+            <code>"[6/10]"</code>. On 2026-11-03, a real scientific Local
+            Current CLI run completed one subject (1 succeeded, 0 failed; CLI
+            exit code 0, recorded as <code>PSEUDOCT_EXIT_CODE=0</code>) and
+            presented <code>[1/10]</code> through <code>[10/10]</code> once each
+            on entry. This real run—not offline replay—is the basis for the
+            presentation claim; replay of recorded formatter inputs remains a
+            separate supporting check. With <code>--format jsonl</code> the CLI writes one
             JSON object per line on standard output.
           </p>
           <ul class="checklist">
@@ -1607,11 +1610,11 @@ bin/pseudoct run --profile mlsc-current --config job.json --format jsonl</code><
         <section id="limitations">
           <h2>Known limitations</h2>
           <p>
-            The Local Current ten-stage console model (nine when DICOM output
-            is omitted) is implemented. The ten-stage CLI presentation has
-            been verified by offline replay of recorded formatter inputs and
-            captured presenter output; the repository does not include a real
-            scientific run record for this presentation.
+            The Local Current ten-stage CLI presentation is based on a real
+            scientific run on 2026-11-03; offline replay of recorded formatter
+            inputs remains a separate supporting check. See the <a
+            href="../headless-cli.md#local-current-logging-verification">Local
+            Current logging verification</a> for the run evidence and limits.
           </p>
           <ul class="checklist">
             <li>MLSC and Launchpad keep separate, unverified presentation behaviour (<code>WAIT</code> heartbeats and their own stage numbering) and must not be assumed to match Local Current.</li>

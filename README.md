@@ -175,7 +175,7 @@ The PIANO backend credential-handoff adapter and end-to-end integration are **no
 
 ## Known limitations
 
-Local Current console progress now uses a ten-stage model (nine for NIfTI-only output; heartbeats are `INFO` rows naming the active operation; `WAIT` is MLSC/Launchpad only; see the [stage model](docs/headless-cli.md#public-stage-model)). The ten-stage CLI presentation is verified by offline replay of recorded formatter inputs and captured presenter output; the repository does not include a real scientific run record for this presentation. MLSC and Launchpad keep separate, unverified presentation behaviour (`WAIT` heartbeats and their own stage numbering) and must not be assumed to match Local Current.
+Local Current console progress now uses a ten-stage model (nine for NIfTI-only output; heartbeats are `INFO` rows naming the active operation; `WAIT` is MLSC/Launchpad only; see the [stage model](docs/headless-cli.md#public-stage-model)). On 2026-11-03, a real scientific Local Current CLI run completed one subject (1 succeeded, 0 failed; CLI exit code 0, recorded as `PSEUDOCT_EXIT_CODE=0`) and presented `[1/10]` through `[10/10]` once each on entry. This real run—not offline replay—is the basis for the presentation claim; offline replay of recorded formatter inputs remains a separate supporting check. See [Local Current logging verification](docs/headless-cli.md#local-current-logging-verification) for the run evidence and limits. Earlier real MLSC Current runs (2026-11-01/02) and Launchpad Legacy run (2026-11-02) predate the finalized logging contract and used an eight-stage presentation; they establish scientific execution only, not acceptance of the new presentation.
 
 ## Development and distribution boundary
 
