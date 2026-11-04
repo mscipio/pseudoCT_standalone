@@ -412,6 +412,16 @@ if isfield(config, 'implementation') && ischar(config.implementation) && ...
 end
 pseudo_CT_output('INFO', run_context, 'Profile: %s; mode: %s; MATLAB: %s.', ...
     profile_name, config.mode, version);
+if isfield(config, 'implementation') && ischar(config.implementation) && ...
+        strcmp(config.implementation, 'legacy-v2')
+    delegation_context = local_workflow_event_context(run_context, ...
+        'workflow.legacy_preprocess_delegated', 'prepare.compiled_preprocess', ...
+        'delegation', 'INFO');
+    delegation_context.stage_span = [2 3];
+    delegation_context.operation_ids = {'prepare.recenter', 'prepare.alias_correct'};
+    pseudo_CT_output('INFO', delegation_context, ...
+        'Recentering and aliasing delegated to compiled v2 backend.');
+end
 % Preserve summaries for skipped subjects as well as jobs, then refresh each
 % processable subject's file with that job's effective requested options.
 pseudo_CT_print_profile_summary(profile_name, config, processing_dirs, run_context);
@@ -1039,44 +1049,58 @@ else
     % Not a DICOM stage: report the policy skip without attributing it to the
     % (long finished) input stage that this context still carries.
     skip_context = rmfield(context, {'stage_index', 'stage_count'});
-    skip_context = local_status_context(skip_context, 'INFO');
-    pseudo_CT_output('INFO', skip_context, 'Skipping DICOM output by profile policy.');
+    if isfield(config, 'io_policy') && isfield(config.io_policy, 'gui') && ...
+            strcmp(config.io_policy.gui, 'mprage-only')
+        skip_context = local_workflow_stage_context(skip_context, 9, ...
+            'SKIPPED', 'workflow.dicom_output', 'profile_policy:mprage_only');
+        pseudo_CT_output('INFO', skip_context, ...
+            'DICOM output skipped by MPRAGE-only policy.');
+    else
+        skip_context = local_status_context(skip_context, 'INFO');
+        pseudo_CT_output('INFO', skip_context, 'Skipping DICOM output by profile policy.');
+    end
 end
 
 % Promote final outputs and clean up according to the selected profile.
-% Promotion is the scientific stage; temporary cleanup is housekeeping and
-% is reported separately (a cleanup problem never reads as promotion failure
-% and never as "cleanup completed").
-% Promotion is the last producer stage of the policy map (10 for Local Current
-% with DICOM, 10 for its NIfTI-only public 9, 9 for Local MPRAGE-only). Without
-% a mapped policy the historical stage 8 is kept.
-promote_stage = 8;
-if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
-        isfield(context.stage_map, 'producer_stage_numbers') && ...
-        ~isempty(context.stage_map.producer_stage_numbers)
-    promote_stage = context.stage_map.producer_stage_numbers(end);
+% Full-mode promotion is stage 10. NIfTI-only promotion is separate finalizer
+% work, not a substitute for either MPRAGE-only policy skip.
+if isfield(config, 'io_policy') && isfield(config.io_policy, 'gui') && ...
+        strcmp(config.io_policy.gui, 'mprage-only')
+    stage10_context = local_workflow_stage_context(context, 10, ...
+        'SKIPPED', 'workflow.full_output_finalize', ...
+        'profile_policy:mprage_only');
+    pseudo_CT_output('INFO', stage10_context, ...
+        'Full-mode output finalization skipped by MPRAGE-only policy.');
+    promotion_context = local_output_event_context(context, ...
+        'output.promote_nifti', 'operation_started');
+else
+    promotion_context = local_workflow_stage_context(context, 10, ...
+        'START', 'workflow.full_output_finalize', '');
 end
-context = local_stage_context(context, promote_stage);
 stage_started = tic;
-pseudo_CT_output('INFO', local_status_context(context, 'START'), 'Promoting outputs and cleaning up.');
-promotion_success = pseudo_CT_promote_final_outputs(temp_working_dir, processing_dir, P, context);
+pseudo_CT_output('INFO', promotion_context, 'Promoting final NIfTI outputs.');
+promotion_success = pseudo_CT_promote_final_outputs(temp_working_dir, processing_dir, P, promotion_context);
 if ~promotion_success
     % Legacy output: disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', temp_working_dir));
-    pseudo_CT_output('ERROR', local_status_context(context, 'ERROR'), 'Output promotion failed; temporary files were preserved.');
-    pseudo_CT_output('INFO', local_status_context(context, 'INFO'), '    %s', temp_working_dir);
+    pseudo_CT_output('ERROR', promotion_context, 'Output promotion failed; temporary files were preserved.');
+    pseudo_CT_output('INFO', promotion_context, '    %s', temp_working_dir);
     return;
 end
 % Legacy output: disp(sprintf('The final pseudo-CT NIfTI/QC files were saved in:\n%s\n', processing_dir));
-pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'Outputs promoted (elapsed %s).', ...
-    local_elapsed(toc(stage_started)));
+pseudo_CT_output('SUCCESS', local_promotion_completed_context(promotion_context), ...
+    'Outputs promoted (elapsed %s).', local_elapsed(toc(stage_started)));
+pseudo_CT_output('SUCCESS', local_output_event_context(promotion_context, ...
+    'output.verify', 'output_verified'), 'Promoted outputs verified.');
 if config.cleanup_on_success
     [remove_success, msg] = rmdir(temp_working_dir, 's');
     if ~remove_success
         % Legacy output: disp(sprintf('There was an error removing the temporary directory %s\n%s', ...
         %     temp_working_dir, msg));
-        pseudo_CT_output('WARN', local_status_context(context, 'WARN'), 'Temporary cleanup failed: %s', msg);
+        pseudo_CT_output('WARN', local_output_event_context(context, ...
+            'output.cleanup', 'warning'), 'Temporary cleanup failed: %s', msg);
     else
-        pseudo_CT_output('INFO', local_status_context(context, 'INFO'), 'Temporary files removed.');
+        pseudo_CT_output('INFO', local_output_event_context(context, ...
+            'output.cleanup', 'operation_completed'), 'Temporary files removed.');
     end
 end
 
@@ -1153,34 +1177,59 @@ if strcmp(config.io_policy.output, 'nifti-and-dicom')
 else
     % Policy skip is not stage 5 work (mirrors the Local path): no stage cell.
     skip_context = rmfield(context, {'stage_index', 'stage_count'});
-    pseudo_CT_output('INFO', skip_context, 'Skipping DICOM output by profile policy.');
+    if isfield(config, 'io_policy') && isfield(config.io_policy, 'gui') && ...
+            strcmp(config.io_policy.gui, 'mprage-only')
+        skip_context = local_workflow_stage_context(skip_context, 9, ...
+            'SKIPPED', 'workflow.dicom_output', 'profile_policy:mprage_only');
+        pseudo_CT_output('INFO', skip_context, ...
+            'DICOM output skipped by MPRAGE-only policy.');
+    else
+        pseudo_CT_output('INFO', skip_context, 'Skipping DICOM output by profile policy.');
+    end
 end
 
-context = local_stage_context(context, 7);
+if isfield(config, 'io_policy') && isfield(config.io_policy, 'gui') && ...
+        strcmp(config.io_policy.gui, 'mprage-only')
+    stage10_context = local_workflow_stage_context(context, 10, ...
+        'SKIPPED', 'workflow.full_output_finalize', ...
+        'profile_policy:mprage_only');
+    pseudo_CT_output('INFO', stage10_context, ...
+        'Full-mode output finalization skipped by MPRAGE-only policy.');
+    promotion_context = local_output_event_context(context, ...
+        'output.promote_nifti', 'operation_started');
+else
+    promotion_context = local_workflow_stage_context(context, 10, ...
+        'START', 'workflow.full_output_finalize', '');
+end
 stage_started = tic;
-pseudo_CT_output('INFO', context, 'Promoting final outputs.');
+pseudo_CT_output('INFO', promotion_context, 'Promoting final outputs.');
 promotion_success = pseudo_CT_promote_final_outputs( ...
-    job.temp_dir, job.processing_dir, seed_nii, context);
+    job.temp_dir, job.processing_dir, seed_nii, promotion_context);
 if ~promotion_success
-    pseudo_CT_output('ERROR', context, ...
+    pseudo_CT_output('ERROR', promotion_context, ...
         'Output promotion failed; temporary files were preserved.');
-    pseudo_CT_output('INFO', context, '    %s', job.temp_dir);
-    local_log_subject_failure(job, context);
+    pseudo_CT_output('INFO', promotion_context, '    %s', job.temp_dir);
+    local_log_subject_failure(job, promotion_context);
     return;
 end
-pseudo_CT_output('SUCCESS', context, 'Outputs promoted (elapsed %s).', ...
-    local_elapsed(toc(stage_started)));
+pseudo_CT_output('SUCCESS', local_promotion_completed_context(promotion_context), ...
+    'Outputs promoted (elapsed %s).', local_elapsed(toc(stage_started)));
+pseudo_CT_output('SUCCESS', local_output_event_context(promotion_context, ...
+    'output.verify', 'output_verified'), 'Promoted outputs verified.');
 
-context = local_stage_context(context, 8);
 stage_started = tic;
-pseudo_CT_output('INFO', context, 'Cleaning up temporary files.');
+cleanup_context = local_output_event_context(context, ...
+    'output.cleanup', 'operation_started');
+pseudo_CT_output('INFO', cleanup_context, 'Cleaning up temporary files.');
 if config.cleanup_on_success
     [remove_success, msg] = rmdir(job.temp_dir, 's');
     if ~remove_success
-        pseudo_CT_output('WARN', context, 'Temporary cleanup failed: %s', msg);
+        pseudo_CT_output('WARN', local_output_event_context(cleanup_context, ...
+            'output.cleanup', 'warning'), 'Temporary cleanup failed: %s', msg);
     end
 end
-pseudo_CT_output('SUCCESS', context, 'Cleanup completed (elapsed %s).', ...
+pseudo_CT_output('SUCCESS', local_output_event_context(cleanup_context, ...
+    'output.cleanup', 'operation_completed'), 'Cleanup completed (elapsed %s).', ...
     local_elapsed(toc(stage_started)));
 
 success = 1;
@@ -1324,7 +1373,104 @@ if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
     if public_stage > 0
         context.stage_index = public_stage;
         context.stage_count = public_total;
+    else
+        context = rmfield(context, {'stage_index', 'stage_count'});
     end
+end
+end
+
+function context = local_workflow_stage_context(context, stage_number, status, ...
+        stage_id, reason)
+% Attach an explicit ten-stage public event without changing producer behavior.
+context.workflow_event = true;
+context.stage_index = stage_number;
+context.stage_count = 10;
+context.stage_id = stage_id;
+context.operation_id = stage_id;
+context.stage_status = status;
+context.event_kind = local_workflow_event_kind(status);
+context.source = 'orchestrator';
+context.source_file = 'src/orchestration/pseudo_CT_run_lifecycle.m';
+context.live = true;
+if isempty(reason)
+    if isfield(context, 'reason')
+        context = rmfield(context, 'reason');
+    end
+else
+    context.reason = reason;
+end
+end
+
+function context = local_workflow_event_context(context, stage_id, ...
+        operation_id, event_kind, status)
+% Attach an unnumbered orchestration event with explicit provenance.
+if isfield(context, 'stage_index')
+    context = rmfield(context, 'stage_index');
+end
+if isfield(context, 'stage_count')
+    context = rmfield(context, 'stage_count');
+end
+context.workflow_event = true;
+context.stage_id = stage_id;
+context.operation_id = operation_id;
+context.event_kind = event_kind;
+context.event_category = 'preparation';
+context.stage_status = status;
+context.source = 'orchestrator';
+context.source_file = 'src/orchestration/pseudo_CT_run_lifecycle.m';
+context.live = true;
+end
+
+function context = local_output_event_context(context, operation_id, event_kind)
+% Structured, unnumbered finalization events remain distinct from workflow steps.
+stale_fields = {'stage_index'; 'stage_count'; 'stage_id'; 'reason'; ...
+    'stage_span'; 'operation_ids'; 'event_category'; 'stage_message'};
+for ii = 1:length(stale_fields)
+    if isfield(context, stale_fields{ii})
+        context = rmfield(context, stale_fields{ii});
+    end
+end
+context.workflow_event = true;
+context.operation_id = operation_id;
+context.event_kind = event_kind;
+context.source = 'orchestrator';
+context.source_file = 'src/orchestration/pseudo_CT_run_lifecycle.m';
+context.live = true;
+if strcmp(event_kind, 'warning')
+    context.stage_status = 'WARN';
+elseif strcmp(event_kind, 'output_verified')
+    context.stage_status = 'DONE';
+elseif strcmp(event_kind, 'operation_completed')
+    context.stage_status = 'DONE';
+elseif strcmp(event_kind, 'operation_started')
+    context.stage_status = 'START';
+end
+end
+
+function context = local_promotion_completed_context(context)
+if isfield(context, 'stage_id') && ischar(context.stage_id) && ...
+        strcmp(context.stage_id, 'workflow.full_output_finalize')
+    context = local_workflow_stage_context(context, 10, 'DONE', ...
+        'workflow.full_output_finalize', '');
+else
+    context = local_output_event_context(context, ...
+        'output.promote_nifti', 'operation_completed');
+end
+end
+
+function event_kind = local_workflow_event_kind(status)
+if strcmp(status, 'START')
+    event_kind = 'stage_started';
+elseif strcmp(status, 'DONE')
+    event_kind = 'stage_completed';
+elseif strcmp(status, 'SKIPPED')
+    event_kind = 'stage_skipped';
+elseif strcmp(status, 'WARN')
+    event_kind = 'warning';
+elseif strcmp(status, 'ERROR')
+    event_kind = 'failure';
+else
+    event_kind = 'stage_event';
 end
 end
 

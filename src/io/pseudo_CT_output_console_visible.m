@@ -166,9 +166,11 @@ if isfield(context, 'stage_map') && local_is_stage_map(context.stage_map)
     state.stage_map = context.stage_map;
 end
 % Current-lineage local child counters are not public stages. Keep the
-% established distinction between their [stage N/8] markers and the
-% orchestration's public 9/10-stage map.
-if local_is_current_local_profile(state.active_profile) && explicit_stage > 0 && ...
+% established distinction between their [stage N/8] markers and the fixed
+% ten-stage public workflow map.
+workflow_direct = isfield(context, 'workflow_event') && ...
+    isequal(context.workflow_event, true);
+if ~workflow_direct && local_is_current_local_profile(state.active_profile) && explicit_stage > 0 && ...
         ~any(explicit_stage_total == [9 10])
     [explicit_stage, explicit_stage_total] = local_stage_marker('', context);
     explicit_from_text = false;
@@ -185,15 +187,21 @@ stage_cell_blocked = false;
 % (already public) stage fields; it is not a producer text marker.
 context_tagged = isfield(context, 'stage_index') && ...
     isfield(context, 'stage_count') && local_is_mlsc_profile(state.active_profile);
-if explicit_stage > 0 && local_is_stage_map(state.stage_map)
+if ~workflow_direct && explicit_stage > 0 && local_is_stage_map(state.stage_map)
     if explicit_from_text && ~context_tagged && ...
             ~local_is_identity_stage_map(state.stage_map)
         stage_cell_blocked = true;
     else
         [~, mapped_stage, mapped_total] = pseudo_CT_stage_map( ...
             state.stage_map, explicit_stage, explicit_stage_total);
-        explicit_stage = mapped_stage;
-        explicit_stage_total = mapped_total;
+        if mapped_stage > 0
+            explicit_stage = mapped_stage;
+            explicit_stage_total = mapped_total;
+        else
+            explicit_stage = 0;
+            explicit_stage_total = 0;
+            stage_cell_blocked = true;
+        end
     end
 end
 
@@ -352,6 +360,10 @@ if local_is_presenter_profile(state.active_profile)
         isequal(context.console_unstructured, true);
     [kind, display_body] = local_apply_canonical_status( ...
         canonical_status, canonical_message, kind, display_body);
+    if ~isempty(regexp(lower(strtrim(display_body)), ...
+            '^(run )?(cancelled|canceled)(\b|[ .,:])|^cancellation requested\b', 'once'))
+        kind = 'cancelled';
+    end
     if isempty(kind) && explicit_stage > 0 && strcmp(level, 'INFO') && ...
             ~unstructured_child
         kind = 'active';
@@ -362,6 +374,29 @@ if local_is_presenter_profile(state.active_profile)
     % log is written by PSEUDO_CT_OUTPUT from the original text, unchanged.
     display_body = regexprep(display_body, ...
         '\[stage[ \t]+[0-9]+/[0-9]+\][ \t]*', '', 'ignorecase');
+
+    metadata = local_resolve_event_metadata(state, context, ...
+        state.active_profile, kind, display_body, explicit_stage, ...
+        explicit_stage_total, source_time);
+    if metadata.stage_number > 0
+        explicit_stage = metadata.stage_number;
+        explicit_stage_total = metadata.stage_total;
+        stage_cell_blocked = false;
+    elseif workflow_direct
+        explicit_stage = 0;
+        explicit_stage_total = 0;
+        stage_cell_blocked = true;
+    end
+
+    if ~workflow_direct && ...
+            local_is_legacy_delegated_detail(state.active_profile, display_body) && ...
+            ~any(strcmp(kind, {'warn'; 'error'; 'run-failed'; 'cancelled'}))
+        % Preserve legacy-child details in the raw log; stages 2-3 have one
+        % public delegation event unless authoritative per-operation evidence
+        % is provided through structured orchestration metadata.
+        state = local_flush_all_warnings(state);
+        return;
+    end
 
     if isempty(kind)
         state = local_flush_all_warnings(state);
@@ -392,14 +427,18 @@ if local_is_presenter_profile(state.active_profile)
         % then joins the repeat path.
         entry = struct('subject', warning_subject, 'stage', event_stage, ...
             'stage_total', event_stage_total, 'job', local_event_job(context), ...
-            'text', display_body, 'time', source_time, 'lines', 1);
+            'text', display_body, 'time', source_time, 'lines', 1, ...
+            'source', metadata.source, 'source_file', metadata.source_file, ...
+            'event_category', metadata.event_category, ...
+            'live', metadata.live, ...
+            'original_timestamp', metadata.original_timestamp);
         state.pending_warning(end + 1) = entry;
         return;
     end
     if warning_start || any(strcmp(kind, {'qform'; 'provenance'}))
         [state, repeated_warning] = local_track_repeated_warning(state, ...
             warning_subject, warning_stage, warning_stage_total, kind, ...
-            display_body, source_time, local_event_job(context));
+            display_body, source_time, local_event_job(context), metadata);
         % Defer the concise warning until the warning block ends so repeats
         % are represented by one line and a count. The raw details are still
         % appended to the scientific log by PSEUDO_CT_OUTPUT.
@@ -435,7 +474,15 @@ if local_is_presenter_profile(state.active_profile)
     remote_unnumbered = local_is_remote_profile(state.active_profile) && ...
         (~any(strcmp(kind, {'active'; 'done'; 'skipped'; 'error'})) || ...
         local_is_remote_child_step(display_body));
-    if stage_cell_blocked || remote_unnumbered
+    if metadata.stage_number > 0
+        if isempty(subject_index)
+            row_subject = 0;
+        else
+            row_subject = subject_index;
+        end
+        [state, event_stage, record_stage] = local_stage_cells(state, ...
+            row_subject, metadata.stage_number, metadata.stage_total);
+    elseif stage_cell_blocked || remote_unnumbered
         % Text-parsed producer marker under a non-identity map: no public
         % stage cell in the row or the event record; the message is kept.
         event_stage = '';
@@ -465,19 +512,22 @@ if local_is_presenter_profile(state.active_profile)
         state.subject_failed(:) = true;
     end
 
-    if any(strcmp(kind, {'done'; 'subject-end'; 'run-end'}))
+    if any(strcmp(kind, {'done'; 'skipped'; 'error'; 'run-failed'; ...
+            'cancelled'; 'subject-end'; 'run-end'}))
         if isempty(subject_index)
             completion_subject = 0;
         else
             completion_subject = subject_index;
         end
-        completion_stage = state_stage;
-        % Progress can arrive from both the live milestone reader and a
-        % buffered backend log. Those aliases may carry different stage
-        % tags even though they report the same completion; de-duplicate by
-        % subject and canonical display message, not by transport stage.
+        % One terminal transition per subject and canonical operation. This
+        % also collapses aliases from live polling and buffered backend logs.
+        completion_operation = metadata.operation_id;
+        if isempty(completion_operation) || ...
+                any(strcmp(completion_operation, {'unavailable'; 'event.error'}))
+            completion_operation = lower(strtrim(display_body));
+        end
         completion_key = sprintf('%d|%s', completion_subject, ...
-            lower(strtrim(display_body)));
+            lower(strtrim(completion_operation)));
         if any(strcmp(state.completed_keys, completion_key))
             return;
         end
@@ -490,6 +540,15 @@ if local_is_presenter_profile(state.active_profile)
         level = 'WARN';
     end
     status = local_console_status(kind, level);
+    if strcmp(kind, 'cancelled')
+        status = 'CANCELLED';
+    elseif strcmp(metadata.event_kind, 'output_verified')
+        status = 'VERIFIED';
+    elseif strcmp(kind, 'subject-end') && ~local_completion_verified(context)
+        status = 'INFO';
+    elseif strcmp(kind, 'run-end')
+        status = 'INFO';
+    end
     if isempty(status) && local_is_presenter_profile(state.active_profile)
         status = 'INFO';
     end
@@ -499,7 +558,7 @@ if local_is_presenter_profile(state.active_profile)
         display_body = regexprep(display_body, ...
             '^Run completed:', 'Run failed:');
     end
-    [event_date, event_clock] = local_event_clock(source_time);
+    [event_date, event_clock] = local_event_clock(source_time, metadata.live);
     state = local_emit_date_separator(state, event_date);
     stage_text = event_stage;
     console_line = local_format_row(event_clock, event_subject, ...
@@ -507,12 +566,16 @@ if local_is_presenter_profile(state.active_profile)
     visible = true;
     event_record = local_event_record(level, event_subject, record_stage, ...
         status, display_body, source_time, local_event_job(context));
-    [public_id, public_number, public_total] = local_row_public_stage( ...
-        state, record_stage, explicit_stage, explicit_stage_total);
+    public_id = metadata.stage_id;
+    public_number = metadata.stage_number;
+    public_total = metadata.stage_total;
+    if isempty(public_id) || strcmp(public_id, 'unavailable')
+        [public_id, public_number, public_total] = local_row_public_stage( ...
+            state, record_stage, explicit_stage, explicit_stage_total);
+    end
     event_record = local_contract_fields(event_record, state, ...
-        local_event_category(kind, state.active_profile, display_body, public_id, ...
-        ~isempty(subject_index), local_completion_verified(context)), ...
-        public_id, public_number, public_total);
+        metadata.event_category, public_id, public_number, public_total, ...
+        metadata, context, kind, display_body, source_time);
     state = local_queue_event(state, event_record);
     if strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
         local_emit_json_event(event_record);
@@ -578,12 +641,15 @@ state.completed_keys = {};
 state.last_date = '';
 state.header_printed = false;
 state.pending_warning = struct('subject', {}, 'stage', {}, ...
-    'stage_total', {}, 'job', {}, 'text', {}, 'time', {}, 'lines', {});
+    'stage_total', {}, 'job', {}, 'text', {}, 'time', {}, 'lines', {}, ...
+    'source', {}, 'source_file', {}, 'event_category', {}, 'live', {}, ...
+    'original_timestamp', {});
 state.truncated_warning = struct('subject', {}, 'stage', {}, ...
     'stage_total', {});
 state.warning_repeats = struct('subject', {}, 'stage', {}, ...
     'stage_total', {}, 'job', {}, 'kind', {}, 'text', {}, ...
-    'first_time', {}, 'count', {});
+    'first_time', {}, 'count', {}, 'source', {}, 'source_file', {}, ...
+    'event_category', {}, 'live', {}, 'original_timestamp', {});
 state.warning_group_active = false;
 state.last_row_key = [-1 -1];
 state.event_records = local_empty_events();
@@ -609,12 +675,15 @@ state.completed_keys = {};
 state.last_date = '';
 state.header_printed = false;
 state.pending_warning = struct('subject', {}, 'stage', {}, ...
-    'stage_total', {}, 'job', {}, 'text', {}, 'time', {}, 'lines', {});
+    'stage_total', {}, 'job', {}, 'text', {}, 'time', {}, 'lines', {}, ...
+    'source', {}, 'source_file', {}, 'event_category', {}, 'live', {}, ...
+    'original_timestamp', {});
 state.truncated_warning = struct('subject', {}, 'stage', {}, ...
     'stage_total', {});
 state.warning_repeats = struct('subject', {}, 'stage', {}, ...
     'stage_total', {}, 'job', {}, 'kind', {}, 'text', {}, ...
-    'first_time', {}, 'count', {});
+    'first_time', {}, 'count', {}, 'source', {}, 'source_file', {}, ...
+    'event_category', {}, 'live', {}, 'original_timestamp', {});
 state.warning_group_active = false;
 state.last_row_key = [-1 -1];
 state.event_records = event_records;
@@ -917,8 +986,9 @@ elseif strcmp(level, 'ERROR')
 end
 
 if strcmp(level, 'INFO')
-    if local_starts_with(text_lower, 'submitting mlsc job') || ...
-            local_starts_with(text_lower, ...
+    if local_starts_with(text_lower, 'submitting mlsc job')
+        kind = 'scheduler-submit';
+    elseif local_starts_with(text_lower, ...
             'aligning mprage and creating subject mask') || ...
             local_starts_with(text_lower, 'running spm new segment') || ...
             local_starts_with(text_lower, 'registering atlases with dartel') || ...
@@ -1061,7 +1131,18 @@ yes = ~isempty(regexp(lower(strtrim(body)), ...
 end
 
 function [state, repeated] = local_track_repeated_warning(state, ...
-        subject_index, stage_number, stage_total, kind, text, event_time, job)
+        subject_index, stage_number, stage_total, kind, text, event_time, job, metadata)
+if nargin < 9 || ~isstruct(metadata)
+    metadata = struct();
+end
+source = local_metadata_text(metadata, 'source', 'orchestrator');
+source_file = local_metadata_text(metadata, 'source_file', 'unavailable');
+event_category = local_metadata_text(metadata, 'event_category', '');
+live = local_metadata_live(metadata);
+original_timestamp = local_metadata_text(metadata, 'original_timestamp', event_time);
+if isempty(original_timestamp)
+    original_timestamp = 'null';
+end
 repeated = false;
 % Rows merge only when they are consecutive and share subject, stage, job,
 % kind, and identical message text. Only the immediately preceding grouped
@@ -1071,7 +1152,9 @@ if ~isempty(state.warning_repeats)
     entry = state.warning_repeats(last);
     if entry.subject == subject_index && entry.stage == stage_number && ...
             strcmp(entry.job, job) && strcmp(entry.kind, kind) && ...
-            strcmp(entry.text, text)
+            strcmp(entry.text, text) && strcmp(entry.source, source) && ...
+            strcmp(entry.source_file, source_file) && ...
+            strcmp(entry.event_category, event_category) && entry.live == live
         state.warning_repeats(last).count = entry.count + 1;
         repeated = true;
         return;
@@ -1079,8 +1162,47 @@ if ~isempty(state.warning_repeats)
 end
 entry = struct('subject', subject_index, 'stage', stage_number, ...
     'stage_total', stage_total, 'job', job, 'kind', kind, 'text', text, ...
-    'first_time', event_time, 'count', 0);
+    'first_time', event_time, 'count', 0, 'source', source, ...
+    'source_file', source_file, 'event_category', event_category, ...
+    'live', live, ...
+    'original_timestamp', original_timestamp);
 state.warning_repeats(end + 1) = entry;
+end
+
+function value = local_metadata_text(metadata, field_name, fallback)
+value = fallback;
+if isstruct(metadata) && isfield(metadata, field_name) && ...
+        ischar(metadata.(field_name)) && ~isempty(metadata.(field_name))
+    value = metadata.(field_name);
+end
+end
+
+function live = local_metadata_live(metadata)
+live = true;
+if isstruct(metadata) && isfield(metadata, 'live') && ...
+        (islogical(metadata.live) || isnumeric(metadata.live)) && ...
+        isscalar(metadata.live) && isfinite(double(metadata.live))
+    live = logical(metadata.live);
+end
+end
+
+function context = local_warning_context(entry)
+context = struct();
+context.source = local_metadata_text(entry, 'source', 'orchestrator');
+context.source_file = local_metadata_text(entry, 'source_file', 'unavailable');
+context.event_category = local_metadata_text(entry, 'event_category', '');
+context.live = local_metadata_live(entry);
+context.original_timestamp = local_metadata_text(entry, ...
+    'original_timestamp', 'null');
+end
+
+function event_time = local_warning_time(entry)
+event_time = '';
+if isstruct(entry) && isfield(entry, 'time')
+    event_time = entry.time;
+elseif isstruct(entry) && isfield(entry, 'first_time')
+    event_time = entry.first_time;
+end
 end
 
 function state = local_flush_warnings(state, subject_index, stage_number)
@@ -1104,10 +1226,10 @@ for ii = 1:length(state.warning_repeats)
                 message, total_occurrences);
         end
         emission_time = entry.first_time;
-        if isempty(emission_time)
+        if isempty(emission_time) && entry.live
             emission_time = datestr(now, 'yyyy-mm-dd HH:MM:SS');
         end
-        [event_date, event_clock] = local_event_clock(emission_time);
+        [event_date, event_clock] = local_event_clock(emission_time, entry.live);
         state = local_emit_date_separator(state, event_date);
         [state, stage_text, record_stage] = local_flush_stage(state, entry);
         event_line = local_format_row(event_clock, subject_name, stage_text, ...
@@ -1230,7 +1352,8 @@ function state = local_emit_pending_warning(state, entry)
 % is counted and printed once when its warning group closes.
 message = local_warning_message(entry.text);
 [state, ~] = local_track_repeated_warning(state, entry.subject, ...
-    entry.stage, entry.stage_total, 'warn', message, entry.time, entry.job);
+    entry.stage, entry.stage_total, 'warn', message, entry.time, entry.job, ...
+    local_warning_context(entry));
 end
 
 function state = local_emit_truncated_warning_notice(state, entry)
@@ -1238,7 +1361,7 @@ subject_name = 'RUN';
 if entry.subject > 0
     subject_name = sprintf('S%02d', entry.subject);
 end
-[event_date, event_clock] = local_event_clock(entry.time);
+[event_date, event_clock] = local_event_clock(entry.time, entry.live);
 state = local_emit_date_separator(state, event_date);
 notice = ['Further continuation text of this warning is truncated on the ' ...
     'console; full text remains in the detailed log.'];
@@ -1267,9 +1390,10 @@ end
 
 function [kind, display_body] = local_apply_canonical_status(status, message, kind, display_body)
 %LOCAL_APPLY_CANONICAL_STATUS Map an explicit event status to a row kind.
-%   No message text is interpreted. WARN/ERROR keep their level-derived kind
+%   No message text is interpreted. Diagnostics keep their level-derived kind
 %   (warning grouping and QFORM0 de-duplication stay in the usual path).
-if isempty(status)
+if isempty(status) || any(strcmp(kind, ...
+        {'warn'; 'provenance'; 'qform'; 'error'; 'run-failed'}))
     return;
 end
 switch status
@@ -1326,7 +1450,7 @@ elseif strcmp(kind, 'skipped')
 elseif any(strcmp(kind, {'stage'; 'active'}))
     status = 'ACTIVE';
 elseif any(strcmp(kind, {'milestone'; 'accepted'; 'state'; 'heartbeat'; ...
-        'remote-terminal'; 'retrieved'; 'remote-verified'}))
+        'remote-terminal'; 'retrieved'; 'remote-verified'; 'scheduler-submit'}))
     status = 'INFO';
 elseif any(strcmp(kind, {'warn'; 'provenance'})) || strcmp(level, 'WARN')
     status = 'WARN';
@@ -1393,9 +1517,8 @@ end
 end
 
 function yes = local_contract_applies(profile_name)
-%LOCAL_CONTRACT_APPLIES The additive JSONL contract keys (profile, backend,
-%   event_category, stage_id, stage_number, stage_total) apply to every known
-%   profile, including Local Current. The existing keys are not changed.
+%LOCAL_CONTRACT_APPLIES The additive event contract applies to every known
+%   profile, including Local Current. The existing JSONL keys are unchanged.
 yes = ischar(profile_name) && ~isempty(profile_name) && ...
     ~strcmp(profile_name, 'unavailable');
 end
@@ -1409,16 +1532,340 @@ yes = isstruct(context) && isscalar(context) && ...
     isequal(context.completion_verified, true);
 end
 
+function metadata = local_resolve_event_metadata(state, context, profile_name, ...
+        kind, text, producer_stage, producer_total, source_time)
+% Resolve the additive event contract from explicit orchestration metadata or
+% recognized production messages. Unknown diagnostic lines never become events.
+metadata = struct('event_kind', '', 'operation_id', '', 'stage_id', '', ...
+    'stage_number', 0, 'stage_total', 0, 'event_category', '', 'reason', '', ...
+    'source', '', 'source_file', '', 'live', true, 'original_timestamp', '', ...
+    'stage_span', [], 'operation_ids', {{}});
+direct = isstruct(context) && isscalar(context) && ...
+    isfield(context, 'workflow_event') && isequal(context.workflow_event, true);
+
+if direct
+    if isfield(context, 'stage_index') && isnumeric(context.stage_index) && ...
+            isscalar(context.stage_index) && isfinite(context.stage_index) && ...
+            context.stage_index >= 1 && context.stage_index <= 10 && ...
+            context.stage_index == floor(context.stage_index) && ...
+            isfield(context, 'stage_count') && isnumeric(context.stage_count) && ...
+            isscalar(context.stage_count) && context.stage_count == 10
+        metadata.stage_number = context.stage_index;
+        metadata.stage_total = context.stage_count;
+    end
+    if isfield(context, 'stage_id') && ischar(context.stage_id)
+        metadata.stage_id = context.stage_id;
+    end
+else
+    non_workflow_event = any(strcmp(kind, ...
+        {'accepted'; 'state'; 'heartbeat'; 'remote-terminal'; 'retrieved'; ...
+         'remote-verified'; 'scheduler-submit'}));
+    if non_workflow_event
+        workflow_number = 0;
+        workflow_id = '';
+    else
+        [workflow_number, workflow_id] = local_workflow_stage_from_text( ...
+            profile_name, kind, text);
+    end
+    if workflow_number > 0
+        metadata.stage_number = workflow_number;
+        metadata.stage_total = 10;
+        metadata.stage_id = workflow_id;
+    elseif ~non_workflow_event && ...
+            ~local_is_legacy_delegated_detail(profile_name, text) && ...
+            producer_stage > 0 && local_is_stage_map(state.stage_map)
+        metadata.stage_id = local_public_stage_id(state.stage_map, ...
+            producer_stage, producer_total);
+        if ~isempty(metadata.stage_id)
+            metadata.stage_number = producer_stage;
+            metadata.stage_total = producer_total;
+        end
+    end
+end
+
+if isstruct(context) && isscalar(context)
+    if isfield(context, 'event_kind') && ischar(context.event_kind)
+        metadata.event_kind = context.event_kind;
+    end
+    if isfield(context, 'event_category') && ischar(context.event_category)
+        metadata.event_category = context.event_category;
+    end
+    if isfield(context, 'operation_id') && ischar(context.operation_id)
+        metadata.operation_id = context.operation_id;
+    end
+    if isfield(context, 'source') && ischar(context.source)
+        metadata.source = context.source;
+    end
+    if isfield(context, 'source_file') && ischar(context.source_file)
+        metadata.source_file = context.source_file;
+    end
+    if isfield(context, 'reason') && ischar(context.reason)
+        metadata.reason = context.reason;
+    end
+    if isfield(context, 'live') && (islogical(context.live) || isnumeric(context.live)) && ...
+            isscalar(context.live) && isfinite(double(context.live))
+        metadata.live = logical(context.live);
+    end
+    if isfield(context, 'original_timestamp') && ischar(context.original_timestamp)
+        metadata.original_timestamp = context.original_timestamp;
+    end
+    if isfield(context, 'stage_span') && isnumeric(context.stage_span) && ...
+            numel(context.stage_span) == 2 && ...
+            all(isfinite(context.stage_span(:))) && ...
+            all(context.stage_span(:) == floor(context.stage_span(:)))
+        metadata.stage_span = reshape(context.stage_span, 1, 2);
+    end
+    if isfield(context, 'operation_ids') && iscell(context.operation_ids)
+        metadata.operation_ids = context.operation_ids;
+    end
+end
+
+if isempty(metadata.stage_id) && metadata.stage_number > 0
+    metadata.stage_id = local_workflow_stage_id(metadata.stage_number);
+end
+if isempty(metadata.operation_id)
+    if ~isempty(metadata.stage_id)
+        metadata.operation_id = metadata.stage_id;
+    else
+        metadata.operation_id = local_operation_id(kind, text);
+    end
+end
+if isempty(metadata.event_kind)
+    metadata.event_kind = local_event_kind(kind, metadata.stage_number);
+end
+% The observed severity is authoritative over a caller's start/status hint.
+% A failure during a started stage must not be serialized as stage_started.
+if any(strcmp(kind, {'error'; 'run-failed'}))
+    metadata.event_kind = 'failure';
+elseif strcmp(kind, 'cancelled')
+    metadata.event_kind = 'cancelled';
+elseif strcmp(kind, 'warn') && ~strcmp(metadata.event_kind, 'delegation')
+    metadata.event_kind = 'warning';
+end
+if isempty(metadata.event_category)
+    if metadata.stage_number > 0
+        metadata.event_category = local_workflow_category(metadata.stage_number);
+    elseif strcmp(metadata.event_kind, 'delegation')
+        metadata.event_category = 'preparation';
+    elseif strcmp(metadata.operation_id, 'output.verify')
+        metadata.event_category = 'verified_completion';
+    elseif strncmp(metadata.operation_id, 'output.', 7)
+        metadata.event_category = 'finalization';
+    elseif strcmp(metadata.operation_id, 'scheduler.job')
+        metadata.event_category = 'scheduler';
+    else
+        has_subject = isstruct(context) && isfield(context, 'subject_index') && ...
+            ~isempty(context.subject_index);
+        metadata.event_category = local_event_category(kind, profile_name, ...
+            text, metadata.stage_id, has_subject, ...
+            local_completion_verified(context));
+    end
+end
+if strcmp(metadata.event_category, 'remote_processing')
+    metadata.event_category = 'remote_execution';
+elseif strcmp(metadata.event_category, 'retrieval')
+    metadata.event_category = 'transfer';
+end
+if strcmp(metadata.event_kind, 'delegation')
+    if isempty(metadata.stage_span)
+        metadata.stage_span = [2 3];
+    end
+    if isempty(metadata.operation_ids)
+        metadata.operation_ids = {'prepare.recenter', 'prepare.alias_correct'};
+    end
+end
+if strcmp(metadata.event_kind, 'stage_skipped') && isempty(metadata.reason) && ...
+        any(strcmp(metadata.stage_id, ...
+        {'workflow.dicom_output'; 'workflow.full_output_finalize'})) && ...
+        (strcmp(profile_name, 'local-mprage-only') || ...
+         strcmp(profile_name, 'mlsc-mprage-only'))
+    metadata.reason = 'profile_policy:mprage_only';
+end
+if isempty(metadata.source)
+    metadata.source = 'orchestrator';
+end
+if isempty(metadata.source_file)
+    metadata.source_file = 'unavailable';
+end
+if isempty(metadata.original_timestamp)
+    metadata.original_timestamp = source_time;
+end
+if isempty(metadata.original_timestamp)
+    metadata.original_timestamp = 'null';
+end
+end
+
+function [stage_number, stage_id] = local_workflow_stage_from_text(profile_name, kind, text)
+stage_number = 0;
+stage_id = '';
+text_lower = lower(strtrim(text));
+if local_is_legacy_profile(profile_name) && ...
+        (~isempty(strfind(text_lower, 'recentering')) || ...
+         ~isempty(strfind(text_lower, 'aliasing correction')) || ...
+         ~isempty(strfind(text_lower, 'alias-recenter')))
+    return; % compiled v2 is represented by one delegated event, not stage outcomes
+end
+if local_starts_with(text_lower, 'recentering') || ...
+        local_starts_with(text_lower, '[recentering]')
+    stage_number = 2;
+elseif local_starts_with(text_lower, 'aliasing correction') || ...
+        local_starts_with(text_lower, '[aliasing correction]')
+    stage_number = 3;
+elseif local_starts_with(text_lower, 'input prepared') || ...
+        local_starts_with(text_lower, 'preparing input mprage') || ...
+        local_starts_with(text_lower, 'input preparation')
+    stage_number = 1;
+elseif ~isempty(strfind(text_lower, 'normaliz'))
+    stage_number = 4;
+elseif ~isempty(strfind(text_lower, 'aligning mprage')) || ...
+        ~isempty(strfind(text_lower, 'alignment and masking')) || ...
+        ~isempty(strfind(text_lower, 'creating subject mask'))
+    stage_number = 5;
+elseif ~isempty(strfind(text_lower, 'new segment')) || ...
+        ~isempty(strfind(text_lower, 'segmentation completed'))
+    stage_number = 6;
+elseif ~isempty(strfind(text_lower, 'dartel')) || ...
+        ~isempty(strfind(text_lower, 'inverse warp')) || ...
+        ~isempty(strfind(text_lower, 'reslicing atlases')) || ...
+        ~isempty(strfind(text_lower, 'atlas registration completed'))
+    stage_number = 7;
+elseif ~isempty(strfind(text_lower, 'attenuation map')) || ...
+        ~isempty(strfind(text_lower, 'attenuation-map')) || ...
+        ~isempty(strfind(text_lower, 'att_map verified'))
+    stage_number = 8;
+elseif ~isempty(strfind(text_lower, 'dicom output')) || ...
+        ~isempty(strfind(text_lower, 'writing dicom'))
+    stage_number = 9;
+elseif ~isempty(strfind(text_lower, 'full-output promotion')) || ...
+        ~isempty(strfind(text_lower, 'promoting final outputs')) || ...
+        ~isempty(strfind(text_lower, 'outputs promoted'))
+    if ~any(strcmp(profile_name, {'local-mprage-only'; 'mlsc-mprage-only'}))
+        stage_number = 10;
+    end
+end
+if stage_number > 0 && any(strcmp(kind, ...
+        {'warn'; 'error'; 'run-failed'; 'cancelled'}))
+    % Diagnostics are source-qualified events, not transitions of the workflow stage.
+    stage_number = 0;
+end
+if stage_number > 0
+    stage_id = local_workflow_stage_id(stage_number);
+end
+end
+
+function yes = local_is_legacy_delegated_detail(profile_name, text)
+text_lower = lower(strtrim(text));
+yes = local_is_legacy_profile(profile_name) && ...
+    (~isempty(strfind(text_lower, 'recentering')) || ...
+     ~isempty(strfind(text_lower, 'aliasing correction')) || ...
+     ~isempty(strfind(text_lower, 'alias-recenter')));
+end
+
+function stage_id = local_workflow_stage_id(stage_number)
+ids = {'workflow.input_prepare'; 'workflow.recenter'; ...
+    'workflow.alias_correct'; 'workflow.normalize'; ...
+    'workflow.align_mask'; 'workflow.segment'; 'workflow.dartel'; ...
+    'workflow.attenuation_qc'; 'workflow.dicom_output'; ...
+    'workflow.full_output_finalize'};
+stage_id = '';
+if isnumeric(stage_number) && isscalar(stage_number) && ...
+        stage_number >= 1 && stage_number <= length(ids) && ...
+        stage_number == floor(stage_number)
+    stage_id = ids{stage_number};
+end
+end
+
+function category = local_workflow_category(stage_number)
+if stage_number <= 4
+    category = 'preparation';
+elseif stage_number <= 8
+    category = 'scientific';
+else
+    category = 'finalization';
+end
+end
+
+function operation_id = local_operation_id(kind, text)
+text_lower = lower(strtrim(text));
+if strcmp(kind, 'scheduler-submit') || ...
+        any(strcmp(kind, {'accepted'; 'state'; 'remote-terminal'; 'heartbeat'}))
+    operation_id = 'scheduler.job';
+elseif ~isempty(strfind(text_lower, 'delegated to compiled v2'))
+    operation_id = 'prepare.compiled_preprocess';
+elseif ~isempty(strfind(text_lower, 'promot'))
+    operation_id = 'output.promote_nifti';
+elseif ~isempty(strfind(text_lower, 'cleanup')) || ...
+        ~isempty(strfind(text_lower, 'temporary files removed'))
+    operation_id = 'output.cleanup';
+elseif ~isempty(strfind(text_lower, 'verified')) || ...
+        ~isempty(strfind(text_lower, 'output verification'))
+    operation_id = 'output.verify';
+else
+    operation_id = ['event.' kind];
+end
+end
+
+function event_kind = local_event_kind(kind, stage_number)
+if strcmp(kind, 'cancelled')
+    event_kind = 'cancelled';
+elseif strcmp(kind, 'delegation')
+    event_kind = 'delegation';
+elseif strcmp(kind, 'scheduler-submit')
+    event_kind = 'scheduler_submission';
+elseif strcmp(kind, 'accepted')
+    event_kind = 'scheduler_accepted';
+elseif strcmp(kind, 'heartbeat')
+    event_kind = 'heartbeat';
+elseif strcmp(kind, 'skipped')
+    event_kind = 'stage_skipped';
+elseif strcmp(kind, 'active')
+    if stage_number > 0
+        event_kind = 'stage_started';
+    else
+        event_kind = 'operation_started';
+    end
+elseif strcmp(kind, 'done') || strcmp(kind, 'verified')
+    if stage_number > 0
+        event_kind = 'stage_completed';
+    else
+        event_kind = 'operation_completed';
+    end
+elseif strcmp(kind, 'subject-end')
+    event_kind = 'subject_completed';
+elseif strcmp(kind, 'run-end')
+    event_kind = 'run_completed';
+elseif any(strcmp(kind, {'error'; 'run-failed'}))
+    event_kind = 'failure';
+elseif any(strcmp(kind, {'warn'; 'qform'; 'provenance'}))
+    event_kind = 'warning';
+elseif strcmp(kind, 'remote-terminal') || strcmp(kind, 'state')
+    event_kind = 'scheduler_state';
+elseif any(strcmp(kind, {'retrieved'; 'remote-verified'}))
+    event_kind = 'transfer';
+else
+    event_kind = 'info';
+end
+end
+
+function yes = local_is_legacy_profile(profile_name)
+yes = ischar(profile_name) && any(strcmp(profile_name, ...
+    {'local-legacy'; 'mlsc-legacy'; 'launchpad-legacy'}));
+end
+
 function event_category = local_event_category(kind, profile_name, text, stage_id, has_subject, verified)
-%LOCAL_EVENT_CATEGORY Map one presented row to the JSONL event_category set:
-%   scientific, scheduler, remote_processing, retrieval, finalization,
-%   verified_completion (verified final completion only), subject, or run.
+%LOCAL_EVENT_CATEGORY Map one presented row to the JSONL event_category set.
 %   Scheduler status never implies scientific progress; a scheduler exit or a
 %   remote-verified row is retrieval/scheduler, never verified_completion.
 %   VERIFIED is true only for the flagged final subject-completion row.
 text_lower = lower(strtrim(text));
 remote = local_is_remote_profile(profile_name);
-if strcmp(kind, 'subject-end')
+if strcmp(kind, 'cancelled')
+    if has_subject
+        event_category = 'subject';
+    else
+        event_category = 'run';
+    end
+elseif strcmp(kind, 'subject-end')
     if verified
         event_category = 'verified_completion';
     else
@@ -1427,22 +1874,21 @@ if strcmp(kind, 'subject-end')
 elseif any(strcmp(kind, {'run-end'; 'run-failed'}))
     event_category = 'run';
 elseif any(strcmp(kind, {'retrieved'; 'remote-verified'}))
-    event_category = 'retrieval';
-elseif remote && any(strcmp(kind, {'accepted'; 'state'; 'remote-terminal'}))
+    event_category = 'transfer';
+elseif remote && any(strcmp(kind, ...
+        {'accepted'; 'state'; 'remote-terminal'; 'scheduler-submit'; 'heartbeat'}))
     event_category = 'scheduler';
-elseif remote && strcmp(kind, 'heartbeat')
-    event_category = 'remote_processing';
 elseif remote && ~isempty(regexp(text_lower, 'copy-back', 'once'))
-    event_category = 'retrieval';
+    event_category = 'transfer';
 elseif remote && ~isempty(regexp(text_lower, ...
         '(connection and authentication|stage-in)', 'once'))
-    event_category = 'remote_processing';
+    event_category = 'remote_execution';
 elseif ~isempty(stage_id) && remote
     event_category = local_remote_stage_event_category(stage_id);
 elseif ~isempty(stage_id)
     event_category = local_stage_event_category(stage_id);
 elseif remote
-    event_category = 'remote_processing';
+    event_category = 'remote_execution';
 elseif any(strcmp(kind, {'warn'; 'provenance'; 'qform'; 'error'}))
     if has_subject
         event_category = 'subject';
@@ -1455,16 +1901,13 @@ end
 end
 
 function event_category = local_remote_stage_event_category(stage_id)
-%LOCAL_REMOTE_STAGE_EVENT_CATEGORY Public remote stages (MLSC and Launchpad):
-%   submission is scheduler, remote execution is remote_processing, and
-%   copy-back/verification is retrieval. Input and local finalization keep the
-%   local meaning below.
+%LOCAL_REMOTE_STAGE_EVENT_CATEGORY Classify scheduler, remote, and transfer rows.
 if ~isempty(regexp(stage_id, '\.submit$', 'once'))
     event_category = 'scheduler';
 elseif ~isempty(regexp(stage_id, '\.(remote_wait|remote_processing)$', 'once'))
-    event_category = 'remote_processing';
+    event_category = 'remote_execution';
 elseif ~isempty(regexp(stage_id, '\.(verify|retrieve_verify)$', 'once'))
-    event_category = 'retrieval';
+    event_category = 'transfer';
 else
     event_category = local_stage_event_category(stage_id);
 end
@@ -1517,20 +1960,52 @@ end
 end
 
 function record = local_contract_fields(record, state, event_category, ...
-        stage_id, stage_number, stage_total)
+        stage_id, stage_number, stage_total, metadata, context, kind, text, source_time)
 %LOCAL_CONTRACT_FIELDS Attach the additive progress contract to one event.
+if nargin < 7 || ~isstruct(metadata)
+    metadata = local_resolve_event_metadata(state, struct(), ...
+        state.active_profile, 'info', '', stage_number, stage_total, '');
+end
+if nargin < 8 || ~isstruct(context)
+    context = struct();
+end
+if nargin < 9
+    kind = 'info';
+end
+if nargin < 10
+    text = '';
+end
+if nargin < 11
+    source_time = '';
+end
 profile = 'unavailable';
 if isstruct(state) && isfield(state, 'active_profile') && ...
         ischar(state.active_profile) && ~isempty(state.active_profile)
     profile = state.active_profile;
 end
+record.profile = profile;
+record.backend = local_backend_of(profile);
+if isempty(event_category)
+    event_category = metadata.event_category;
+end
 if isempty(event_category)
     event_category = 'unavailable';
 end
-record.profile = profile;
-record.backend = local_backend_of(profile);
-record.event_category = event_category;
+record.schema_version = '1';
+record.event_category = local_event_value(event_category);
+record.event_kind = local_event_value(metadata.event_kind);
+record.operation_id = local_event_value(metadata.operation_id);
+record.source = local_event_value(metadata.source);
+record.source_file = local_event_value(metadata.source_file);
+record.reason = local_event_value(metadata.reason);
+record.live = logical(metadata.live);
+record.original_timestamp = metadata.original_timestamp;
+record.stage_span = metadata.stage_span;
+record.operation_ids = metadata.operation_ids;
 record.stage_id = local_event_value(stage_id);
+if strcmp(record.stage_id, 'unavailable') && ~isempty(metadata.stage_id)
+    record.stage_id = metadata.stage_id;
+end
 if isempty(stage_id) || stage_number < 1
     record.stage_number = 'unavailable';
     record.stage_total = 'unavailable';
@@ -1538,20 +2013,42 @@ else
     record.stage_number = sprintf('%d', stage_number);
     record.stage_total = sprintf('%d', stage_total);
 end
+if ~metadata.live && isempty(source_time)
+    record.timestamp = 'null';
+elseif ~isempty(source_time)
+    record.timestamp = source_time;
+end
 end
 
 function record = local_warning_record(state, record, entry, record_stage)
 %LOCAL_WARNING_RECORD Contract fields for a grouped warning row or notice.
 [stage_id, stage_number, stage_total] = local_row_public_stage( ...
     state, record_stage, entry.stage, entry.stage_total);
-event_category = local_event_category('warn', state.active_profile, '', stage_id, ...
-    entry.subject > 0, false);
+warning_context = local_warning_context(entry);
+warning_time = local_warning_time(entry);
+metadata = local_resolve_event_metadata(state, warning_context, ...
+    state.active_profile, 'warn', record.message, entry.stage, ...
+    entry.stage_total, warning_time);
+event_category = metadata.event_category;
+if isempty(event_category)
+    event_category = local_event_category('warn', state.active_profile, '', ...
+        stage_id, entry.subject > 0, false);
+end
 record = local_contract_fields(record, state, event_category, stage_id, ...
-    stage_number, stage_total);
+    stage_number, stage_total, metadata, warning_context, 'warn', ...
+    record.message, warning_time);
 end
 
-function [event_date, event_clock] = local_event_clock(source_time)
+function [event_date, event_clock] = local_event_clock(source_time, live)
+if nargin < 2
+    live = true;
+end
 if isempty(source_time)
+    if ~live
+        event_date = '';
+        event_clock = '—';
+        return;
+    end
     source_time = datestr(now, 'yyyy-mm-dd HH:MM:SS');
 end
 source_time = strtrim(source_time);
@@ -1782,7 +2279,10 @@ end
 function events = local_empty_events()
 events = struct('level', {}, 'subject', {}, 'stage', {}, 'status', {}, ...
     'job', {}, 'message', {}, 'timestamp', {}, 'profile', {}, 'backend', {}, ...
-    'event_category', {}, 'stage_id', {}, 'stage_number', {}, 'stage_total', {});
+    'schema_version', {}, 'event_kind', {}, 'operation_id', {}, ...
+    'event_category', {}, 'source', {}, 'source_file', {}, 'reason', {}, ...
+    'stage_id', {}, 'stage_number', {}, 'stage_total', {}, 'stage_span', {}, ...
+    'operation_ids', {}, 'live', {}, 'original_timestamp', {});
 end
 
 function event = local_unavailable_event()
@@ -1790,8 +2290,13 @@ event = struct('level', 'unavailable', 'subject', 'unavailable', ...
     'stage', 'unavailable', 'status', 'unavailable', 'job', 'unavailable', ...
     'message', 'unavailable', 'timestamp', 'unavailable', ...
     'profile', 'unavailable', 'backend', 'unavailable', ...
-    'event_category', 'unavailable', 'stage_id', 'unavailable', ...
-    'stage_number', 'unavailable', 'stage_total', 'unavailable');
+    'schema_version', '1', 'event_kind', 'unavailable', ...
+    'operation_id', 'unavailable', 'event_category', 'unavailable', ...
+    'source', 'unavailable', 'source_file', 'unavailable', ...
+    'reason', 'unavailable', 'stage_id', 'unavailable', ...
+    'stage_number', 'unavailable', 'stage_total', 'unavailable', ...
+    'stage_span', [], 'operation_ids', {{}}, 'live', true, ...
+    'original_timestamp', 'null');
 end
 
 function event = local_event_record(level, subject, stage, status, message, timestamp, job)
@@ -1898,13 +2403,18 @@ function local_emit_json_event(event_record)
 record = '{"type":"progress"';
 % Existing keys keep their order and meaning. The additive contract keys follow
 % them and are emitted only for profiles where local_contract_applies is true.
-fields = {'timestamp'; 'level'; 'subject'; 'stage'; 'status'; 'job'; 'message'; ...
-    'profile'; 'backend'; 'event_category'; 'stage_id'; 'stage_number'; 'stage_total'};
+fields = {'schema_version'; 'timestamp'; 'level'; 'subject'; 'stage'; ...
+    'status'; 'job'; 'message'; 'profile'; 'backend'; 'event_kind'; ...
+    'operation_id'; 'event_category'; 'source'; 'source_file'; 'reason'; ...
+    'stage_id'; 'stage_number'; 'stage_total'; 'stage_span'; 'operation_ids'; ...
+    'live'; 'original_timestamp'};
 required = {'timestamp'; 'level'; 'message'};
 optional_context = {'subject'; 'stage'; 'status'; 'job'};
-contract_fields = {'profile'; 'backend'; 'event_category'; 'stage_id'; ...
-    'stage_number'; 'stage_total'};
-numeric_fields = {'stage_number'; 'stage_total'};
+contract_fields = {'schema_version'; 'profile'; 'backend'; 'event_kind'; ...
+    'operation_id'; 'event_category'; 'source'; 'source_file'; 'reason'; ...
+    'stage_id'; 'stage_number'; 'stage_total'; 'stage_span'; 'operation_ids'; ...
+    'live'; 'original_timestamp'};
+numeric_fields = {'schema_version'; 'stage_number'; 'stage_total'};
 contract_on = isstruct(event_record) && isfield(event_record, 'profile') && ...
     ischar(event_record.profile) && local_contract_applies(event_record.profile);
 for ii = 1:length(fields)
@@ -1913,13 +2423,24 @@ for ii = 1:length(fields)
         continue;
     end
     value = 'unavailable';
-    if isstruct(event_record) && isfield(event_record, field_name) && ...
-            ischar(event_record.(field_name))
-        value = event_record.(field_name);
+    if isstruct(event_record) && isfield(event_record, field_name)
+        candidate = event_record.(field_name);
+        if ischar(candidate)
+            value = candidate;
+    elseif strcmp(field_name, 'live') && (islogical(candidate) || isnumeric(candidate))
+            value = candidate;
+        elseif any(strcmp(field_name, {'stage_span'; 'operation_ids'}))
+            value = candidate;
+        end
+    end
+    if strcmp(field_name, 'stage_span') && isempty(value)
+        continue;
+    elseif strcmp(field_name, 'operation_ids') && isempty(value)
+        continue;
     end
     missing_context = any(strcmp(optional_context, field_name)) && ...
-        any(strcmpi(value, {'null'; 'unavailable'}));
-    if isempty(value) || strcmp(value, 'unavailable') || missing_context || ...
+        ischar(value) && any(strcmpi(value, {'null'; 'unavailable'}));
+    if (ischar(value) && (isempty(value) || strcmp(value, 'unavailable'))) || missing_context || ...
             (strcmp(field_name, 'subject') && strcmp(value, 'RUN'))
         if any(strcmp(required, field_name))
             value = '';
@@ -1928,8 +2449,43 @@ for ii = 1:length(fields)
         end
     end
     if any(strcmp(numeric_fields, field_name))
-        % Integers are written unquoted; they are built only from sprintf('%d').
+        % Integer values are built only from sprintf('%d'); unavailable
+        % stage numbers are JSON null, never the invalid bare token.
+        if ~ischar(value) || isempty(regexp(value, '^[0-9]+$', 'once'))
+            value = 'null';
+        end
         record = [record ',"' field_name '":' value]; %#ok<AGROW>
+    elseif strcmp(field_name, 'live')
+        if (islogical(value) || isnumeric(value)) && isscalar(value) && ...
+                isfinite(double(value)) && logical(value)
+            encoded = 'true';
+        else
+            encoded = 'false';
+        end
+        record = [record ',"' field_name '":' encoded]; %#ok<AGROW>
+    elseif strcmp(field_name, 'stage_span')
+        if ~isnumeric(value) || numel(value) ~= 2 || ...
+                any(~isfinite(value(:))) || any(value(:) ~= floor(value(:)))
+            continue;
+        end
+        record = [record ',"' field_name '":[' ...
+            sprintf('%d,%d', value(1), value(2)) ']']; %#ok<AGROW>
+    elseif strcmp(field_name, 'operation_ids')
+        if ~iscell(value) || ~all(cellfun(@ischar, value))
+            continue;
+        end
+        encoded = '[';
+        for jj = 1:length(value)
+            if jj > 1
+                encoded = [encoded ',']; %#ok<AGROW>
+            end
+            encoded = [encoded local_json_quote(value{jj})]; %#ok<AGROW>
+        end
+        encoded = [encoded ']'];
+        record = [record ',"' field_name '":' encoded]; %#ok<AGROW>
+    elseif any(strcmp(field_name, {'timestamp'; 'original_timestamp'})) && ...
+            ischar(value) && strcmp(value, 'null')
+        record = [record ',"' field_name '":null']; %#ok<AGROW>
     else
         record = [record ',"' field_name '":' local_json_quote(value)]; %#ok<AGROW>
     end

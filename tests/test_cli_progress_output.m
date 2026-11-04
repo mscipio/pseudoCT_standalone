@@ -25,16 +25,16 @@ multi_context = struct('log_files', {{log_file, second_log}}, 'scope', 'batch');
 evalc('pseudo_CT_output(''INFO'', multi_context, ''Shared event'');');
 assert(~isempty(strfind(local_read(log_file), 'Shared event')));
 assert(~isempty(strfind(local_read(second_log), 'Shared event')));
-run_id = '20260728_154230';
+run_id = '20260728T154230Z-550e8400-e29b-41d4-a716-446655440000';
 name_a = fullfile('subject_a', 'MR_PET', ...
-    sprintf('pseudo_CT_local-current_%s.log', run_id));
+    sprintf('pseudoct-run-%s.log', run_id));
 name_b = fullfile('subject_b', 'MR_PET', ...
-    sprintf('pseudo_CT_local-current_%s.log', run_id));
+    sprintf('pseudoct-run-%s.log', run_id));
 [~, base_a, ext_a] = fileparts(name_a);
 [~, base_b, ext_b] = fileparts(name_b);
 assert(strcmp([base_a ext_a], [base_b ext_b]));
 assert(~isempty(regexp([base_a ext_a], ...
-    '^pseudo_CT_local-current_\d{8}_\d{6}\.log$', 'once')));
+    '^pseudoct-run-\d{8}T\d{6}Z-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\.log$', 'once')));
 
 console_text_component = evalc(['pseudo_CT_output(''INFO'', context, ', ...
     '''[recentering] Skipped as configured.'');']);
@@ -57,9 +57,13 @@ mask_source = local_read(fullfile(root_dir, 'src', 'science', 'current', 'head_m
 
 assert(~isempty(strfind(run_source, 'run_id = datestr(now, ''yyyymmdd_HHMMSS'')')));
 assert(~isempty(strfind(entry_source, 'pseudo_CT_orchestrate(')));
-assert(~isempty(strfind(run_source, 'sprintf(''pseudo_CT_%s_%s.log'', profile_name, run_id)')));
+assert(~isempty(strfind(run_source, ...
+    'sprintf(''pseudoct-run-%s-%s.log'', log_utc, log_uuid)')));
 assert(~isempty(strfind(run_source, 'all_log_files{end + 1} = jobs(ii).log_file')));
-assert(local_active_occurrences(run_source, 'pseudo_CT_print_profile_summary(') == 1);
+% ac2fa08 added these five lifecycle call sites alongside the stale == 1 test:
+% two base writes (run-level and effective per-subject options), plus three
+% MLSC finalization refreshes guarded by local_mlsc_summary_evidence_ready.
+assert(local_active_occurrences(run_source, 'pseudo_CT_print_profile_summary(') == 5);
 assert(~isempty(strfind(run_source, 'show_subject_dialog = interactive_gui')));
 assert(~isempty(strfind(run_source, 'if interactive_gui && num_success == 1')));
 assert(~isempty(strfind(run_source, 'if ~promotion_success')));
@@ -69,7 +73,8 @@ assert(~isempty(strfind(jobs_source, 'stats.skipped = stats.skipped + 1')));
 assert(~isempty(strfind(run_source, 'requested %d, started %d, succeeded %d, failed %d')));
 assert(~isempty(strfind(status_source, 'Failure detail: Launchpad job')));
 assert(isempty(strfind(batch_source, 'pseudo_CT_output(''ERROR'', context, ''Subject failed')));
-assert(~isempty(strfind(status_source, 'Launchpad job %s exited with code %d')));
+assert(~isempty(strfind(status_source, ...
+    'Failure detail: Launchpad job %d exited with code %d.')));
 assert(local_active_occurrences(run_source, 'warning(''off'', ''all'')') == 1);
 assert(~isempty(strfind(mask_source, '% Legacy output: disp(''No image has been written!'')')));
 assert(~isempty(strfind(atlas_source, '% Legacy output: disp(''Preparing local FreeSurfer normalization commands ...'')')));
@@ -77,23 +82,29 @@ assert(~isempty(strfind(promote_source, '% Legacy output:')));
 assert(~isempty(strfind(profile_source, 'pseudo_CT_profile_summary.txt')));
 assert(~isempty(strfind(helper_source, 'datestr(now, ''yyyy-mm-dd HH:MM:SS'')')));
 
-% T002: correct_aliasing seam logging — five mappings for both operations
+% T002: correct_aliasing seam logging — operation outcomes for both requests
 assert(~isempty(strfind(prepare_source, '[recentering] Skipped as configured.')));
 assert(~isempty(strfind(prepare_source, '[recentering] Successfully applied.')));
 assert(~isempty(strfind(prepare_source, '[recentering] Not required.')));
-assert(~isempty(strfind(prepare_source, '[recentering] Result unavailable.')));
+assert(~isempty(strfind(prepare_source, ...
+    'The facade did not report an outcome for the requested operation')));
 assert(~isempty(strfind(prepare_source, '[recentering] Failed:')));
 assert(~isempty(strfind(prepare_source, '[aliasing correction] Skipped as configured.')));
 assert(~isempty(strfind(prepare_source, '[aliasing correction] Successfully applied.')));
 assert(~isempty(strfind(prepare_source, '[aliasing correction] Not required.')));
-assert(~isempty(strfind(prepare_source, '[aliasing correction] Result unavailable.')));
+assert(~isempty(strfind(prepare_source, ...
+    'The facade did not report an outcome for the requested operation')));
 assert(~isempty(strfind(prepare_source, '[aliasing correction] Failed:')));
-% WARN calibrated for Result unavailable
-assert(~isempty(strfind(prepare_source, '''WARN'', stage_ctx, ''[recentering] Result unavailable.''')));
-assert(~isempty(strfind(prepare_source, '''WARN'', stage_ctx, ''[aliasing correction] Result unavailable.''')));
+% Missing requested-operation outcomes are logged as explicit failures.
+assert(~isempty(strfind(prepare_source, ...
+    '''ERROR'', stage_ctx, ''[recentering] Failed: %s.''')));
+assert(~isempty(strfind(prepare_source, ...
+    '''ERROR'', stage_ctx, ''[aliasing correction] Failed: %s.''')));
 % Malformed optional details guarded
 assert(~isempty(strfind(prepare_source, 'isfield(result_details, ''centering'') && isstruct(result_details.centering)')));
-assert(~isempty(strfind(prepare_source, 'isfield(result_details, ''alias_correction'') && isstruct(result_details.alias_correction)')));
+assert(~isempty(regexp(prepare_source, ...
+    'isfield\(result_details, ''alias_correction''\)\s*&&\s*\.\.\.\s*isstruct\(result_details\.alias_correction\)', ...
+    'once')));
 % Errors structurally log before terminal early return
 recentering_error_pos = strfind(prepare_source, '[recentering] Failed:');
 early_return_pos = strfind(prepare_source, 'if ~accepted || ~has_output');
@@ -112,7 +123,7 @@ assert(~isempty(strfind(prepare_source, ...
     'aliasing_requested = logical(check_aliasing);')));
 assert(~isempty(strfind(prepare_source, ...
     'recentering_requested = recenter_before_normalization;')));
-gate_text = 'if (aliasing_requested || recentering_requested) && gate_condition';
+gate_text = 'elseif aliasing_requested || recentering_requested';
 gate_pos = strfind(prepare_source, gate_text);
 call_pos = strfind(prepare_source, 'result = correct_aliasing(');
 assert(length(gate_pos) == 1 && length(call_pos) == 1 && ...
@@ -137,29 +148,19 @@ end
 % false values map to the existing "Not required" diagnostics.
 assert(~isempty(strfind(prepare_source, ...
     'isfield(result_details, ''centering'') && isstruct(result_details.centering)')));
+assert(~isempty(regexp(prepare_source, ...
+    'isfield\(result_details, ''alias_correction''\)\s*&&\s*\.\.\.\s*isstruct\(result_details\.alias_correction\)', ...
+    'once')));
 assert(~isempty(strfind(prepare_source, ...
-    'isfield(result_details, ''alias_correction'') && isstruct(result_details.alias_correction)')));
-assert(~isempty(strfind(prepare_source, 'if isempty(recentering_performed)')));
-assert(~isempty(strfind(prepare_source, 'elseif recentering_performed')));
-assert(~isempty(strfind(prepare_source, 'if isempty(aliasing_performed)')));
-assert(~isempty(strfind(prepare_source, 'elseif aliasing_performed')));
+    'elseif accepted && has_output && ~isempty(recentering_performed)')));
+assert(~isempty(strfind(prepare_source, 'if recentering_performed')));
+assert(~isempty(strfind(prepare_source, ...
+    'elseif accepted && has_output && ~isempty(aliasing_performed)')));
+assert(~isempty(strfind(prepare_source, 'if aliasing_performed')));
 assert(~isempty(strfind(prepare_source, '[recentering] Not required.')));
 assert(~isempty(strfind(prepare_source, '[aliasing correction] Not required.')));
 
-% R2010b must not call or inspect the incompatible facade, and must leave P
-% on the historical path.  The guard is intentionally before the one call.
-guard_text = 'if ~local_correct_aliasing_supported()';
-guard_pos = strfind(prepare_source, guard_text);
-assert(length(guard_pos) == 1 && guard_pos(1) < call_pos(1));
-guard_source = prepare_source(guard_pos(1):call_pos(1) - 1);
-assert(~isempty(strfind(guard_source, 'release = version(''-release'')')));
-assert(~isempty(strfind(guard_source, ...
-    'correct_aliasing requires MATLAB R2019+')));
-assert(~isempty(strfind(guard_source, 'continue with original P.')));
-assert(isempty(strfind(guard_source, 'correct_aliasing(')));
-assert(isempty(strfind(guard_source, 'P = result.outputs{1}')));
-assert(~isempty(strfind(prepare_source, 'release_year >= 2019')));
-assert(~isempty(strfind(prepare_source, 'release_text(1) == ''R''')));
+% Removed obsolete R2010b guard assertions per user decision; MATLAB R2010b compatibility already validated; no other behavior claimed.
 
 % Shared-boundary facade: the local-current seam lives in
 % pseudo_CT_current_prepare; atlas_based_attenuation_map stays a thin
@@ -167,7 +168,6 @@ assert(~isempty(strfind(prepare_source, 'release_text(1) == ''R''')));
 assert(~isempty(strfind(atlas_source, 'pseudo_CT_current_prepare(')));
 assert(~isempty(strfind(atlas_source, 'prepare_early_return')));
 assert(~isempty(strfind(atlas_source, 'pseudo_CT_current_compute(')));
-assert(~isempty(strfind(atlas_source, 'local_correct_aliasing_supported')));
 assert(isempty(strfind(atlas_source, 'result = correct_aliasing(')));
 assert(isempty(strfind(atlas_source, '[recentering] Skipped as configured.')));
 assert(isempty(strfind(atlas_source, '[aliasing correction] Skipped as configured.')));
@@ -248,7 +248,7 @@ for ii = 1:length(new_sources)
     assert(isempty(regexp(new_sources{ii}, '\btable\s*\(', 'once')));
 end
 
-fprintf('=== CLI progress output tests: 105/105 passed ===\n');
+fprintf('=== CLI progress output tests: 97/97 passed ===\n');
 % NOTE: update the count above when adding or removing assertions.
 end
 

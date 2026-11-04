@@ -9,7 +9,13 @@ matlab -nosplash -nodesktop -r "addpath('tests'); test_dependency_paths; exit"
 matlab -nosplash -nodesktop -r "addpath('tests'); test_headless_result_validator; exit"
 matlab -nosplash -nodesktop -r "addpath('tests'); run_mlsc_tests; exit"
 matlab -nosplash -nodesktop -r "addpath('tests'); run_smoke_tests; exit"
+matlab -batch "addpath('tests'); test_pseudoct_logging_v2_archive_replay"
 ```
+
+The logging-v2 archive replay reads the retained `log-corpus-reconciled-20261104-093540/`
+and `launchpad-pbs-recovered-20261104/` trees from the sibling `tests-datasets`
+directory. Set `PSEUDOCT_LOGGING_ARCHIVE_ROOT` to their common `runs/` directory
+when the archives are elsewhere.
 
 `tests/` contains automated MATLAB/Python tests and their aggregate runners.
 Maintainer build, release, comparison, and validation utilities remain in
