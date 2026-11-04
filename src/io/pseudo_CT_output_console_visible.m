@@ -68,7 +68,7 @@ end
 body = local_clean_line(body);
 source_line = local_clean_line(source_line);
 source_time = local_record_time(source_line);
-[explicit_stage, explicit_stage_total] = ...
+[explicit_stage, explicit_stage_total, explicit_from_text] = ...
     local_stage_marker(source_line, context);
 body = local_strip_context_tags(body);
 
@@ -162,16 +162,38 @@ end
 if ~isempty(profile_match) && isempty(state.active_profile)
     state = local_reset_run_state(state, profile_match{1}, run_id);
 end
-% Local Current: a raw [stage N/M] whose total is not an orchestration total
-% (9 or 10) is a compiled-child counter (for example the stage 6/8 of a child
-% WARN). It never becomes a public stage; the event keeps the active
-% canonical stage carried by its context, or no stage.
-if strcmp(state.active_profile, 'local-current') && explicit_stage > 0 && ...
+if isfield(context, 'stage_map') && local_is_stage_map(context.stage_map)
+    state.stage_map = context.stage_map;
+end
+% Current-lineage local child counters are not public stages. Keep the
+% established distinction between their [stage N/8] markers and the
+% orchestration's public 9/10-stage map.
+if local_is_current_local_profile(state.active_profile) && explicit_stage > 0 && ...
         ~any(explicit_stage_total == [9 10])
     [explicit_stage, explicit_stage_total] = local_stage_marker('', context);
+    explicit_from_text = false;
     if ~any(explicit_stage_total == [9 10])
         explicit_stage = 0;
         explicit_stage_total = 0;
+    end
+end
+% Only context-supplied stage indices are producer numbers that get remapped
+% through the policy map. A marker parsed from message text is not a public
+% stage under a non-identity map: it keeps its text but gets no stage cell.
+stage_cell_blocked = false;
+% An MLSC context's [stage] tag is rendered by PSEUDO_CT_OUTPUT from its own
+% (already public) stage fields; it is not a producer text marker.
+context_tagged = isfield(context, 'stage_index') && ...
+    isfield(context, 'stage_count') && local_is_mlsc_profile(state.active_profile);
+if explicit_stage > 0 && local_is_stage_map(state.stage_map)
+    if explicit_from_text && ~context_tagged && ...
+            ~local_is_identity_stage_map(state.stage_map)
+        stage_cell_blocked = true;
+    else
+        [~, mapped_stage, mapped_total] = pseudo_CT_stage_map( ...
+            state.stage_map, explicit_stage, explicit_stage_total);
+        explicit_stage = mapped_stage;
+        explicit_stage_total = mapped_total;
     end
 end
 
@@ -201,7 +223,7 @@ end
 % Do not inherit the previous stage into an untagged event's output record.
 event_stage = 0;
 event_stage_total = 0;
-if explicit_stage > 0
+if explicit_stage > 0 && ~stage_cell_blocked
     event_stage = explicit_stage;
     event_stage_total = explicit_stage_total;
     if event_subject > 0
@@ -229,6 +251,16 @@ if ~isempty(state.pending_warning)
     pending_slot = local_pending_warning_slot(state, event_subject, event_stage);
     is_continuation = local_is_warning_continuation(state.active_profile, ...
         level, body, record_prefix, record_level, source_time);
+    if local_is_remote_profile(state.active_profile)
+        % Remote continuation: only an UNTIMED WARN line (forwarded continuation
+        % text without its own event timestamp) extends the open warning. A
+        % timed row is always its own event: two distinct warnings in the same
+        % second stay separate, and scheduler/progress rows never fold into a
+        % warning. Identical consecutive rows are grouped later.
+        timed_row = isfield(context, 'console_timestamp') && ...
+            ~isempty(context.console_timestamp);
+        is_continuation = strcmp(level, 'WARN') && ~warning_start && ~timed_row;
+    end
     if is_continuation && ~isempty(pending_slot)
         state = local_flush_pending_warnings_except(state, pending_slot);
         pending_slot = local_pending_warning_slot(state, ...
@@ -320,16 +352,16 @@ if local_is_presenter_profile(state.active_profile)
         isequal(context.console_unstructured, true);
     [kind, display_body] = local_apply_canonical_status( ...
         canonical_status, canonical_message, kind, display_body);
-    if strcmp(state.active_profile, 'local-current')
-        % A compiled-child [stage N/8] tag inside the text is never public.
-        display_body = regexprep(display_body, ...
-            '\[stage[ \t]+[0-9]+/8\][ \t]*', '', 'ignorecase');
-    end
     if isempty(kind) && explicit_stage > 0 && strcmp(level, 'INFO') && ...
             ~unstructured_child
         kind = 'active';
         display_body = body;
     end
+    % A raw [stage N/M] marker inside the message text is never public, for any
+    % profile. Only the console and JSONL message are cleaned here; the detailed
+    % log is written by PSEUDO_CT_OUTPUT from the original text, unchanged.
+    display_body = regexprep(display_body, ...
+        '\[stage[ \t]+[0-9]+/[0-9]+\][ \t]*', '', 'ignorecase');
 
     if isempty(kind)
         state = local_flush_all_warnings(state);
@@ -352,6 +384,18 @@ if local_is_presenter_profile(state.active_profile)
     end
     warning_stage = event_stage;
     warning_stage_total = event_stage_total;
+    if local_is_remote_profile(state.active_profile) && strcmp(kind, 'warn') && ...
+            ~isempty(source_time)
+        % One grouped block per forwarded remote warning, including a timed
+        % "{Warning:" block opener (a MATLAB warning wrapped over several lines).
+        % Its untimed WARN continuation lines extend it (pending path above); it
+        % then joins the repeat path.
+        entry = struct('subject', warning_subject, 'stage', event_stage, ...
+            'stage_total', event_stage_total, 'job', local_event_job(context), ...
+            'text', display_body, 'time', source_time, 'lines', 1);
+        state.pending_warning(end + 1) = entry;
+        return;
+    end
     if warning_start || any(strcmp(kind, {'qform'; 'provenance'}))
         [state, repeated_warning] = local_track_repeated_warning(state, ...
             warning_subject, warning_stage, warning_stage_total, kind, ...
@@ -385,7 +429,18 @@ if local_is_presenter_profile(state.active_profile)
     % Local Current orchestration is explicitly [stage N/9]; a line whose own
     % tag carries the compiled internal total (8) is a compiled-child event.
     % Decided by the explicit total and profile, never by message text.
-    if strcmp(state.active_profile, 'local-current') && explicit_stage > 0
+    % Remote (MLSC/Launchpad) rows: only public scientific entries carry a stage
+    % number. Heartbeats, scheduler/transport/retrieval rows and compiled-child
+    % milestones are unnumbered, so no number is reused for another operation.
+    remote_unnumbered = local_is_remote_profile(state.active_profile) && ...
+        (~any(strcmp(kind, {'active'; 'done'; 'skipped'; 'error'})) || ...
+        local_is_remote_child_step(display_body));
+    if stage_cell_blocked || remote_unnumbered
+        % Text-parsed producer marker under a non-identity map: no public
+        % stage cell in the row or the event record; the message is kept.
+        event_stage = '';
+        record_stage = '';
+    elseif explicit_stage > 0 && local_is_stage_map(state.stage_map)
         % Public stage is carried by the event itself: the console cell is
         % printed on stage entry only; the event record always keeps it.
         if isempty(subject_index)
@@ -396,9 +451,7 @@ if local_is_presenter_profile(state.active_profile)
         [state, event_stage, record_stage] = local_stage_cells(state, ...
             row_subject, explicit_stage, explicit_stage_total);
     else
-        compiled_counter = explicit_stage > 0 && explicit_stage_total == 8 && ...
-            strcmp(state.active_profile, 'local-current');
-        if unstructured_child || compiled_counter
+        if unstructured_child
             event_stage = '';
         else
             event_stage = local_event_stage(explicit_stage, explicit_stage_total);
@@ -437,10 +490,10 @@ if local_is_presenter_profile(state.active_profile)
         level = 'WARN';
     end
     status = local_console_status(kind, level);
-    if isempty(status) && strcmp(state.active_profile, 'local-current')
+    if isempty(status) && local_is_presenter_profile(state.active_profile)
         status = 'INFO';
     end
-    display_body = local_sanitize_message(local_format_duration( ...
+    display_body = pseudo_CT_sanitize_message(local_format_duration( ...
         strtrim(display_body)));
     if strcmp(kind, 'run-failed')
         display_body = regexprep(display_body, ...
@@ -454,6 +507,12 @@ if local_is_presenter_profile(state.active_profile)
     visible = true;
     event_record = local_event_record(level, event_subject, record_stage, ...
         status, display_body, source_time, local_event_job(context));
+    [public_id, public_number, public_total] = local_row_public_stage( ...
+        state, record_stage, explicit_stage, explicit_stage_total);
+    event_record = local_contract_fields(event_record, state, ...
+        local_event_category(kind, state.active_profile, display_body, public_id, ...
+        ~isempty(subject_index), local_completion_verified(context)), ...
+        public_id, public_number, public_total);
     state = local_queue_event(state, event_record);
     if strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
         local_emit_json_event(event_record);
@@ -475,13 +534,26 @@ if ~visible && strcmp(level, 'INFO')
     visible = local_nonlocal_milestone(lower(strtrim(body)));
 end
 if visible
-    console_line = local_sanitize_message(source_line);
-    event_status = '';
-    if any(strcmp(level, {'WARN'; 'ERROR'; 'SUCCESS'}))
-        event_status = level;
+    % No presenter profile is active in this process. The row still goes
+    % through the fixed-width table with an explicit STATUS, never as a raw
+    % bracket line. SUCCESS is an informational milestone here.
+    if strcmp(level, 'WARN')
+        event_status = 'WARN';
+    elseif strcmp(level, 'ERROR')
+        event_status = 'ERROR';
+    else
+        event_status = 'INFO';
     end
+    if event_subject > 0
+        fallback_subject = sprintf('S%02d', event_subject);
+    else
+        fallback_subject = 'RUN';
+    end
+    [~, fallback_clock] = local_event_clock(source_time);
+    console_line = local_format_row(fallback_clock, fallback_subject, '', ...
+        event_status, pseudo_CT_sanitize_message(body));
     event_record = local_event_record(level, event_subject, '', ...
-        event_status, local_sanitize_message(body), source_time, ...
+        event_status, pseudo_CT_sanitize_message(body), source_time, ...
         local_event_job(context));
     state = local_queue_event(state, event_record);
     if strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
@@ -494,6 +566,7 @@ function state = local_initial_state()
 state = struct();
 state.active_profile = '';
 state.active_run_id = '';
+state.stage_map = [];
 state.current_subject = [];
 state.run_stage = 0;
 state.run_stage_total = 0;
@@ -524,6 +597,7 @@ if isstruct(state) && isfield(state, 'event_records') && ...
 end
 state.active_profile = profile_name;
 state.active_run_id = run_id;
+state.stage_map = [];
 state.current_subject = [];
 state.run_stage = 0;
 state.run_stage_total = 0;
@@ -738,7 +812,7 @@ if strcmp(level, 'INFO')
         kind = 'milestone';
         display_body = 'Coregistration and reslicing finished.';
     elseif local_starts_with(text_lower, 'skipping dicom output by profile policy')
-        kind = 'milestone';
+        kind = 'skipped';
     elseif local_starts_with(text_lower, 'legacy pseudo-ct still running (elapsed ')
         kind = 'milestone';
         display_body = regexprep(text, '^Legacy pseudo-CT still running', ...
@@ -767,7 +841,9 @@ if strcmp(level, 'SUCCESS')
         kind = 'retrieved';
     elseif local_starts_with(text_lower, ...
             'all launchpad jobs completed successfully')
-        kind = 'run-end';
+        % Scheduler exit status only; not scientific completion (no att_map
+        % verification or finalization is implied by this event).
+        kind = 'remote-terminal';
     elseif local_starts_with(text_lower, 'input prepared (elapsed ')
         kind = 'done';
     elseif local_starts_with(text_lower, 'mprage normalization completed (elapsed ')
@@ -852,6 +928,8 @@ if strcmp(level, 'INFO')
             local_starts_with(text_lower, 'promoting final outputs') || ...
             local_starts_with(text_lower, 'cleaning up temporary files')
         kind = 'active';
+    elseif local_starts_with(text_lower, 'skipping dicom output by profile policy')
+        kind = 'skipped';
     elseif local_starts_with(text_lower, 'mlsc normalization started') || ...
             local_starts_with(text_lower, 'mlsc copy-back started') || ...
             local_starts_with(text_lower, 'applying inverse warp') || ...
@@ -876,6 +954,13 @@ if strcmp(level, 'INFO')
         display_body = regexprep(text, ...
             '(?i)^MLSC job ([0-9]+) still (running|pending)', ...
             'Job $1 still $2');
+    elseif ~isempty(regexp(text_lower, ...
+            '^mlsc job [0-9]+ completed exit ', 'once'))
+        % Scheduler exit status: recognised by text at any producer level.
+        kind = 'remote-terminal';
+        display_body = regexprep(text, '(?i)^MLSC job ([0-9]+) ', 'Job $1 ');
+    elseif local_starts_with(text_lower, 'mlsc verification completed')
+        kind = 'remote-verified'; display_body = 'MLSC verification completed.';
     elseif local_starts_with(text_lower, 'mlsc job ')
         kind = 'milestone';
         display_body = regexprep(text, '(?i)^MLSC job ([0-9]+) ', 'Job $1 ');
@@ -886,7 +971,7 @@ elseif strcmp(level, 'SUCCESS')
             'mlsc connection and authentication succeeded')
         kind = 'milestone';
     elseif local_starts_with(text_lower, 'mlsc stage-in completed')
-        kind = 'milestone'; display_body = 'MLSC stage-in completed.';
+        kind = 'done'; display_body = 'MLSC stage-in completed.';
     elseif local_starts_with(text_lower, 'mlsc preparation completed')
         kind = 'done'; display_body = 'MLSC preparation completed.';
     elseif local_starts_with(text_lower, 'mlsc alias-recenter completed')
@@ -978,14 +1063,16 @@ end
 function [state, repeated] = local_track_repeated_warning(state, ...
         subject_index, stage_number, stage_total, kind, text, event_time, job)
 repeated = false;
-for ii = 1:length(state.warning_repeats)
-    entry = state.warning_repeats(ii);
-    % Per-subject grouping: the stage is not part of the key; the row keeps
-    % the stage of the first occurrence.
-    if entry.subject == subject_index && ...
-            strcmp(entry.job, job) && ...
-            strcmp(entry.kind, kind) && strcmp(entry.text, text)
-        state.warning_repeats(ii).count = entry.count + 1;
+% Rows merge only when they are consecutive and share subject, stage, job,
+% kind, and identical message text. Only the immediately preceding grouped
+% warning can absorb a repeat; any other warning starts its own entry.
+if ~isempty(state.warning_repeats)
+    last = length(state.warning_repeats);
+    entry = state.warning_repeats(last);
+    if entry.subject == subject_index && entry.stage == stage_number && ...
+            strcmp(entry.job, job) && strcmp(entry.kind, kind) && ...
+            strcmp(entry.text, text)
+        state.warning_repeats(last).count = entry.count + 1;
         repeated = true;
         return;
     end
@@ -1024,10 +1111,11 @@ for ii = 1:length(state.warning_repeats)
         state = local_emit_date_separator(state, event_date);
         [state, stage_text, record_stage] = local_flush_stage(state, entry);
         event_line = local_format_row(event_clock, subject_name, stage_text, ...
-            'WARN', local_sanitize_message(message));
+            'WARN', pseudo_CT_sanitize_message(message));
         record = local_event_record('WARN', subject_name, ...
             record_stage, 'WARN', ...
-            local_sanitize_message(message), emission_time, entry.job);
+            pseudo_CT_sanitize_message(message), emission_time, entry.job);
+        record = local_warning_record(state, record, entry, record_stage);
         local_emit_console_event(event_line, record);
         state = local_queue_event(state, record);
         keep(ii) = false;
@@ -1138,21 +1226,11 @@ state.pending_warning = state.pending_warning(keep);
 end
 
 function state = local_emit_pending_warning(state, entry)
-subject_name = 'RUN';
-if entry.subject > 0
-    subject_name = sprintf('S%02d', entry.subject);
-end
-[event_date, event_clock] = local_event_clock(entry.time);
-state = local_emit_date_separator(state, event_date);
+% A completed grouped remote block joins the repeat path, so an identical block
+% is counted and printed once when its warning group closes.
 message = local_warning_message(entry.text);
-[state, stage_text, record_stage] = local_flush_stage(state, entry);
-event_line = local_format_row(event_clock, subject_name, stage_text, 'WARN', ...
-    local_sanitize_message(message));
-record = local_event_record('WARN', subject_name, ...
-    record_stage, 'WARN', ...
-    local_sanitize_message(message), entry.time, entry.job);
-local_emit_console_event(event_line, record);
-state = local_queue_event(state, record);
+[state, ~] = local_track_repeated_warning(state, entry.subject, ...
+    entry.stage, entry.stage_total, 'warn', message, entry.time, entry.job);
 end
 
 function state = local_emit_truncated_warning_notice(state, entry)
@@ -1166,10 +1244,11 @@ notice = ['Further continuation text of this warning is truncated on the ' ...
     'console; full text remains in the detailed log.'];
 [state, stage_text, record_stage] = local_flush_stage(state, entry);
 event_line = local_format_row(event_clock, subject_name, stage_text, 'WARN', ...
-    local_sanitize_message(notice));
+    pseudo_CT_sanitize_message(notice));
 record = local_event_record('WARN', subject_name, ...
     record_stage, 'WARN', ...
-    local_sanitize_message(notice), entry.time, entry.job);
+    pseudo_CT_sanitize_message(notice), entry.time, entry.job);
+record = local_warning_record(state, record, entry, record_stage);
 local_emit_console_event(event_line, record);
 state = local_queue_event(state, record);
 end
@@ -1201,6 +1280,9 @@ switch status
     case 'SKIPPED'
         kind = 'skipped';
     case 'INFO'
+        if strcmp(kind, 'skipped')
+            return;  % a policy skip keeps its explicit SKIPPED status
+        end
         kind = 'milestone';
     otherwise
         return;
@@ -1226,7 +1308,7 @@ end
 function [state, row_stage, record_stage] = local_flush_stage(state, entry)
 record_stage = local_event_stage(entry.stage, entry.stage_total);
 row_stage = record_stage;
-if strcmp(state.active_profile, 'local-current') && entry.stage > 0
+if local_is_stage_map(state.stage_map) && entry.stage > 0
     [state, row_stage, record_stage] = local_stage_cells(state, ...
         entry.subject, entry.stage, entry.stage_total);
 end
@@ -1234,13 +1316,7 @@ end
 
 function status = local_console_status(kind, level)
 status = '';
-if strcmp(kind, 'remote-terminal')
-    status = 'REMOTE';
-elseif strcmp(kind, 'retrieved')
-    status = 'RETRIEVED';
-elseif strcmp(kind, 'remote-verified')
-    status = 'REMOTE_CHECK';
-elseif strcmp(kind, 'verified') || ...
+if strcmp(kind, 'verified') || ...
         any(strcmp(kind, {'subject-end'; 'run-end'}))
     status = 'VERIFIED';
 elseif strcmp(kind, 'done')
@@ -1249,12 +1325,9 @@ elseif strcmp(kind, 'skipped')
     status = 'SKIPPED';
 elseif any(strcmp(kind, {'stage'; 'active'}))
     status = 'ACTIVE';
-elseif strcmp(kind, 'accepted')
-    status = 'ACCEPT';
-elseif strcmp(kind, 'state')
-    status = 'STATE';
-elseif strcmp(kind, 'heartbeat')
-    status = 'WAIT';
+elseif any(strcmp(kind, {'milestone'; 'accepted'; 'state'; 'heartbeat'; ...
+        'remote-terminal'; 'retrieved'; 'remote-verified'}))
+    status = 'INFO';
 elseif any(strcmp(kind, {'warn'; 'provenance'})) || strcmp(level, 'WARN')
     status = 'WARN';
 elseif strcmp(kind, 'error') || strcmp(kind, 'run-failed') || ...
@@ -1272,6 +1345,209 @@ end
 function row = local_format_row(time_text, subject_text, stage_text, status_text, message)
 row = sprintf('%-8s  %-7s %-8s  %-7s  %s', time_text, subject_text, ...
     stage_text, status_text, message);
+end
+
+function yes = local_is_remote_profile(profile_name)
+yes = ischar(profile_name) && any(strcmp(profile_name, ...
+    {'mlsc-current'; 'mlsc-legacy'; 'mlsc-mprage-only'; 'launchpad-legacy'}));
+end
+
+function yes = local_is_remote_child_step(text)
+%LOCAL_IS_REMOTE_CHILD_STEP Compiled-child progress forwarded from a remote run.
+%   These steps are scientific but not public stages: they never carry a
+%   public stage number, so their producer tags cannot collide with one.
+text_lower = lower(strtrim(text));
+prefixes = {'running spm new segment'; ...
+    'aligning mprage and creating subject mask'; ...
+    'registering atlases with dartel'; ...
+    'building attenuation map and qc image'; ...
+    'segmentation completed'; 'mlsc segmentation completed'; ...
+    'alignment and masking completed'; 'mlsc alignment-mask completed'; ...
+    'mlsc normalization'; 'mlsc alias-recenter'; 'mlsc preparation completed'; ...
+    'mlsc stage-in completed'; 'atlas registration completed'; ...
+    'mlsc dartel-warp-reslice'; 'attenuation map and qc completed'; ...
+    'mlsc attenuation-qc'; 'mlsc bone'; 'mlsc pseudo-ct completed'; ...
+    'applying inverse warp'; 'reslicing atlases into mprage space'; ...
+    'mlsc copy-back started'};
+yes = false;
+for ii = 1:length(prefixes)
+    if local_starts_with(text_lower, prefixes{ii})
+        yes = true;
+        return;
+    end
+end
+end
+
+function backend = local_backend_of(profile_name)
+backend = 'unavailable';
+if ~ischar(profile_name) || isempty(profile_name)
+    return;
+end
+if strncmp(profile_name, 'local-', 6)
+    backend = 'local';
+elseif strncmp(profile_name, 'mlsc-', 5)
+    backend = 'mlsc';
+elseif strncmp(profile_name, 'launchpad-', 10)
+    backend = 'launchpad';
+end
+end
+
+function yes = local_contract_applies(profile_name)
+%LOCAL_CONTRACT_APPLIES The additive JSONL contract keys (profile, backend,
+%   event_category, stage_id, stage_number, stage_total) apply to every known
+%   profile, including Local Current. The existing keys are not changed.
+yes = ischar(profile_name) && ~isempty(profile_name) && ...
+    ~strcmp(profile_name, 'unavailable');
+end
+
+function yes = local_completion_verified(context)
+%LOCAL_COMPLETION_VERIFIED True only on the single subject-completion context
+%   that the orchestration sets after att_map verification, output promotion,
+%   and finalization have all succeeded (never on failed or skipped paths).
+yes = isstruct(context) && isscalar(context) && ...
+    isfield(context, 'completion_verified') && ...
+    isequal(context.completion_verified, true);
+end
+
+function event_category = local_event_category(kind, profile_name, text, stage_id, has_subject, verified)
+%LOCAL_EVENT_CATEGORY Map one presented row to the JSONL event_category set:
+%   scientific, scheduler, remote_processing, retrieval, finalization,
+%   verified_completion (verified final completion only), subject, or run.
+%   Scheduler status never implies scientific progress; a scheduler exit or a
+%   remote-verified row is retrieval/scheduler, never verified_completion.
+%   VERIFIED is true only for the flagged final subject-completion row.
+text_lower = lower(strtrim(text));
+remote = local_is_remote_profile(profile_name);
+if strcmp(kind, 'subject-end')
+    if verified
+        event_category = 'verified_completion';
+    else
+        event_category = 'subject';
+    end
+elseif any(strcmp(kind, {'run-end'; 'run-failed'}))
+    event_category = 'run';
+elseif any(strcmp(kind, {'retrieved'; 'remote-verified'}))
+    event_category = 'retrieval';
+elseif remote && any(strcmp(kind, {'accepted'; 'state'; 'remote-terminal'}))
+    event_category = 'scheduler';
+elseif remote && strcmp(kind, 'heartbeat')
+    event_category = 'remote_processing';
+elseif remote && ~isempty(regexp(text_lower, 'copy-back', 'once'))
+    event_category = 'retrieval';
+elseif remote && ~isempty(regexp(text_lower, ...
+        '(connection and authentication|stage-in)', 'once'))
+    event_category = 'remote_processing';
+elseif ~isempty(stage_id) && remote
+    event_category = local_remote_stage_event_category(stage_id);
+elseif ~isempty(stage_id)
+    event_category = local_stage_event_category(stage_id);
+elseif remote
+    event_category = 'remote_processing';
+elseif any(strcmp(kind, {'warn'; 'provenance'; 'qform'; 'error'}))
+    if has_subject
+        event_category = 'subject';
+    else
+        event_category = 'run';
+    end
+else
+    event_category = 'scientific';
+end
+end
+
+function event_category = local_remote_stage_event_category(stage_id)
+%LOCAL_REMOTE_STAGE_EVENT_CATEGORY Public remote stages (MLSC and Launchpad):
+%   submission is scheduler, remote execution is remote_processing, and
+%   copy-back/verification is retrieval. Input and local finalization keep the
+%   local meaning below.
+if ~isempty(regexp(stage_id, '\.submit$', 'once'))
+    event_category = 'scheduler';
+elseif ~isempty(regexp(stage_id, '\.(remote_wait|remote_processing)$', 'once'))
+    event_category = 'remote_processing';
+elseif ~isempty(regexp(stage_id, '\.(verify|retrieve_verify)$', 'once'))
+    event_category = 'retrieval';
+else
+    event_category = local_stage_event_category(stage_id);
+end
+end
+
+function event_category = local_stage_event_category(stage_id)
+% Postprocessing (for example background-mask application) modifies the
+% scientific output, so it is 'scientific'. Promotion, cleanup and DICOM output
+% writing are 'finalization'. Retrieval and scheduler stages are classified by
+% local_remote_stage_event_category before this helper is reached.
+if ~isempty(regexp(stage_id, '(dicom_output|promote|cleanup)$', 'once'))
+    event_category = 'finalization';
+else
+    event_category = 'scientific';
+end
+end
+
+function [stage_id, stage_number, stage_total] = local_row_public_stage( ...
+        state, record_stage, producer_stage, producer_total)
+%LOCAL_ROW_PUBLIC_STAGE Public stage identity of a row that carries a number.
+stage_id = '';
+stage_number = 0;
+stage_total = 0;
+if isempty(record_stage) || ~local_is_stage_map(state.stage_map)
+    return;
+end
+stage_id = local_public_stage_id(state.stage_map, producer_stage, producer_total);
+if ~isempty(stage_id)
+    stage_number = producer_stage;
+    stage_total = producer_total;
+end
+end
+
+function stage_id = local_public_stage_id(stage_map, stage_number, stage_total)
+%LOCAL_PUBLIC_STAGE_ID Stable identifier of a public stage of the active map.
+stage_id = '';
+if ~local_is_stage_map(stage_map) || ~isfield(stage_map, 'stage_ids') || ...
+        ~iscell(stage_map.stage_ids) || ...
+        ~isfield(stage_map, 'public_stage_numbers')
+    return;
+end
+if stage_map.total ~= stage_total || ...
+        length(stage_map.stage_ids) ~= length(stage_map.public_stage_numbers)
+    return;
+end
+slot = find(stage_map.public_stage_numbers == stage_number, 1);
+if ~isempty(slot)
+    stage_id = stage_map.stage_ids{slot};
+end
+end
+
+function record = local_contract_fields(record, state, event_category, ...
+        stage_id, stage_number, stage_total)
+%LOCAL_CONTRACT_FIELDS Attach the additive progress contract to one event.
+profile = 'unavailable';
+if isstruct(state) && isfield(state, 'active_profile') && ...
+        ischar(state.active_profile) && ~isempty(state.active_profile)
+    profile = state.active_profile;
+end
+if isempty(event_category)
+    event_category = 'unavailable';
+end
+record.profile = profile;
+record.backend = local_backend_of(profile);
+record.event_category = event_category;
+record.stage_id = local_event_value(stage_id);
+if isempty(stage_id) || stage_number < 1
+    record.stage_number = 'unavailable';
+    record.stage_total = 'unavailable';
+else
+    record.stage_number = sprintf('%d', stage_number);
+    record.stage_total = sprintf('%d', stage_total);
+end
+end
+
+function record = local_warning_record(state, record, entry, record_stage)
+%LOCAL_WARNING_RECORD Contract fields for a grouped warning row or notice.
+[stage_id, stage_number, stage_total] = local_row_public_stage( ...
+    state, record_stage, entry.stage, entry.stage_total);
+event_category = local_event_category('warn', state.active_profile, '', stage_id, ...
+    entry.subject > 0, false);
+record = local_contract_fields(record, state, event_category, stage_id, ...
+    stage_number, stage_total);
 end
 
 function [event_date, event_clock] = local_event_clock(source_time)
@@ -1359,9 +1635,10 @@ if ~isempty(match)
 end
 end
 
-function [stage_number, stage_total] = local_stage_marker(line, context)
+function [stage_number, stage_total, from_text] = local_stage_marker(line, context)
 stage_number = 0;
 stage_total = 0;
+from_text = false;
 match = regexp(line, '\[stage[ \t]+([0-9]+)/([0-9]+)\]', ...
     'tokens', 'once', 'ignorecase');
 if isstruct(context) && isfield(context, 'stage_status') && ...
@@ -1370,6 +1647,7 @@ if isstruct(context) && isfield(context, 'stage_status') && ...
 end
 if ~isempty(match)
     candidate = [str2double(match{1}) str2double(match{2})];
+    from_text = true;
 elseif isstruct(context) && isfield(context, 'stage_index') && ...
         isfield(context, 'stage_count') && ...
         isnumeric(context.stage_index) && isscalar(context.stage_index) && ...
@@ -1415,43 +1693,6 @@ end
 keep = (text >= char(32) & text ~= char(127));
 text = text(keep);
 text = strtrim(text);
-end
-
-function text = local_sanitize_message(text)
-% Replace DICOM names and paths with stable short identifiers for routine
-% console output. PSEUDO_CT_OUTPUT still writes the original source line.
-dicom_names = regexp(text, ...
-    '(?i)(?:[A-Za-z]:\\|/)?[^ \t,;:()]*\.dcm', 'match');
-for ii = 1:length(dicom_names)
-    identifier = local_short_hash(dicom_names{ii});
-    text = strrep(text, dicom_names{ii}, ['DICOM-' identifier]);
-end
-% Redact path-shaped tokens only: absolute paths, and relative multi-segment
-% tokens with a subject-data directory segment (MR_PET, MR, pseudo_muMAP, tmp)
-% or a segment ending in a file extension; keep prose such as
-% registration/warping and exactly the approved MR_PET/pseudoct-run-*.log
-% disclosure. Mirrors bin/pseudoct.
-boundary = '(?<![^\s=''"(\[<,;:])';
-text = regexprep(text, [boundary '(?:~|\.{1,2})?/[^ \t,;:()]+'], '<path>');
-text = regexprep(text, [boundary ...
-    '(?!MR_PET/pseudoct-run-[0-9A-Za-z-]+\.log(?![\w.\-/]))' ...
-    '(?=[\w.\-/]*?(?:(?<![\w.\-])(?:MR_PET|MR|pseudo_muMAP|tmp)(?![\w.\-])' ...
-    '|\.(?=[0-9]*[A-Za-z])[A-Za-z0-9]{1,5}(?![\w.\-])))' ...
-    '[\w.\-]+(?:/[\w.\-]+)+'], '<path>');
-text = regexprep(text, '[A-Za-z]:\\[^ \t,;:()]+', '<path>');
-text = regexprep(text, ...
-    '(?i)(username|user|password|passphrase|account|token|secret)([ \t]*[:=][ \t]*|[ \t]+)[^ \t,;]+', ...
-    '$1$2<redacted>');
-text = regexprep(text, '[\r\n]+', ' | ');
-end
-
-function identifier = local_short_hash(value)
-% Compact deterministic display identifier; it is not a security primitive.
-hash_value = 5381;
-for ii = 1:length(value)
-    hash_value = mod(hash_value * 33 + double(value(ii)), 4294967296);
-end
-identifier = lower(dec2hex(hash_value, 8));
 end
 
 function text = local_format_duration(text)
@@ -1500,6 +1741,28 @@ yes = ischar(profile_name) && any(strcmp(profile_name, ...
     {'mlsc-current'; 'mlsc-legacy'; 'mlsc-mprage-only'}));
 end
 
+function yes = local_is_current_local_profile(profile_name)
+yes = ischar(profile_name) && any(strcmp(profile_name, ...
+    {'local-current'; 'local-mprage-only'}));
+end
+
+function yes = local_is_identity_stage_map(stage_map)
+yes = local_is_stage_map(stage_map) && ...
+    stage_map.producer_total == stage_map.total && ...
+    isequal(stage_map.producer_stage_numbers(:), stage_map.public_stage_numbers(:));
+end
+
+function yes = local_is_stage_map(stage_map)
+yes = isstruct(stage_map) && isscalar(stage_map) && ...
+    isfield(stage_map, 'producer_total') && ...
+    isnumeric(stage_map.producer_total) && ...
+    isscalar(stage_map.producer_total) && stage_map.producer_total > 0 && ...
+    isfield(stage_map, 'total') && isnumeric(stage_map.total) && ...
+    isscalar(stage_map.total) && stage_map.total > 0 && ...
+    isfield(stage_map, 'producer_stage_numbers') && ...
+    isfield(stage_map, 'public_stage_numbers') && isfield(stage_map, 'titles');
+end
+
 function yes = local_is_presenter_profile(profile_name)
 yes = local_is_local_profile(profile_name) || ...
     local_is_mlsc_profile(profile_name) || ...
@@ -1518,13 +1781,17 @@ end
 
 function events = local_empty_events()
 events = struct('level', {}, 'subject', {}, 'stage', {}, 'status', {}, ...
-    'job', {}, 'message', {}, 'timestamp', {});
+    'job', {}, 'message', {}, 'timestamp', {}, 'profile', {}, 'backend', {}, ...
+    'event_category', {}, 'stage_id', {}, 'stage_number', {}, 'stage_total', {});
 end
 
 function event = local_unavailable_event()
 event = struct('level', 'unavailable', 'subject', 'unavailable', ...
     'stage', 'unavailable', 'status', 'unavailable', 'job', 'unavailable', ...
-    'message', 'unavailable', 'timestamp', 'unavailable');
+    'message', 'unavailable', 'timestamp', 'unavailable', ...
+    'profile', 'unavailable', 'backend', 'unavailable', ...
+    'event_category', 'unavailable', 'stage_id', 'unavailable', ...
+    'stage_number', 'unavailable', 'stage_total', 'unavailable');
 end
 
 function event = local_event_record(level, subject, stage, status, message, timestamp, job)
@@ -1629,11 +1896,22 @@ end
 
 function local_emit_json_event(event_record)
 record = '{"type":"progress"';
-fields = {'timestamp'; 'level'; 'subject'; 'stage'; 'status'; 'job'; 'message'};
+% Existing keys keep their order and meaning. The additive contract keys follow
+% them and are emitted only for profiles where local_contract_applies is true.
+fields = {'timestamp'; 'level'; 'subject'; 'stage'; 'status'; 'job'; 'message'; ...
+    'profile'; 'backend'; 'event_category'; 'stage_id'; 'stage_number'; 'stage_total'};
 required = {'timestamp'; 'level'; 'message'};
 optional_context = {'subject'; 'stage'; 'status'; 'job'};
+contract_fields = {'profile'; 'backend'; 'event_category'; 'stage_id'; ...
+    'stage_number'; 'stage_total'};
+numeric_fields = {'stage_number'; 'stage_total'};
+contract_on = isstruct(event_record) && isfield(event_record, 'profile') && ...
+    ischar(event_record.profile) && local_contract_applies(event_record.profile);
 for ii = 1:length(fields)
     field_name = fields{ii};
+    if any(strcmp(contract_fields, field_name)) && ~contract_on
+        continue;
+    end
     value = 'unavailable';
     if isstruct(event_record) && isfield(event_record, field_name) && ...
             ischar(event_record.(field_name))
@@ -1649,7 +1927,12 @@ for ii = 1:length(fields)
             continue;
         end
     end
-    record = [record ',"' field_name '":' local_json_quote(value)]; %#ok<AGROW>
+    if any(strcmp(numeric_fields, field_name))
+        % Integers are written unquoted; they are built only from sprintf('%d').
+        record = [record ',"' field_name '":' value]; %#ok<AGROW>
+    else
+        record = [record ',"' field_name '":' local_json_quote(value)]; %#ok<AGROW>
+    end
 end
 record = [record '}'];
 fprintf(1, '%s\n', record);

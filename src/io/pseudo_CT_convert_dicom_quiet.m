@@ -31,10 +31,8 @@ for ii = 1:length(lines)
         level = token{2};
         text = token{3};
     end
-    % Same pattern as redact_secrets in bin/pseudoct.
-    text = regexprep(text, ...
-        ['(?i)(username|user|password|passphrase|account|token|secret)' ...
-        '([ \t]*[:=][ \t]*|[ \t]+)[^ \t,;]+'], '$1$2<redacted>');
+    % Same DICOM, path, host and credential rules as the console presenter.
+    text = pseudo_CT_sanitize_message(text);
     pseudo_CT_output(level, detail_context, '%s', text);
 end
 if ~isempty(conversion_error)

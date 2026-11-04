@@ -63,20 +63,24 @@ for ii=1:length(jobname)
     job_started = tic;
     subject_context = local_subject_output_context( ...
         output_context, ii, length(jobname), jnum);
-    ssh2_conn = ssh2_command(ssh2_conn, sprintf('cat /pbs/%s/%s.status | grep compute', ssh2_conn.username, jobn));
+    % Remote status text (compute host, generated-script block, PBS status,
+    % JOB INFO) is diagnostic: it goes to the protected run log only.
+    [ssh2_conn, ~] = launchpad_quiet_command(ssh2_conn, ...
+        sprintf('cat /pbs/%s/%s.status | grep compute', ssh2_conn.username, jobn), subject_context);
     node = ssh2_command_response(ssh2_conn);
     counter = 0;
     f = 0;
     nodedown{1, 1} = '';
     while length(ss) == 0
         if counter * pause_time > 3000
-            ssh2_conn = ssh2_command(ssh2_conn, sprintf('ping %s.nmr.mgh.harvard.edu -c 1 | grep "Destination Host Unreachable"', node{1, 1}));
+            [ssh2_conn, ~] = launchpad_quiet_command(ssh2_conn, ...
+                sprintf('ping %s.nmr.mgh.harvard.edu -c 1 | grep "Destination Host Unreachable"', node{1, 1}), subject_context);
             nodedown = ssh2_command_response(ssh2_conn);
             counter = 0;
         end
 
-        ssh2_conn = ssh2_command(ssh2_conn, sprintf('cat /pbs/%s/%s.status', ssh2_conn.username, jobn));
-        commando = ssh2_command_response(ssh2_conn);
+        [ssh2_conn, commando] = launchpad_quiet_command(ssh2_conn, ...
+            sprintf('cat /pbs/%s/%s.status', ssh2_conn.username, jobn), subject_context);
         if length(nodedown{1, 1}) == 0
             commando = commando{end};
             ss = strfind(commando, 'status ');
@@ -85,9 +89,10 @@ for ii=1:length(jobname)
             end
             [ssh2_conn, log_cursors{ii}] = local_read_pbs_logs( ...
                 ssh2_conn, jobn, jnum, log_cursors{ii}, subject_context);
+            % Scheduler heartbeat: numeric PBS job ID, no stage cell.
             pseudo_CT_output('INFO', subject_context, ...
-                'Launchpad job %s still active (elapsed %s).', ...
-                local_safe_job_label(jobn), local_elapsed(toc(job_started)));
+                'Launchpad job %d still active (elapsed %s).', ...
+                jnum, local_elapsed(toc(job_started)));
             pause(pause_time);
             counter = counter + 1;
         else
@@ -99,7 +104,8 @@ for ii=1:length(jobname)
     end
     [ssh2_conn, log_cursors{ii}] = local_read_pbs_logs( ...
         ssh2_conn, jobn, jnum, log_cursors{ii}, subject_context);
-    ssh2_conn = ssh2_command(ssh2_conn, sprintf('jobinfo %i', jnum));
+    [ssh2_conn, ~] = launchpad_quiet_command(ssh2_conn, ...
+        sprintf('jobinfo %i', jnum), subject_context);
     ss_tot(ii) = str2num(commando(ss+7:end)); %#ok<ST2NM>
     if ss_tot(ii) ~= 0
         % Legacy output: disp(sprintf('\n##################################################\nSomething has gone wrong and the job %d has failed with code %d\n##################################################', jobn, ss_tot(ii)));
@@ -115,7 +121,13 @@ for ii=1:length(jobname)
         end
         detail_context.job_number = jnum;
         pseudo_CT_output('WARN', detail_context, ...
-            'Failure detail: Launchpad job %s exited with code %d.', jobn, ss_tot(ii));
+            'Failure detail: Launchpad job %d exited with code %d.', jnum, ss_tot(ii));
+    else
+        % Scheduler terminal exit status for this job (INFO row). Exit 0 is
+        % not scientific completion; verification happens after retrieval.
+        pseudo_CT_output('SUCCESS', subject_context, ...
+            'Remote processing wait completed for job %d (exit status %d, elapsed %s).', ...
+            jnum, ss_tot(ii), local_elapsed(toc(job_started)));
     end
     if pause_time > 60
         pause_time = 60;
@@ -129,8 +141,13 @@ if sum(ss_tot(:)) ~= 0
 return
 end
 % Legacy output: disp(sprintf('\n\nGood News Everyone!! The commands ran properly!\n\n'));
-pseudo_CT_output('SUCCESS', output_context, ...
-    'All Launchpad jobs completed successfully.');
+% Per-job exit rows above already report the scheduler status; this summary is
+% log-only so no console row reads as a completion claim.
+summary_context = output_context;
+summary_context.console_detail_only = true;
+summary_context.console_detail_remote = true;
+pseudo_CT_output('INFO', summary_context, ...
+    'All Launchpad jobs reported exit status 0.');
 return
 end
 
@@ -185,8 +202,10 @@ for ii = 1:2
         'head -n "$((n-s+1))"; fi; fi'], ...
         remote_file, remote_file, offset + 1, offset, marker, remote_file);
     try
-        ssh2_conn = ssh2_command(ssh2_conn, command);
-        response = ssh2_command_response(ssh2_conn);
+        % Every raw PBS output line is recorded in the protected run log by
+        % the quiet helper; only WARN/ERROR text is forwarded to the console.
+        [ssh2_conn, response] = launchpad_quiet_command(ssh2_conn, command, ...
+            output_context);
         if ischar(response)
             response = regexp(response, '\r?\n', 'split');
         end
@@ -290,6 +309,13 @@ else
     cursor.(blank_seen_field) = false;
 end
 if isempty(message)
+    return;
+end
+% Only remote WARN/ERROR text is forwarded to the console. INFO/SUCCESS remote
+% text (including scientific-looking phrases) is not exposed as a stage: no
+% reliable public-stage marker has been verified in the remote output, so it
+% stays in the protected run log as raw output (see launchpad_quiet_command).
+if ~any(strcmp(level, {'WARN'; 'ERROR'}))
     return;
 end
 event_context = context;
@@ -477,14 +503,6 @@ end
 function yes = local_starts_with(text, prefix)
 yes = length(text) >= length(prefix) && ...
     strcmp(text(1:length(prefix)), prefix);
-end
-
-function label = local_safe_job_label(job_name)
-label = 'Launchpad job';
-if ischar(job_name) && ~isempty(regexp(job_name, ...
-        '^pbsjob_[A-Za-z0-9_.-]+$', 'once'))
-    label = job_name;
-end
 end
 
 function elapsed = local_elapsed(seconds)

@@ -15,6 +15,8 @@ keep_tmp = 0;
 check_aliasing = config.aliasing_default;
 output_log_files = {};
 profile_name = 'launchpad-legacy';
+% Public stage map for the Launchpad policy (producer stages 2-4 below).
+stage_map = pseudo_CT_stage_map(config);
 
 if length(P) == 0
     P = spm_select(Inf, 'any', 'Choose the subjects to run Pseudo-CT on cluster!');
@@ -81,7 +83,9 @@ if ~strcmp(host_folder(end), '/')
     host_folder = [host_folder, '/'];
 end
 lc_path_parent = strcat(host_folder, ssh2_conn.username, '/');
-ssh2_conn = ssh2_command(ssh2_conn, sprintf('mkdir %s', lc_path_parent));
+batch_log_context = struct('log_files', {output_log_files}, 'scope', 'batch');
+[ssh2_conn, ~] = launchpad_quiet_command(ssh2_conn, ...
+    sprintf('mkdir %s', lc_path_parent), batch_log_context);
 
 launchpad_batch_templates = config.launchpad.batch_templates;
 launchpad_defaults_mat = config.launchpad.defaults_mat;
@@ -90,7 +94,7 @@ launchpad_mcr_root = config.launchpad.mcr_root;
 
 for jj=1:size(P, 1)
     % Legacy output: disp(sprintf('Working on subject %d of %d:\n%s\n', jj, size(P, 1), deblank(P(jj, :))));
-    context = local_context(output_log_files, jj, size(P, 1), 2);
+    context = local_context(output_log_files, jj, size(P, 1), 2, stage_map);
     stage_started = tic;
     pseudo_CT_output('INFO', context, 'Uploading input and submitting Launchpad job.');
     [pathn, fn, extn] = fileparts(deblank(P(jj, :)));
@@ -138,20 +142,25 @@ for jj=1:size(P, 1)
     evidence = launchpad_evidence('submission', evidence, ...
         struct('jobname', jobname{jj}, 'jobnum', jobnum(jj)));
     context.job_number = jobnum(jj);
-    pseudo_CT_output('SUCCESS', context, 'Launchpad job submitted (elapsed %s).', ...
-        local_elapsed(toc(stage_started)));
+    pseudo_CT_output('SUCCESS', context, 'Launchpad job submitted (job %d, elapsed %s).', ...
+        jobnum(jj), local_elapsed(toc(stage_started)));
 end
 
 shared_context = struct('log_files', {output_log_files}, 'scope', 'batch', ...
     'stage_index', 3, 'stage_count', 8, ...
     'subject_log_files', {output_log_files}, ...
-    'console_profile', 'launchpad-legacy');
+    'console_profile', 'launchpad-legacy', 'stage_map', stage_map);
 stage_started = tic;
 pseudo_CT_output('INFO', shared_context, 'Waiting for remote Launchpad processing.');
 ss_tot = check_launchpad_command_status(jobname, ssh2_conn, 10*60, 60, ...
     jobnum, shared_context, config);
-pseudo_CT_output('SUCCESS', shared_context, ...
-    'Remote processing wait completed (elapsed %s).', local_elapsed(toc(stage_started)));
+% Batch-level wait summary is log-only; the per-job terminal rows are the
+% console record of the scheduler exit status.
+wait_summary_context = shared_context;
+wait_summary_context.console_detail_only = true;
+wait_summary_context.console_detail_remote = true;
+pseudo_CT_output('INFO', wait_summary_context, ...
+    'Remote processing wait finished (elapsed %s).', local_elapsed(toc(stage_started)));
 
 for jj=1:size(P, 1)
     [pathn, fn, extn] = fileparts(deblank(P(jj, :))); %#ok<ASGLU>
@@ -160,11 +169,13 @@ for jj=1:size(P, 1)
 
     if ss_tot(jj) == 0
         % Legacy output: disp(sprintf('\nCopying Back images for subject %d of %d: %s\n', jj, size(P, 1), deblank(P(jj, :))));
-        context = local_context(output_log_files, jj, size(P, 1), 4);
+        context = local_context(output_log_files, jj, size(P, 1), 4, stage_map);
         stage_started = tic;
         pseudo_CT_output('INFO', context, 'Retrieving remote outputs.');
+        context.job_number = jobnum(jj);
         lc_path = strcat(lc_path_parent, num2str(rand_fold(jj)));
-        [ssh2_conn, comm_result] = ssh2_command(ssh2_conn, sprintf('ls %s/*', lc_path)); %#ok<ASGLU>
+        [ssh2_conn, comm_result] = launchpad_quiet_command(ssh2_conn, ...
+            sprintf('ls %s/*', lc_path), context);
         ssh2_conn = scp_get(ssh2_conn, comm_result.', pathn);
         % Check that att_map.nii was produced on the cluster side.
         % A cluster job exiting 0 with no att_map.nii is a known failure mode
@@ -175,8 +186,11 @@ for jj=1:size(P, 1)
                 'Failure detail: remote job exited successfully but att_map.nii is missing.');
             ss_tot(jj) = 711;
         else
+            % Retrieval plus att_map presence is the verification of this
+            % row; scientific completion is the finalization event only.
             pseudo_CT_output('SUCCESS', context, ...
-                'Remote outputs retrieved (elapsed %s).', local_elapsed(toc(stage_started)));
+                'Remote outputs retrieved; att_map.nii verified (elapsed %s).', ...
+                local_elapsed(toc(stage_started)));
         end
         evidence = launchpad_evidence('retrieval', evidence, struct(...
             'att_map_present', exist(fullfile(pathn, att_map_filename), 'file') == 2));
@@ -184,11 +198,12 @@ for jj=1:size(P, 1)
         % Legacy output: disp(sprintf('\nSubject FAILED: %s\n', deblank(P(jj, :))));
         % Legacy output: fprintf(1, '[launchpad-debug] Job %d failed with exit code %d for subject %s\n', ...
         %     jobnum(jj), ss_tot(jj), deblank(P(jj, :)));
-        context = local_context(output_log_files, jj, size(P, 1), 3);
+        context = local_context(output_log_files, jj, size(P, 1), 3, stage_map);
         context.job_number = jobnum(jj);
     end
     if keep_tmp == 0
-        ssh2_conn = ssh2_command(ssh2_conn, sprintf('rm -rf %s', strcat(lc_path_parent, num2str(rand_fold(jj)))));
+        [ssh2_conn, ~] = launchpad_quiet_command(ssh2_conn, ...
+            sprintf('rm -rf %s', strcat(lc_path_parent, num2str(rand_fold(jj)))), context);
         cleanup_state = 'remote-scratch-removed';
     else
         preserved_path = strcat(lc_path_parent, num2str(rand_fold(jj)));
@@ -197,7 +212,11 @@ for jj=1:size(P, 1)
         %             '           ssh %s ''rm -rf %s''\n'], ...
         %         preserved_path, ssh2_conn.hostname, preserved_path);
         pseudo_CT_output('INFO', context, 'Remote scratch was preserved.');
-        pseudo_CT_output('INFO', context, '    %s', preserved_path);
+        % The remote path is a diagnostic: protected run log only.
+        path_context = context;
+        path_context.console_detail_only = true;
+        path_context.console_detail_remote = true;
+        pseudo_CT_output('INFO', path_context, '    %s', preserved_path);
         cleanup_state = 'remote-scratch-preserved';
     end
     evidence = launchpad_evidence('cleanup', evidence, struct('cleanup', cleanup_state));
@@ -235,10 +254,10 @@ end
 return
 end
 
-function context = local_context(log_files, subject_index, subject_count, stage_index)
+function context = local_context(log_files, subject_index, subject_count, stage_index, stage_map)
 context = struct('subject_index', subject_index, 'subject_count', subject_count, ...
     'stage_index', stage_index, 'stage_count', 8, ...
-    'console_profile', 'launchpad-legacy');
+    'console_profile', 'launchpad-legacy', 'stage_map', stage_map);
 if length(log_files) >= subject_index
     context.log_file = log_files{subject_index};
 end

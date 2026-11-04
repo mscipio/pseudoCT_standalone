@@ -14,6 +14,7 @@ end
 if nargin < 3
     format_string = '';
 end
+context = local_public_stage_context(context);
 
 level = upper(strtrim(level));
 valid_levels = {'INFO', 'WARN', 'ERROR', 'SUCCESS'};
@@ -51,10 +52,15 @@ end
 
 line = sprintf('[%s] %-7s %s%s', timestamp, level, tags, message);
 cli_output = strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1');
-if cli_output && isfield(context, 'console_detail_only') && ...
-        isequal(context.console_detail_only, true)
-    % Detailed diagnostics (external converter output): written to the run log
-    % only; the shared presenter never sees them, in text or JSONL.
+detail_only = isfield(context, 'console_detail_only') && ...
+    isequal(context.console_detail_only, true);
+remote_detail = isfield(context, 'console_detail_remote') && ...
+    isequal(context.console_detail_remote, true);
+if detail_only && (cli_output || remote_detail)
+    % Detailed diagnostics are written to the protected run log only. Local
+    % detail rows keep the HEAD behaviour: suppressed in CLI mode, printed to the
+    % MATLAB command window otherwise. Remote (PBS/SSH response) detail rows are
+    % suppressed in every console mode; the presenter never sees them.
 elseif cli_output
     console_source_line = line;
     if isfield(context, 'console_timestamp') && ...
@@ -134,5 +140,27 @@ if isnumeric(value)
     value = num2str(value);
 else
     value = char(value);
+end
+end
+
+function context = local_public_stage_context(context)
+% Apply the shared policy map to context tags only. MESSAGE remains the
+% original detailed-log payload; console sanitization is a separate view.
+if ~isstruct(context) || ~isscalar(context) || ...
+        ~isfield(context, 'stage_map') || ...
+        ~isfield(context, 'stage_index') || ...
+        ~isfield(context, 'stage_count')
+    return;
+end
+if ~isstruct(context.stage_map) || ...
+        ~isnumeric(context.stage_index) || ~isscalar(context.stage_index) || ...
+        ~isnumeric(context.stage_count) || ~isscalar(context.stage_count)
+    return;
+end
+[~, stage_number, stage_total] = pseudo_CT_stage_map( ...
+    context.stage_map, context.stage_index, context.stage_count);
+if stage_number > 0
+    context.stage_index = stage_number;
+    context.stage_count = stage_total;
 end
 end

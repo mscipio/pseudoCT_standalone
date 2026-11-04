@@ -45,6 +45,7 @@ end
 base_context = struct('log_file', '', 'subject_index', subject_index, ...
     'subject_count', subject_count, 'scope', 'subject');
 base_context.console_profile = 'local-legacy';
+base_context.stage_map = pseudo_CT_stage_map(config);
 try
     base_context.log_file = job.log_file;
 catch %#ok<CTCH>
@@ -213,7 +214,9 @@ end
 stage_context = local_stage_context(base_context, 1);
 pseudo_CT_output('INFO', stage_context, 'Preparing input MPRAGE.');
 try
-    seed_nii = dcm2nii(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), 'Overwrite', true);
+    % Converter output is persisted to the run log only (shared Local Current
+    % path); it never reaches the public presenter.
+    seed_nii = pseudo_CT_convert_dicom_quiet(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), stage_context);
 catch ME_stage
     pseudo_CT_output('ERROR', base_context, 'Input preparation failed: %s', ME_stage.message);
     return;
@@ -366,7 +369,9 @@ if writes_dicom
         if isfield(config, 'fwhm')
             fwhm_value = config.fwhm;
         end
-        pseudo_CT_write_mu_map_dicom(att_path, save_dir, umap_fn, temp_dir, fwhm_value);
+        % The event context routes the converter's reference-file output to
+        % the run log only, as in the Local Current DICOM stage.
+        pseudo_CT_write_mu_map_dicom(att_path, save_dir, umap_fn, temp_dir, fwhm_value, dicom_context);
     catch ME_dicom
         pseudo_CT_output('ERROR', dicom_context, 'DICOM output failed: %s', ME_dicom.message);
         return;
@@ -411,7 +416,10 @@ if show_dialog && ~isdeployed
 end
 
 success = 1;
-pseudo_CT_output('SUCCESS', base_context, 'Subject completed (elapsed %s).', ...
+% Reached only after att_map verification, promotion, and cleanup succeeded.
+completion_context = base_context;
+completion_context.completion_verified = true;
+pseudo_CT_output('SUCCESS', completion_context, 'Subject completed (elapsed %s).', ...
     local_elapsed(toc(subject_started)));
 end
 
@@ -686,7 +694,11 @@ while true
     end
     if elapsed - last_heartbeat >= 60
         last_heartbeat = elapsed;
-        pseudo_CT_output('INFO', invoke_context, 'Legacy pseudo-CT still running (elapsed %s).', ...
+        % This wait is only ever used for the compiled runner (stage 3), so the
+        % operation is known here; the stage number is carried by the row's
+        % stage cell on entry, per the entry-only numbering rule.
+        pseudo_CT_output('INFO', invoke_context, ...
+            'Legacy pseudo-CT still running (elapsed %s): compiled runner.', ...
             local_elapsed(elapsed));
     end
     if use_seam

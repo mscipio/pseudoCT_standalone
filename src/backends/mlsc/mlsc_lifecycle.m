@@ -2253,6 +2253,19 @@ try
             catch %#ok<CTCH>
             end
         end
+        if isfield(source, 'stage_map')
+            try
+                value = source.stage_map;
+                if isstruct(value) && isscalar(value) && ...
+                        isfield(value, 'producer_total') && ...
+                        isnumeric(value.producer_total) && ...
+                        isscalar(value.producer_total) && ...
+                        value.producer_total > 0
+                    context.stage_map = value;
+                end
+            catch %#ok<CTCH>
+            end
+        end
     end
 catch %#ok<CTCH>
     context = struct();
@@ -2321,11 +2334,8 @@ try
     catch %#ok<CTCH>
     end
     try
-        if strcmp(new_state, 'pending') || strcmp(new_state, 'running')
-            context = local_stage_output_context(runtime, job_id, 3);
-        else
-            context = local_output_context(runtime, job_id);
-        end
+        % Scheduler rows are unnumbered: no producer stage tag is attached.
+        context = local_output_context(runtime, job_id);
         pseudo_CT_output('INFO', context, 'MLSC job %d state %s.', ...
             job_id, new_state);
     catch %#ok<CTCH>
@@ -2357,7 +2367,7 @@ try
         return;
     end
     try
-        context = local_stage_output_context(runtime, job_id, 3);
+        context = local_output_context(runtime, job_id);
         [elapsed_known, elapsed] = local_output_elapsed(result, now_value);
         if ~elapsed_known
             return;
@@ -2396,7 +2406,8 @@ try
             job_id ~= floor(job_id) || job_id < 1
         return;
     end
-    context = local_stage_output_context(runtime, job_id, 2);
+    % Accepted row is unnumbered (scheduler event): no producer stage tag.
+    context = local_output_context(runtime, job_id);
     pseudo_CT_output('INFO', context, 'MLSC job %d accepted.', job_id);
 catch %#ok<CTCH>
 end
@@ -2828,6 +2839,7 @@ try
     end
     [level, message, original_stage, event_time] = ...
         local_slurm_log_event(line);
+    raw_continuation = false;
     if isempty(strtrim(line))
         if state.diagnostic_error_using
             state.diagnostic_blank_seen = true;
@@ -2839,6 +2851,7 @@ try
                 local_slurm_log_is_error_body_continuation(line, state)
             level = state.diagnostic_level;
             message = local_slurm_log_safe_message(line);
+            raw_continuation = true;
             state.diagnostic_blank_seen = false;
             state.diagnostic_lines = state.diagnostic_lines + 1;
         elseif state.diagnostic_error_using
@@ -2851,6 +2864,7 @@ try
         elseif local_slurm_log_is_diagnostic_continuation(line, state)
             level = state.diagnostic_level;
             message = local_slurm_log_safe_message(line);
+            raw_continuation = true;
             if ~isempty(strfind(line, '}'))
                 state.diagnostic_braced = false;
             end
@@ -2887,6 +2901,13 @@ try
     end
     if ~isempty(event_time)
         context.console_timestamp = event_time;
+    end
+    if raw_continuation
+        % Continuation lines of a remote MATLAB diagnostic (stack and body
+        % text) are raw diagnostics: protected run log only. Structured rows
+        % and the WARN/ERROR head line stay on the console.
+        context.console_detail_only = true;
+        context.console_detail_remote = true;
     end
     pseudo_CT_output(level, context, '%s', message);
 catch %#ok<CTCH>
@@ -3281,6 +3302,18 @@ try
             stage_index >= 1
         context.stage_index = stage_index;
         context.stage_count = 8;
+        if isfield(context, 'stage_map') && ...
+                isstruct(context.stage_map) && ...
+                isfield(context.stage_map, 'producer_total') && ...
+                context.stage_map.producer_total > 0
+            [~, public_stage, public_total] = pseudo_CT_stage_map( ...
+                context.stage_map, stage_index, ...
+                context.stage_map.producer_total);
+            if public_stage > 0
+                context.stage_index = public_stage;
+                context.stage_count = public_total;
+            end
+        end
     end
 catch %#ok<CTCH>
 end

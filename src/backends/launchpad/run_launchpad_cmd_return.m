@@ -49,8 +49,10 @@ else
     source_command = '';
 end
 % Legacy output: disp('Starting Launchpad command (be patient) ...');
-ssh2_conn = ssh2_command(ssh2_conn, sprintf('%s; pbsubmit %s -c %s', ...
-    source_command, queue_com, cmd), 1);
+% The qsub echo and generated-script text are diagnostics: they go to the
+% protected run log through the quiet helper, never to the screen.
+[ssh2_conn, ~] = launchpad_quiet_command(ssh2_conn, sprintf( ...
+    '%s; pbsubmit %s -c %s', source_command, queue_com, cmd), output_context);
 commando = ssh2_command_response(ssh2_conn);
 commando_tot = commando;
 jobnumline = commando{end};

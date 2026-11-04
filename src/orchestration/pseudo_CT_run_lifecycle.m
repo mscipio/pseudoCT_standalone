@@ -378,6 +378,7 @@ run_context.console_run_id = run_id;
 run_context.console_subject_count = collection_stats.requested;
 run_context.console_release = version('-release');
 run_context.console_started_at = run_start_time;
+run_context.stage_map = pseudo_CT_stage_map(config);
 if strcmp(config.io_policy.output, 'nifti-only')
     run_context.console_output = 'NIfTI';
 elseif strcmp(config.io_policy.output, 'dicom-only')
@@ -386,6 +387,15 @@ else
     run_context.console_output = 'NIfTI+DICOM';
 end
 mlsc_context = struct('log_files', {all_log_files}, 'scope', 'mlsc');
+% The MLSC auth/account rows use the same presenter identity as the run so
+% they are formatted as table rows (not raw text) with the contract fields.
+mlsc_context.console_profile = run_context.console_profile;
+mlsc_context.console_run_id = run_context.console_run_id;
+mlsc_context.console_subject_count = run_context.console_subject_count;
+mlsc_context.console_release = run_context.console_release;
+mlsc_context.console_started_at = run_context.console_started_at;
+mlsc_context.console_output = run_context.console_output;
+mlsc_context.stage_map = run_context.stage_map;
 if isfield(config, 'implementation') && ischar(config.implementation) && ...
         strcmp(config.implementation, 'legacy-v2')
     for ii = 1:length(jobs)
@@ -446,6 +456,7 @@ switch config.mode
         P = '';
         for ii = 1:length(jobs)
             context = local_subject_context(jobs(ii), ii, length(jobs));
+            context.stage_map = pseudo_CT_stage_map(config);
             context = local_stage_context(context, 1);
             stage_started = tic;
             pseudo_CT_output('INFO', context, 'Preparing input MPRAGE.');
@@ -453,8 +464,11 @@ switch config.mode
                 % Legacy output: disp(sprintf('\nPreparing Launchpad pseudo-CT subject %d of %d:\n%s\n', ...
                 %     ii, length(jobs), jobs(ii).mprage_fn));
             end
+            % Remote converter detail is kept in the subject log only.
+            converter_context = context;
+            converter_context.console_detail_remote = true;
             jobs(ii).seed_nii = local_convert_dicom(jobs(ii).mprage_fn, ...
-                fullfile(jobs(ii).temp_dir, 'mprage.nii'), context);
+                fullfile(jobs(ii).temp_dir, 'mprage.nii'), converter_context);
             P(ii, 1:length(jobs(ii).seed_nii)) = jobs(ii).seed_nii;
             % Legacy output: disp(sprintf('\n\nThis is the temporary working directory where intermediate results will be saved:\n%s\n', temp_dir));
             pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
@@ -495,13 +509,19 @@ switch config.mode
         clear launchpad_connection
 
         for jj = 1:length(jobs)
+            % Guard: one subject-scoped terminal line per subject (see local path).
+            outcome = pseudo_CT_subject_outcome( ...
+                local_subject_context(jobs(jj), jj, length(jobs)), jobs(jj).subject_started);
+            guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
             if ss_tot(jj) ~= 0
                 % Legacy output: disp(sprintf('Pseudo-CT Launchpad processing failed for:\n%s\n', jobs(jj).mprage_fn));
                 context = local_subject_context(jobs(jj), jj, length(jobs));
                 pseudo_CT_output('ERROR', context, ...
                     'Subject failed during Launchpad processing (elapsed %s).', ...
                     local_elapsed(toc(jobs(jj).subject_started)));
+                outcome.markClosed();
                 num_failed = num_failed + 1;
+                clear guard
                 continue;
             end
 
@@ -522,6 +542,8 @@ switch config.mode
                     num_failed = num_failed + 1;
                     report.completion_status = 'failed';
                 end
+                % The finalizer writes its own SUCCESS or ERROR before returning.
+                outcome.markClosed();
             catch ME
                 context = local_subject_context(jobs(jj), jj, length(jobs));
                 if headless_mode
@@ -530,10 +552,13 @@ switch config.mode
                 else
                     local_log_remote_failure(jobs(jj), context, ME.message);
                 end
+                outcome.markClosed();
                 num_failed = num_failed + 1;
                 report.completion_status = 'failed';
+                clear guard
                 continue;
             end
+            clear guard
         end
 
         if ~isdeployed && length(jobs) > 1
@@ -555,11 +580,16 @@ switch config.mode
         num_started = 0;
         for ii = 1:length(jobs)
             context = local_subject_context(jobs(ii), ii, length(jobs));
+            context.stage_map = pseudo_CT_stage_map(config);
+            context.console_profile = profile_name;
             context = local_stage_context(context, 1);
             stage_started = tic;
             pseudo_CT_output('INFO', context, 'Preparing input MPRAGE.');
+            % Remote converter detail is kept in the subject log only.
+            converter_context = context;
+            converter_context.console_detail_remote = true;
             jobs(ii).seed_nii = local_convert_dicom(jobs(ii).mprage_fn, ...
-                fullfile(jobs(ii).temp_dir, 'mprage.nii'), context);
+                fullfile(jobs(ii).temp_dir, 'mprage.nii'), converter_context);
             pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
                 local_elapsed(toc(stage_started)));
         end
@@ -649,8 +679,16 @@ switch config.mode
                     % stage 4 Retrieving for verify/copy-back/verified
                     % return); 12 return to finalization is below before
                     % retained stages 5-8.
+                    % Guard: one subject-scoped terminal line per subject (see local path).
+                    outcome = pseudo_CT_subject_outcome( ...
+                        local_subject_context(jobs(ii), ii, length(jobs)), jobs(ii).subject_started);
+                    guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
                     context = local_subject_context(jobs(ii), ii, length(jobs));
                     output_context = local_subject_context(jobs(ii), ii, length(jobs));
+                    context.stage_map = pseudo_CT_stage_map(config);
+                    output_context.stage_map = context.stage_map;
+                    context.console_profile = profile_name;
+                    output_context.console_profile = profile_name;
                     runtime = struct('profile', profile_name, 'account', account, ...
                         'script_path', fullfile(jobs(ii).temp_dir, ...
                         sprintf('.pseudo_CT_mlsc_%s_%d.sh', run_id, ii)), ...
@@ -719,6 +757,7 @@ switch config.mode
                             end
                             pseudo_CT_output('ERROR', context, ...
                                 'Subject failed before local finalization: %s', failure_detail);
+                            outcome.markClosed();
                             if isfield(lifecycle, 'terminal') && ...
                                     isequal(lifecycle.terminal, true)
                                 if pseudo_CT_completion_failure_observed(lifecycle)
@@ -726,6 +765,7 @@ switch config.mode
                                 end
                             end
                             num_failed = num_failed + 1;
+                            clear guard
                             continue;
                         end
                         if mlsc_job_id > 0
@@ -741,6 +781,8 @@ switch config.mode
                         lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
                             true, logical(finalization_success), ...
                             local_finalization_detail(finalization_success));
+                        % The finalizer writes its own SUCCESS or ERROR before returning.
+                        outcome.markClosed();
                         if local_mlsc_summary_evidence_ready(lifecycle)
                             pseudo_CT_print_profile_summary(profile_name, ...
                                 config, jobs(ii).processing_dir, context, ...
@@ -774,8 +816,10 @@ switch config.mode
                         pseudo_CT_output('ERROR', context, ...
                             'Subject failed; see non-secret MLSC evidence (elapsed %s).', ...
                             local_elapsed(toc(jobs(ii).subject_started)));
+                        outcome.markClosed();
                         num_failed = num_failed + 1;
                     end
+                    clear guard
                 end
         else
             num_started = 0;
@@ -795,6 +839,11 @@ switch config.mode
                 % Legacy output: disp(sprintf('\nStarting local pseudo-CT subject %d of %d:\n%s\n', ...
                 %     jj, length(jobs), jobs(jj).mprage_fn));
             end
+            % Guard: writes one subject-scoped ERROR if this iteration exits
+            % without a closed outcome. The propagating error is not altered.
+            outcome = pseudo_CT_subject_outcome( ...
+                local_subject_context(jobs(jj), jj, length(jobs)), jobs(jj).subject_started);
+            guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
             try
                 if strcmp(config.implementation, 'legacy-v2')
                     subject_success = pseudo_CT_run_local_legacy_subject( ...
@@ -811,12 +860,15 @@ switch config.mode
                         local_elapsed(toc(jobs(jj).subject_started)));
                     num_failed = num_failed + 1;
                 end
+                outcome.markClosed();
             catch ME
                 context = local_subject_context(jobs(jj), jj, length(jobs));
                 pseudo_CT_output('ERROR', context, 'Subject failed: %s (elapsed %s).', ...
                     ME.message, local_elapsed(toc(jobs(jj).subject_started)));
+                outcome.markClosed();
                 num_failed = num_failed + 1;
             end
+            clear guard
         end
 
         if ~isdeployed && length(jobs) > 1
@@ -882,14 +934,9 @@ function success = local_run_subject(job, dir_batch_templates, ...
 success = 0;
 context = local_subject_context(job, subject_index, subject_count);
 context.console_profile = profile_name;
-% Local Current public stage total follows the resolved output policy:
-% 10 stages with DICOM output, 9 for NIfTI-only (no DICOM stage).
-if strcmp(profile_name, 'local-current')
-    if strcmp(config.io_policy.output, 'nifti-only')
-        context.public_stage_total = 9;
-    else
-        context.public_stage_total = 10;
-    end
+context.stage_map = pseudo_CT_stage_map(config);
+if context.stage_map.total > 0
+    context.public_stage_total = context.stage_map.total;
 end
 subject_started = job.subject_started;
 
@@ -975,10 +1022,7 @@ end
 [temp_working_dir, ~, ~] = fileparts(deblank(Pf(end, :)));
 if strcmp(config.io_policy.output, 'nifti-and-dicom')
     try
-        dicom_stage = 7;
-        if strcmp(profile_name, 'local-current')
-            dicom_stage = 9;   % public stage; stage 10 is output promotion
-        end
+        dicom_stage = local_dicom_producer_stage(context);
         context = local_stage_context(context, dicom_stage);
         stage_started = tic;
         pseudo_CT_output('INFO', local_status_context(context, 'START'), 'Writing DICOM output.');
@@ -1003,9 +1047,14 @@ end
 % Promotion is the scientific stage; temporary cleanup is housekeeping and
 % is reported separately (a cleanup problem never reads as promotion failure
 % and never as "cleanup completed").
+% Promotion is the last producer stage of the policy map (10 for Local Current
+% with DICOM, 10 for its NIfTI-only public 9, 9 for Local MPRAGE-only). Without
+% a mapped policy the historical stage 8 is kept.
 promote_stage = 8;
-if strcmp(profile_name, 'local-current')
-    promote_stage = context.public_stage_total;   % 10, or 9 for NIfTI-only
+if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
+        isfield(context.stage_map, 'producer_stage_numbers') && ...
+        ~isempty(context.stage_map.producer_stage_numbers)
+    promote_stage = context.stage_map.producer_stage_numbers(end);
 end
 context = local_stage_context(context, promote_stage);
 stage_started = tic;
@@ -1039,7 +1088,10 @@ if show_dialog && ~isdeployed
 end
 
 success = 1;
-pseudo_CT_output('SUCCESS', local_subject_context(job, subject_index, subject_count), ...
+% Reached only after att_map verification, promotion, and cleanup succeeded.
+completion_context = local_subject_context(job, subject_index, subject_count);
+completion_context.completion_verified = true;
+pseudo_CT_output('SUCCESS', completion_context, ...
     'Subject completed (elapsed %s).', local_elapsed(toc(subject_started)));
 
 end
@@ -1057,6 +1109,7 @@ if nargin < 6
 end
 context = local_subject_context(job, subject_index, subject_count);
 context = local_attach_mlsc_job(context, job_id);
+context.stage_map = pseudo_CT_stage_map(config);
 context = local_stage_context(context, 5);
 stage_started = tic;
 pseudo_CT_output('INFO', context, 'Applying local post-processing.');
@@ -1083,8 +1136,14 @@ if strcmp(config.io_policy.output, 'nifti-and-dicom')
     stage_started = tic;
     pseudo_CT_output('INFO', context, 'Writing DICOM output.');
     try
+        % Passing the event context routes the converter output to the run
+        % log (pseudo_CT_convert_dicom_quiet) instead of the console. The
+        % remote-detail flag suppresses it from every console mode; milestones
+        % and WARN/ERROR rows on this context are unaffected.
+        converter_context = context;
+        converter_context.console_detail_remote = true;
         pseudo_CT_write_mu_map_dicom(fullfile(job.temp_dir, 'att_map.nii'), ...
-            job.save_dir, job.umap_fn, job.temp_dir, config.fwhm);
+            job.save_dir, job.umap_fn, job.temp_dir, config.fwhm, converter_context);
     catch ME
         local_log_remote_failure(job, context, ME.message);
         return;
@@ -1092,7 +1151,9 @@ if strcmp(config.io_policy.output, 'nifti-and-dicom')
     pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
         local_elapsed(toc(stage_started)));
 else
-    pseudo_CT_output('INFO', context, 'Skipping DICOM output by profile policy.');
+    % Policy skip is not stage 5 work (mirrors the Local path): no stage cell.
+    skip_context = rmfield(context, {'stage_index', 'stage_count'});
+    pseudo_CT_output('INFO', skip_context, 'Skipping DICOM output by profile policy.');
 end
 
 context = local_stage_context(context, 7);
@@ -1125,6 +1186,8 @@ pseudo_CT_output('SUCCESS', context, 'Cleanup completed (elapsed %s).', ...
 success = 1;
 final_context = local_subject_context(job, subject_index, subject_count);
 final_context = local_attach_mlsc_job(final_context, job_id);
+% Reached only after att_map verification, promotion, and cleanup succeeded.
+final_context.completion_verified = true;
 pseudo_CT_output('SUCCESS', final_context, ...
     'Subject completed (elapsed %s).', local_elapsed(toc(job.subject_started)));
 end
@@ -1232,23 +1295,36 @@ context = struct('log_file', job.log_file, 'subject_index', subject_index, ...
 end
 
 
+function stage_number = local_dicom_producer_stage(context)
+% Producer stage number of the DICOM output step, read from the active
+% policy map (the map's 'Writing DICOM output' title). Never a hard-coded number.
+stage_number = 0;
+if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
+        isfield(context.stage_map, 'titles') && ...
+        isfield(context.stage_map, 'producer_stage_numbers')
+    slot = find(strcmp(context.stage_map.titles, 'Writing DICOM output'), 1);
+    if ~isempty(slot)
+        stage_number = context.stage_map.producer_stage_numbers(slot);
+    end
+end
+if stage_number < 1
+    error('pseudo_CT:StageMap:NoDicomStage', ...
+        'Active stage map declares no DICOM output stage.');
+end
+end
+
 function context = local_stage_context(context, stage_index)
-% Stage tag for the event context. Local Current uses its public stage
-% numbering (stage_count = public_stage_total: 10 with DICOM output, 9 for
-% NIfTI-only; the adapter reports stages 2-8). Other profiles keep their own
-% internal counters.
 context.stage_index = stage_index;
 context.stage_count = 8;
-if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
-        strcmp(context.console_profile, 'local-current')
-    context.stage_count = 9;
-    if isfield(context, 'public_stage_total')
-        context.stage_count = context.public_stage_total;
+if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
+        isfield(context.stage_map, 'producer_total') && ...
+        context.stage_map.producer_total > 0
+    [~, public_stage, public_total] = pseudo_CT_stage_map( ...
+        context.stage_map, stage_index, context.stage_map.producer_total);
+    if public_stage > 0
+        context.stage_index = public_stage;
+        context.stage_count = public_total;
     end
-elseif isfield(context, 'console_profile') && ...
-        ischar(context.console_profile) && ...
-        strcmp(context.console_profile, 'local-mprage-only')
-    context.stage_count = 8;
 end
 end
 
@@ -1257,7 +1333,8 @@ function context = local_status_context(context, status)
 % Current stage event; the console presenter formats it without interpreting
 % the message. Other profiles are unchanged. Returns a copy (never stored).
 if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
-        strcmp(context.console_profile, 'local-current')
+        any(strcmp(context.console_profile, ...
+        {'local-current'; 'local-mprage-only'}))
     context.stage_status = status;
 end
 end

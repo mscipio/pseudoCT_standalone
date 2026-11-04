@@ -842,14 +842,21 @@ end
 
 function context = local_stage_context(context, stage_index)
 context.stage_index = stage_index;
+if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
+        isfield(context.stage_map, 'producer_total') && ...
+        context.stage_map.producer_total > 0
+    [~, public_stage, public_total] = pseudo_CT_stage_map( ...
+        context.stage_map, stage_index, context.stage_map.producer_total);
+    if public_stage > 0
+        context.stage_index = public_stage;
+        context.stage_count = public_total;
+        return;
+    end
+end
 if ~(local_is_public_profile(context) && isfield(context, 'stage_count') && ...
         isnumeric(context.stage_count) && isscalar(context.stage_count) && ...
         any(context.stage_count == [9 10]))
     context.stage_count = 9;
-end
-if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
-        strcmp(context.console_profile, 'local-mprage-only')
-    context.stage_count = 8;
 end
 end
 
@@ -868,15 +875,18 @@ end
 function yes = local_is_public_profile(output_context)
 yes = isfield(output_context, 'console_profile') && ...
     ischar(output_context.console_profile) && ...
-    strcmp(output_context.console_profile, 'local-current');
+    any(strcmp(output_context.console_profile, ...
+    {'local-current'; 'local-mprage-only'}));
 end
 
-function name = local_public_name(stage_number)
-names = {'Input MPRAGE preparation'; 'MPRAGE recentering'; ...
-    'Aliasing correction'; 'FreeSurfer MPRAGE normalization'; ...
-    'MPRAGE alignment and masking'; 'SPM New Segment'; ...
-    'DARTEL atlas registration'; 'Attenuation-map and QC generation'};
-name = names{stage_number};
+function name = local_public_name(stage_number, output_context)
+name = '';
+if ~isfield(output_context, 'stage_map') || ...
+        ~isstruct(output_context.stage_map)
+    return;
+end
+[~, ~, ~, name] = pseudo_CT_stage_map(output_context.stage_map, ...
+    stage_number, output_context.stage_map.producer_total);
 end
 
 function context = local_public_context(context, stage_number, status, message)
@@ -926,7 +936,7 @@ function [text, context] = local_heartbeat_event(output_context, public, phase_l
 % Heartbeat names the operation actually running: the open public stage, or
 % the compiled phase when no stage is open.
 if local_is_public_profile(output_context) && public('open')
-    operation = local_public_name(public('stage'));
+    operation = local_public_name(public('stage'), output_context);
     elapsed = local_current_elapsed(toc(public('started')));
 else
     operation = sprintf('Compiled current %s phase', upper(phase_label));
@@ -986,7 +996,8 @@ for ii = 1:size(outcome, 1)
             return;  % other detail keeps the generic path
         end
         context = local_public_context(output_context, n, status, ...
-            [local_public_name(n) ' ' lower(rest(1)) rest(2:end)]);
+            [local_public_name(n, output_context) ' ' ...
+             lower(rest(1)) rest(2:end)]);
         public('stage') = n;
         public('open') = false;
         mapped = true;
