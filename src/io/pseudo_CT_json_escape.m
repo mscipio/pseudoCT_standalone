@@ -1,9 +1,10 @@
 function out = pseudo_CT_json_escape(text)
 %PSEUDO_CT_JSON_ESCAPE Escape char text for use inside a JSON string literal.
 %   OUT = PSEUDO_CT_JSON_ESCAPE(TEXT) escapes backslash and double quote, uses
-%   the short forms \n \r \t, and writes every other control character below
-%   0x20 as \u00XX. All other characters pass through unchanged.
-%   Minimum supported MATLAB: R2010b.
+%   the short forms \n \r \t, and writes every other character outside the
+%   printable ASCII range (controls below 0x20, DEL, and anything above 0x7E)
+%   as \uXXXX. The output is therefore pure 7-bit ASCII and independent of the
+%   MATLAB session encoding. Minimum supported MATLAB: R2010b.
 
 if ~ischar(text)
     error('pseudo_CT:JsonEscape', 'JSON string text must be char.');
@@ -27,8 +28,8 @@ for ii = 1:numel(text)
         case 9      % tab
             pieces{ii} = '\t';
         otherwise
-            if code < 32
-                pieces{ii} = ['\u' sprintf('%04x', code)];
+            if code < 32 || code > 126
+                pieces{ii} = sprintf('\\u%04x', code);
             else
                 pieces{ii} = text(ii);
             end

@@ -1,40 +1,59 @@
-function ok = pseudo_CT_scientific_event(target, stage_id, status, message, job_id)
-%PSEUDO_CT_SCIENTIFIC_EVENT Append one scientific boundary record as JSONL.
-%   OK = PSEUDO_CT_SCIENTIFIC_EVENT(TARGET, STAGE_ID, STATUS, MESSAGE) appends
-%   exactly one complete JSON line to TARGET.path (see
-%   pseudo_CT_scientific_event_target). STATUS is STARTED, COMPLETED or FAILED.
-%   OK = PSEUDO_CT_SCIENTIFIC_EVENT(..., JOB_ID) also records a scheduler or
-%   process id when the caller genuinely has one.
+function ok = pseudo_CT_scientific_event(target, rec)
+%PSEUDO_CT_SCIENTIFIC_EVENT Append one scientific or run record as one JSONL line.
+%   OK = PSEUDO_CT_SCIENTIFIC_EVENT(TARGET, REC) appends exactly one complete,
+%   newline-terminated JSON object to TARGET.path (see
+%   pseudo_CT_scientific_event_target). REC is a scalar struct whose fields
+%   are all optional:
+%     event_type       'stage' (default) or 'run'
+%     stage_id         lowercase identifier, e.g. 'segment' (stage records)
+%     stage_index      canonical ten-stage index 1..10, or [] when none
+%     status           'STARTED', 'COMPLETED', 'FAILED' or '' (stage records)
+%     outcome          'SUCCEEDED', 'FAILED', 'CANCELLED' (run records only)
+%     message          short human text (redacted, truncated to 240 chars)
+%     source           'local-orchestrator', 'payload' or 'mlsc-lifecycle'
+%     job_id           scheduler job number digits, or ''
+%     error_identifier, error_message   error details when applicable
 %
-%   The file is opened, written and closed per call, so every record is
-%   readable as soon as it is emitted and a crash keeps all earlier records.
-%   seq is one more than the number of complete lines already in the file;
-%   each run has a single writer, so no lock is needed.
+%   Record fields: schema, schema_version, run_id, subject, profile, seq,
+%   timestamp_utc, event_type, stage_id, stage_index, stage_count, status,
+%   outcome, message, source, job_id, error_identifier, error_message.
+%   Absent optional values are written as JSON null. stage_count is 10 for
+%   every stage record.
 %
-%   Advisory I/O: nothing here throws. A failed write returns OK=false and
-%   warns once per MATLAB session; the scientific call proceeds unchanged.
+%   seq is one more than the number of line feeds already in the file, so it is
+%   strictly increasing and unique for the life of the run file. A partial
+%   trailing record (for example after a crash) is closed with a line feed
+%   before the new record, so every record starts on its own line; the closed
+%   fragment keeps its sequence slot and is skipped by readers.
 %
-%   Secrets: only the fixed fields below are recorded (no free-form fields), and
-%   MESSAGE is redacted with the run-log credential pattern.
-%   Minimum supported MATLAB: R2010b.
+%   Single writer: exactly one process appends to a run file at a time (see
+%   the writer ownership contract in the T004 evidence). No lock is taken.
+%
+%   Advisory I/O: nothing here throws. An invalid request or failed write
+%   returns OK=false and warns once per MATLAB session; the scientific caller
+%   continues unchanged. No secret-bearing field is recorded: only the fixed
+%   fields above exist, and free text is redacted with the run-log pattern.
+%   UTC timestamps come from java.util.Date/SimpleDateFormat set to UTC, so
+%   they do not depend on the machine time zone. Minimum supported MATLAB: R2010b.
 
 ok = false;
-if nargin < 5 || isempty(job_id)
-    job_id = '';
-end
 try
-    if ~local_valid_request(target, stage_id, status, message, job_id)
+    if ~local_valid_target(target) || ~local_valid_record(rec)
+        local_warn_once();
         return;
     end
     path = target.path;
-    seq = local_count_lines(path) + 1;
-    line = local_record(seq, target, stage_id, status, message, job_id);
+    [n_lines, partial_tail] = local_scan(path);
+    line = local_record(n_lines + 1, target, rec);
     fid = fopen(path, 'a');
     if fid == -1
         local_warn_once();
         return;
     end
     closer = onCleanup(@() fclose(fid)); %#ok<NASGU>
+    if partial_tail
+        fprintf(fid, '\n');
+    end
     fprintf(fid, '%s\n', line);
     ok = true;
 catch %#ok<CTCH>
@@ -43,44 +62,122 @@ catch %#ok<CTCH>
 end
 end
 
-function valid = local_valid_request(target, stage_id, status, message, job_id)
+function valid = local_valid_target(target)
 valid = false;
-if ~isstruct(target) || numel(target) ~= 1 || ~isfield(target, 'path')
+if ~isstruct(target) || numel(target) ~= 1 || ...
+        ~isfield(target, 'path') || ~isfield(target, 'run_id')
     return;
 end
-if ~ischar(target.path) || size(target.path, 1) ~= 1 || isempty(target.path)
-    return;
-end
-if ~ischar(stage_id) || size(stage_id, 1) ~= 1 || isempty(stage_id)
-    return;
-end
-if ~ischar(status) || ~any(strcmp(status, {'STARTED'; 'COMPLETED'; 'FAILED'}))
-    return;
-end
-valid = ischar(message) && (isempty(message) || size(message, 1) == 1) && ...
-    ischar(job_id) && (isempty(job_id) || size(job_id, 1) == 1);
+valid = ischar(target.path) && size(target.path, 1) == 1 && ...
+    ~isempty(target.path) && ischar(target.run_id) && ...
+    size(target.run_id, 1) == 1 && ~isempty(target.run_id);
 end
 
-function line = local_record(seq, target, stage_id, status, message, job_id)
-c = clock;
-timestamp = sprintf('%04d-%02d-%02dT%02d:%02d:%06.3f', ...
-    c(1), c(2), c(3), c(4), c(5), c(6));
-message = local_redact(message);
-if length(message) > 240
-    message = [message(1:237) '...'];
+function valid = local_valid_record(rec)
+valid = false;
+if ~isstruct(rec) || numel(rec) ~= 1
+    return;
 end
+text_fields = {'event_type'; 'stage_id'; 'status'; 'outcome'; 'message'; ...
+    'source'; 'job_id'; 'error_identifier'; 'error_message'};
+for ii = 1:length(text_fields)
+    if isfield(rec, text_fields{ii}) && ~isempty(rec.(text_fields{ii})) && ...
+            ~(ischar(rec.(text_fields{ii})) && size(rec.(text_fields{ii}), 1) == 1)
+        return;
+    end
+end
+event_type = local_text(rec, 'event_type', 'stage');
+status = local_text(rec, 'status', '');
+outcome = local_text(rec, 'outcome', '');
+stage_id = local_text(rec, 'stage_id', '');
+source = local_text(rec, 'source', '');
+job_id = local_text(rec, 'job_id', '');
+if ~any(strcmp(event_type, {'stage'; 'run'})) || ...
+        ~any(strcmp(status, {''; 'STARTED'; 'COMPLETED'; 'FAILED'})) || ...
+        ~any(strcmp(outcome, {''; 'SUCCEEDED'; 'FAILED'; 'CANCELLED'})) || ...
+        ~any(strcmp(source, {'local-orchestrator'; 'payload'; 'mlsc-lifecycle'})) || ...
+        (~isempty(job_id) && isempty(regexp(job_id, '^[0-9]+$', 'once')))
+    return;
+end
+if strcmp(event_type, 'stage')
+    if ~isempty(outcome) || isempty(regexp(stage_id, '^[a-z_]+$', 'once'))
+        return;
+    end
+    if isfield(rec, 'stage_index') && ~isempty(rec.stage_index)
+        index = rec.stage_index;
+        if ~isnumeric(index) || ~isscalar(index) || ~isfinite(index) || ...
+                index ~= fix(index) || index < 1 || index > 10
+            return;
+        end
+    end
+else
+    if isempty(outcome) || ~isempty(status)
+        return;
+    end
+end
+valid = true;
+end
+
+function value = local_text(rec, name, default)
+% Callers validate types first (local_valid_record); empty means absent.
+value = default;
+if isfield(rec, name) && ~isempty(rec.(name))
+    value = rec.(name);
+end
+end
+
+function line = local_record(seq, target, rec)
 line = sprintf(['{"schema":"pseudoct.scientific_event","schema_version":1,' ...
-    '"seq":%d,"timestamp":"%s","run_id":"%s","subject_id":"%s",' ...
-    '"profile":"%s","stage_id":"%s","status":"%s","message":"%s",' ...
-    '"job_id":"%s"}'], ...
-    seq, timestamp, ...
-    pseudo_CT_json_escape(local_field(target, 'run_id')), ...
-    pseudo_CT_json_escape(local_field(target, 'subject_id')), ...
-    pseudo_CT_json_escape(local_field(target, 'profile')), ...
-    pseudo_CT_json_escape(stage_id), ...
-    pseudo_CT_json_escape(status), ...
-    pseudo_CT_json_escape(message), ...
-    pseudo_CT_json_escape(job_id));
+    '"run_id":%s,"subject":%s,"profile":%s,"seq":%d,"timestamp_utc":%s,' ...
+    '"event_type":%s,"stage_id":%s,"stage_index":%s,"stage_count":%s,' ...
+    '"status":%s,"outcome":%s,"message":%s,"source":%s,"job_id":%s,' ...
+    '"error_identifier":%s,"error_message":%s}'], ...
+    local_json_string(target.run_id, true), ...
+    local_json_string(local_field(target, 'subject_id'), true), ...
+    local_json_string(local_field(target, 'profile'), true), ...
+    seq, local_json_string(local_utc_timestamp(), true), ...
+    local_json_string(local_text(rec, 'event_type', 'stage'), false), ...
+    local_json_string(local_text(rec, 'stage_id', ''), true), ...
+    local_json_index(rec), ...
+    local_json_stage_count(rec), ...
+    local_json_string(local_text(rec, 'status', ''), true), ...
+    local_json_string(local_text(rec, 'outcome', ''), true), ...
+    local_json_string(local_limit(local_redact(local_text(rec, 'message', ''))), false), ...
+    local_json_string(local_text(rec, 'source', ''), false), ...
+    local_json_string(local_text(rec, 'job_id', ''), true), ...
+    local_json_string(local_text(rec, 'error_identifier', ''), true), ...
+    local_json_string(local_limit(local_redact(local_text(rec, 'error_message', ''))), true));
+end
+
+function text = local_limit(text)
+if length(text) > 240
+    text = [text(1:237) '...'];
+end
+end
+
+function out = local_json_string(text, nullable)
+% Empty optional values are JSON null; required text stays a string.
+if isempty(text) && nullable
+    out = 'null';
+else
+    out = ['"' pseudo_CT_json_escape(text) '"'];
+end
+end
+
+function out = local_json_index(rec)
+out = 'null';
+if isfield(rec, 'stage_index') && ~isempty(rec.stage_index) && ...
+        strcmp(local_text(rec, 'event_type', 'stage'), 'stage')
+    out = sprintf('%d', rec.stage_index);
+end
+end
+
+function out = local_json_stage_count(rec)
+out = 'null';
+if strcmp(local_text(rec, 'event_type', 'stage'), 'stage') && ...
+        isfield(rec, 'stage_index') && ~isempty(rec.stage_index)
+    out = '10';
+end
 end
 
 function value = local_field(target, name)
@@ -98,9 +195,23 @@ text = regexprep(text, ...
     '([ \t]*[:=][ \t]*|[ \t]+)[^ \t,;]+'], '$1$2<redacted>');
 end
 
-function n = local_count_lines(path)
+function timestamp = local_utc_timestamp()
+% UTC independent of the machine time zone (Java is available in R2010b).
+timestamp = '';
+try
+    formatter = java.text.SimpleDateFormat( ...
+        'yyyy-MM-dd''T''HH:mm:ss.SSS''Z''');
+    formatter.setTimeZone(java.util.TimeZone.getTimeZone('UTC'));
+    timestamp = char(formatter.format(java.util.Date()));
+catch %#ok<CTCH>
+    timestamp = '';
+end
+end
+
+function [n_lines, partial_tail] = local_scan(path)
 % Complete records only: each record ends with one line feed.
-n = 0;
+n_lines = 0;
+partial_tail = false;
 if exist(path, 'file') ~= 2
     return;
 end
@@ -110,7 +221,8 @@ if fid == -1
 end
 closer = onCleanup(@() fclose(fid)); %#ok<NASGU>
 bytes = fread(fid, inf, 'uint8');
-n = sum(bytes == 10);
+n_lines = sum(bytes == 10);
+partial_tail = ~isempty(bytes) && bytes(end) ~= 10;
 end
 
 function local_warn_once()

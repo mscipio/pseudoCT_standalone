@@ -533,8 +533,10 @@ switch config.mode
                     % return); 12 return to finalization is below before
                     % retained stages 5-8.
                     % Guard: one subject-scoped terminal line per subject (see local path).
+                    outcome_context = local_subject_context(jobs(ii), ii, length(jobs));
+                    outcome_context.console_profile = profile_name;
                     outcome = pseudo_CT_subject_outcome( ...
-                        local_subject_context(jobs(ii), ii, length(jobs)), jobs(ii).subject_started);
+                        outcome_context, jobs(ii).subject_started);
                     guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
                     context = local_subject_context(jobs(ii), ii, length(jobs));
                     output_context = local_subject_context(jobs(ii), ii, length(jobs));
@@ -597,7 +599,17 @@ switch config.mode
                             end
                             pseudo_CT_output('ERROR', context, ...
                                 'Subject failed before local finalization: %s', failure_detail);
-                            outcome.markClosed();
+                            if ~(isfield(lifecycle, 'terminal') && ...
+                                    isequal(lifecycle.terminal, true))
+                                % Job state not observed terminal: a remote writer
+                                % may still be appending, so no native terminal line.
+                                outcome.markClosed();
+                            elseif isfield(lifecycle, 'cancel_requested') && ...
+                                    isequal(lifecycle.cancel_requested, true)
+                                outcome.markClosed('CANCELLED', 'mlsc-lifecycle');
+                            else
+                                outcome.markClosed('FAILED', 'mlsc-lifecycle');
+                            end
                             if isfield(lifecycle, 'terminal') && ...
                                     isequal(lifecycle.terminal, true)
                                 if pseudo_CT_completion_failure_observed(lifecycle)
@@ -622,7 +634,11 @@ switch config.mode
                             true, logical(finalization_success), ...
                             local_finalization_detail(finalization_success));
                         % The finalizer writes its own SUCCESS or ERROR before returning.
-                        outcome.markClosed();
+                        if finalization_success
+                            outcome.markClosed('SUCCEEDED', 'mlsc-lifecycle');
+                        else
+                            outcome.markClosed('FAILED', 'mlsc-lifecycle');
+                        end
                         if local_mlsc_summary_evidence_ready(lifecycle)
                             pseudo_CT_print_profile_summary(profile_name, ...
                                 config, jobs(ii).processing_dir, context, ...
@@ -656,7 +672,15 @@ switch config.mode
                         pseudo_CT_output('ERROR', context, ...
                             'Subject failed; see non-secret MLSC evidence (elapsed %s).', ...
                             local_elapsed(toc(jobs(ii).subject_started)));
-                        outcome.markClosed();
+                        if exist('lifecycle', 'var') == 1 && isstruct(lifecycle) && ...
+                                isfield(lifecycle, 'terminal') && ...
+                                isequal(lifecycle.terminal, true)
+                            outcome.markClosed('FAILED', 'mlsc-lifecycle');
+                        else
+                            % Exception before the job was observed terminal: a
+                            % remote writer may still append, so no native line.
+                            outcome.markClosed();
+                        end
                         num_failed = num_failed + 1;
                     end
                     clear guard
@@ -677,8 +701,10 @@ switch config.mode
         for jj = 1:length(jobs)
             % Guard: writes one subject-scoped ERROR if this iteration exits
             % without a closed outcome. The propagating error is not altered.
+            outcome_context = local_subject_context(jobs(jj), jj, length(jobs));
+            outcome_context.console_profile = profile_name;
             outcome = pseudo_CT_subject_outcome( ...
-                local_subject_context(jobs(jj), jj, length(jobs)), jobs(jj).subject_started);
+                outcome_context, jobs(jj).subject_started);
             guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
             try
                 subject_success = local_run_subject(jobs(jj), ...
@@ -691,12 +717,16 @@ switch config.mode
                         local_elapsed(toc(jobs(jj).subject_started)));
                     num_failed = num_failed + 1;
                 end
-                outcome.markClosed();
+                if subject_success
+                    outcome.markClosed('SUCCEEDED', 'local-orchestrator');
+                else
+                    outcome.markClosed('FAILED', 'local-orchestrator');
+                end
             catch ME
                 context = local_subject_context(jobs(jj), jj, length(jobs));
                 pseudo_CT_output('ERROR', context, 'Subject failed: %s (elapsed %s).', ...
                     ME.message, local_elapsed(toc(jobs(jj).subject_started)));
-                outcome.markClosed();
+                outcome.markClosed('FAILED', 'local-orchestrator');
                 num_failed = num_failed + 1;
             end
             clear guard

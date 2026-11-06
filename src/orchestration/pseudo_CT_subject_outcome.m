@@ -11,6 +11,7 @@ classdef pseudo_CT_subject_outcome < handle
 
     properties
         Closed = false
+        Recorded = false
         Context
         Started
     end
@@ -21,8 +22,35 @@ classdef pseudo_CT_subject_outcome < handle
             obj.Started = started;
         end
 
-        function markClosed(obj)
+        function markClosed(obj, outcome, source)
+            % Optional OUTCOME ('SUCCEEDED', 'FAILED' or 'CANCELLED') appends one
+            % native run record, at most once per subject. Callers pass it only
+            % after the subject's terminal state is known: for MLSC, the Slurm
+            % job observed terminal (so the remote payload is no longer writing);
+            % for Local, the orchestrator is the only writer. Advisory: never throws.
             obj.Closed = true;
+            if obj.Recorded || nargin < 2 || isempty(outcome)
+                return;
+            end
+            try
+                target = pseudo_CT_scientific_event_target(obj.Context);
+                if isempty(target.path)
+                    return;
+                end
+                switch outcome
+                    case 'SUCCEEDED'
+                        message = 'Subject completed successfully.';
+                    case 'CANCELLED'
+                        message = 'Subject cancelled.';
+                    otherwise
+                        message = 'Subject failed.';
+                end
+                if pseudo_CT_scientific_event(target, struct('event_type', 'run', ...
+                        'outcome', outcome, 'message', message, 'source', source))
+                    obj.Recorded = true;
+                end
+            catch %#ok<CTCH>
+            end
         end
     end
 

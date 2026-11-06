@@ -156,33 +156,45 @@ config.headless = true;
 % Output scope identifies this shared compiled artifact namespace, not a profile.
 output_context = struct('scope', 'mlsc-current');
 output_context.headless = true;
+% Native scientific event file (advisory; see pseudo_CT_scientific_event).
+output_context.event_target = local_event_target(job);
 
 if strcmp(phase_name, 'prepare')
     P = job.input_mprage;
     if size(P, 1) ~= 1
         P = P(:)';
     end
-    [P_prepared, handoff, early_return, fh] = pseudo_CT_current_prepare( ...
-        P, atlas_dir, double(job.check_aliasing), config, output_context, []);
-    if ~isempty(fh)
-        try
-            close(fh);
-        catch %#ok<CTCH>
+    local_phase_event(output_context, 'prepare', 'STARTED', ...
+        'Current preparation started.', []);
+    try
+        [P_prepared, handoff, early_return, fh] = pseudo_CT_current_prepare( ...
+            P, atlas_dir, double(job.check_aliasing), config, output_context, []);
+        if ~isempty(fh)
+            try
+                close(fh);
+            catch %#ok<CTCH>
+            end
         end
+        if early_return
+            error('pseudo_CT:MLSCPayloadPrepare', ...
+                'Current preparation requested early return; see log for cause.');
+        end
+        if ~isstruct(handoff) || numel(handoff) ~= 1 || ~isfield(handoff, 'schema')
+            error('pseudo_CT:MLSCPayloadPrepare', 'Preparation produced an invalid handoff.');
+        end
+        handoff_path = fullfile(job.work_dir, 'mlsc_current_handoff.mat');
+        handoff.job_manifest = job_manifest_path;
+        handoff.resource_manifest = resource_manifest_path;
+        save(handoff_path, 'handoff');
+        local_write_prepare_evidence(fullfile(job.work_dir, ...
+            'mlsc_current_prepare_evidence.txt'), job, handoff, atlas_dir);
+    catch prepare_error
+        local_phase_event(output_context, 'prepare', 'FAILED', ...
+            'Current preparation failed.', prepare_error);
+        rethrow(prepare_error);
     end
-    if early_return
-        error('pseudo_CT:MLSCPayloadPrepare', ...
-            'Current preparation requested early return; see log for cause.');
-    end
-    if ~isstruct(handoff) || numel(handoff) ~= 1 || ~isfield(handoff, 'schema')
-        error('pseudo_CT:MLSCPayloadPrepare', 'Preparation produced an invalid handoff.');
-    end
-    handoff_path = fullfile(job.work_dir, 'mlsc_current_handoff.mat');
-    handoff.job_manifest = job_manifest_path;
-    handoff.resource_manifest = resource_manifest_path;
-    save(handoff_path, 'handoff');
-    local_write_prepare_evidence(fullfile(job.work_dir, ...
-        'mlsc_current_prepare_evidence.txt'), job, handoff, atlas_dir);
+    local_phase_event(output_context, 'prepare', 'COMPLETED', ...
+        'Current preparation completed with a verified handoff.', []);
     pseudo_CT_output('SUCCESS', output_context, 'MLSC current prepare wrote handoff: %s', handoff_path);
     return;
 end
@@ -287,32 +299,92 @@ else
     end
 end
 
-Pf = pseudo_CT_current_compute(P, atlas_dir, config, output_context, []);
-if ~ischar(Pf) || isempty(strtrim(Pf))
-    error('pseudo_CT:MLSCPayloadCompute', 'Current computation produced no outputs.');
-end
-% Compute writes outputs beside the normalized input directory; verify the
-% required attenuation map exists either there or in the manifest work dir.
-[comp_dir, ~, ~] = fileparts(deblank(Pf(end, :)));
-required_outputs = {fullfile(comp_dir, 'att_map.nii'), ...
-    fullfile(comp_dir, 'Fusion_MR_Pseudo_CT_validation.tiff'), ...
-    fullfile(comp_dir, 'Pseudo_CT_AC_Version.txt')};
-for ii = 1:length(required_outputs)
-    if exist(required_outputs{ii}, 'file') ~= 2
-        error('pseudo_CT:MLSCPayloadCompute', ...
-            'Required current output missing: %s', required_outputs{ii});
+local_phase_event(output_context, 'compute', 'STARTED', ...
+    'Current compute started.', []);
+try
+    Pf = pseudo_CT_current_compute(P, atlas_dir, config, output_context, []);
+    if ~ischar(Pf) || isempty(strtrim(Pf))
+        error('pseudo_CT:MLSCPayloadCompute', 'Current computation produced no outputs.');
     end
+    % Compute writes outputs beside the normalized input directory; verify the
+    % required attenuation map exists either there or in the manifest work dir.
+    [comp_dir, ~, ~] = fileparts(deblank(Pf(end, :)));
+    required_outputs = {fullfile(comp_dir, 'att_map.nii'), ...
+        fullfile(comp_dir, 'Fusion_MR_Pseudo_CT_validation.tiff'), ...
+        fullfile(comp_dir, 'Pseudo_CT_AC_Version.txt')};
+    for ii = 1:length(required_outputs)
+        if exist(required_outputs{ii}, 'file') ~= 2
+            error('pseudo_CT:MLSCPayloadCompute', ...
+                'Required current output missing: %s', required_outputs{ii});
+        end
+    end
+    % Normalization + output-verification evidence: the verified normalized
+    % input (external FreeSurfer step output) and every required emit-contract
+    % output, with fingerprints. A failed evidence write fails closed.
+    local_write_output_verification(fullfile(comp_dir, ...
+        'mlsc_current_output_verification.txt'), handoff_path, handoff, P, required_outputs);
+catch compute_error
+    local_phase_event(output_context, 'compute', 'FAILED', ...
+        'Current compute failed.', compute_error);
+    rethrow(compute_error);
 end
-% Normalization + output-verification evidence: the verified normalized
-% input (external FreeSurfer step output) and every required emit-contract
-% output, with fingerprints. A failed evidence write fails closed.
-local_write_output_verification(fullfile(comp_dir, ...
-    'mlsc_current_output_verification.txt'), handoff_path, handoff, P, required_outputs);
+local_phase_event(output_context, 'compute', 'COMPLETED', ...
+    'Current compute completed with verified outputs.', []);
 if ~strcmp(local_strip_sep(comp_dir), local_strip_sep(job.work_dir))
     pseudo_CT_output('INFO', output_context, 'Compute outputs in: %s', comp_dir);
 end
 pseudo_CT_output('SUCCESS', output_context, 'MLSC current compute completed.');
 return
+end
+
+function target = local_event_target(job)
+% Event file handed in by the orchestrator through the job manifest (fields
+% event_path, event_subject_id, event_profile). Absent or malformed means no
+% events are written; the science result never depends on it.
+target = struct('path', '', 'run_id', '', 'subject_id', '', 'profile', '');
+try
+    if ~isfield(job, 'event_path') || ~ischar(job.event_path) || ...
+            size(job.event_path, 1) ~= 1 || isempty(strtrim(job.event_path))
+        return;
+    end
+    path = strtrim(job.event_path);
+    [folder, base, ext] = fileparts(path);
+    if isempty(folder) || ~strcmp(ext, '.jsonl') || ~strncmp(base, 'pseudoct-run-', 13)
+        return;
+    end
+    run_id = base(14:end);
+    if isempty(regexp(run_id, ...
+            '^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', ...
+            'once'))
+        return;
+    end
+    target.path = path;
+    target.run_id = run_id;
+    if isfield(job, 'event_subject_id') && ischar(job.event_subject_id) && ...
+            size(job.event_subject_id, 1) <= 1
+        target.subject_id = job.event_subject_id;
+    end
+    if isfield(job, 'event_profile') && ischar(job.event_profile) && ...
+            size(job.event_profile, 1) <= 1
+        target.profile = job.event_profile;
+    end
+catch %#ok<CTCH>
+    target.path = '';
+end
+end
+
+function local_phase_event(output_context, phase_id, status, message, err)
+% Advisory phase boundary (stage-less record). Never changes the phase result.
+if ~isstruct(output_context) || ~isfield(output_context, 'event_target')
+    return;
+end
+rec = struct('event_type', 'stage', 'stage_id', phase_id, 'status', status, ...
+    'message', message, 'source', 'payload');
+if ~isempty(err)
+    rec.error_identifier = err.identifier;
+    rec.error_message = err.message;
+end
+pseudo_CT_scientific_event(output_context.event_target, rec);
 end
 
 function value = local_load_scalar_struct(manifest_path, variable_name, expected_schema)

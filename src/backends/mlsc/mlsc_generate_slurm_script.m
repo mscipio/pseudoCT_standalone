@@ -405,7 +405,8 @@ if isempty(resource_stage_name)
 end
 shared_job_manifest = fullfile(shared_temp, job_manifest_name);
 local_write_current_job_manifest(shared_job_manifest, input_name, ...
-    atlas_dir, check_aliasing, recenter_text, bone_value, zero_text);
+    atlas_dir, check_aliasing, recenter_text, bone_value, zero_text, ...
+    local_native_event_target(runtime));
 % TOCTOU preflight identities (exact): runner/exe, build/resource
 % manifest bytes + mandatory SHA-256, pinned MCR_ROOT release/version/
 % update/arch/generation from disk. Embedded below and rechecked before
@@ -985,7 +986,7 @@ end
 end
 
 function local_write_current_job_manifest(job_path, input_name, atlas_dir, ...
-    check_aliasing, recenter_text, bone_value, zero_text)
+    check_aliasing, recenter_text, bone_value, zero_text, event_target)
 job = struct();
 % This schema ID is the shared compiled artifact contract, not a profile key.
 job.schema = 'pseudo-CT.mlsc-current-job/v1';
@@ -997,7 +998,25 @@ job.check_aliasing = double(check_aliasing);
 job.recenter_before_normalization = recenter_text;
 job.bone_enabled = logical(bone_value);
 job.zero_background = zero_text;
+% Native event file for the remote payload (single writer: the payload runs
+% while the orchestrator only reads). Empty path means no events.
+job.event_path = event_target.path;
+job.event_subject_id = event_target.subject_id;
+job.event_profile = event_target.profile;
 save(job_path, 'job');
+end
+
+function target = local_native_event_target(runtime)
+%LOCAL_NATIVE_EVENT_TARGET Event file of this MLSC job from its run log context.
+target = struct('path', '', 'run_id', '', 'subject_id', '', 'profile', '');
+try
+    if isstruct(runtime) && isfield(runtime, 'output_context') && ...
+            isstruct(runtime.output_context) && numel(runtime.output_context) == 1
+        target = pseudo_CT_scientific_event_target(runtime.output_context);
+    end
+catch %#ok<CTCH>
+    target = struct('path', '', 'run_id', '', 'subject_id', '', 'profile', '');
+end
 end
 
 function name = local_corrected_variant_name(input_name)

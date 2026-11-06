@@ -66,32 +66,42 @@ flg.wrap = [0 0 0]; % No wrapping;
 stage_started = tic;
 stage_context = local_stage_context(output_context, 3);
 pseudo_CT_output('INFO', stage_context, 'Aligning MPRAGE and creating subject mask.');
-P_orig = P; % Let's save the original image filenames as we will need them to use their .mat to reposition the att-map!
-P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), ...
-    stage_context, config);
-% Decompose the first image (reference to warp everthing into this image)
-% into its fileparts:
-[paths, fns, exts] = fileparts(deblank(P(1, :)));
-if isempty(paths); paths = pwd; end
+local_stage_event(output_context, 'alignment_mask', 5, 'STARTED', ...
+    'Aligning MPRAGE and creating subject mask.');
+try
+    P_orig = P; % Let's save the original image filenames as we will need them to use their .mat to reposition the att-map!
+    P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), ...
+        stage_context, config);
+    % Decompose the first image (reference to warp everthing into this image)
+    % into its fileparts:
+    [paths, fns, exts] = fileparts(deblank(P(1, :)));
+    if isempty(paths); paths = pwd; end
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% Now smooth the image to create a better subject mask avoiding noise!
-% And apply that mask to the MPRAGE*normalized image to avoid the noise in
-% the segmentation!!
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% % Only the first image need to be smoothed to create the mask:
-[pathm, fnm, extm] = fileparts(deblank(P(1, :)));
-sm_fn = fullfile(pathm, strcat('s', fnm, extm)); % The new smoothed file filename!
-spm_smooth(P(1, :), sm_fn, 4);
-Ims = spm_read_vols(spm_vol(sm_fn));
-[~, subj_mask] = head_mask_mprage(Ims, 15); % Create the mask!; Before v1.8 it was 20;
-mm = imdilate(subj_mask, ones(13, 13, 13)); % Dilate the mask to compensate for the previous erosion in head_mask_mprage;
-V_aux = spm_vol(deblank(P(1, :)));
-Ims = spm_read_vols(V_aux);
-II = find(mm == 0);
-Ims(II) = NaN; % Let's make the outside NaN to avoid segmentation there!
-aux = spm_write_vol(V_aux, Ims); % Re-save the MPRAGE*normalized image with the mask applied!
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % Now smooth the image to create a better subject mask avoiding noise!
+    % And apply that mask to the MPRAGE*normalized image to avoid the noise in
+    % the segmentation!!
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % % Only the first image need to be smoothed to create the mask:
+    [pathm, fnm, extm] = fileparts(deblank(P(1, :)));
+    sm_fn = fullfile(pathm, strcat('s', fnm, extm)); % The new smoothed file filename!
+    spm_smooth(P(1, :), sm_fn, 4);
+    Ims = spm_read_vols(spm_vol(sm_fn));
+    [~, subj_mask] = head_mask_mprage(Ims, 15); % Create the mask!; Before v1.8 it was 20;
+    mm = imdilate(subj_mask, ones(13, 13, 13)); % Dilate the mask to compensate for the previous erosion in head_mask_mprage;
+    V_aux = spm_vol(deblank(P(1, :)));
+    Ims = spm_read_vols(V_aux);
+    II = find(mm == 0);
+    Ims(II) = NaN; % Let's make the outside NaN to avoid segmentation there!
+    aux = spm_write_vol(V_aux, Ims); % Re-save the MPRAGE*normalized image with the mask applied!
+catch align_error
+    local_stage_event(output_context, 'alignment_mask', 5, 'FAILED', ...
+        'MPRAGE alignment and masking failed.');
+    rethrow(align_error);
+end
+local_stage_event(output_context, 'alignment_mask', 5, 'COMPLETED', ...
+    'Alignment and masking completed.');
 pseudo_CT_output('SUCCESS', stage_context, 'Alignment and masking completed (elapsed %s).', ...
     local_elapsed(toc(stage_started)));
 
@@ -102,6 +112,7 @@ pseudo_CT_output('SUCCESS', stage_context, 'Alignment and masking completed (ela
 stage_started = tic;
 stage_context = local_stage_context(output_context, 4);
 pseudo_CT_output('INFO', stage_context, 'Running SPM New Segment.');
+local_stage_event(output_context, 'segment', 6, 'STARTED', 'Running SPM New Segment.');
 load(fullfile(dir_batch_templates, 'new_segment_batch.mat')); % A new variable called matlabbatch is created!
 % We need to change the channels according to the loaded files:
 nf = size(P, 1);
@@ -183,6 +194,7 @@ end
 exten = '';
 pseudo_CT_output('SUCCESS', stage_context, 'Segmentation completed (elapsed %s).', ...
     local_elapsed(toc(stage_started)));
+local_stage_event(output_context, 'segment', 6, 'COMPLETED', 'Segmentation completed.');
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -193,6 +205,7 @@ pseudo_CT_output('SUCCESS', stage_context, 'Segmentation completed (elapsed %s).
 stage_started = tic;
 stage_context = local_stage_context(output_context, 5);
 pseudo_CT_output('INFO', stage_context, 'Registering atlases with DARTEL.');
+local_stage_event(output_context, 'dartel', 7, 'STARTED', 'Registering atlases with DARTEL.');
 load(fullfile(dir_batch_templates, 'dartel_existing_template_batch.mat')); % A new variable called matlabbatch is created!
 % Let's replace the files again:
 for ii = 1:6
@@ -217,7 +230,9 @@ end
 % Once finished, just need to run the INVERSE WARPED batch to create the atlases
 % back into subject space:
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+local_stage_event(output_context, 'dartel', 7, 'COMPLETED', 'DARTEL registration completed.');
 pseudo_CT_output('INFO', stage_context, '    Applying inverse warp.');
+local_stage_event(output_context, 'inverse_warp', 7, 'STARTED', 'Applying inverse warp.');
 load(fullfile(dir_batch_templates, 'create_inverse_warped_batch.mat'));
 % Let's modify the flow-field field:
 matlabbatch{1}.spm.tools.dartel.crt_iwarped.flowfields = {strcat(paths, filesep, 'u_rc1', fns, exten, exts)};
@@ -250,6 +265,7 @@ for ii = 1:num_atlas
 end
 % Let's reslice them back into MPRAGE space (P(1, :)):
 spm_reslice(Pr, flg); % Reslice only!
+local_stage_event(output_context, 'inverse_warp', 7, 'COMPLETED', 'Inverse warp and reslice completed.');
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -270,6 +286,7 @@ pseudo_CT_output('SUCCESS', stage_context, 'Atlas registration completed (elapse
 stage_started = tic;
 stage_context = local_stage_context(output_context, 6);
 pseudo_CT_output('INFO', stage_context, 'Building attenuation map and QC image.');
+local_stage_event(output_context, 'attenuation_save', 8, 'STARTED', 'Building attenuation map and QC image.');
 % First look for th CT file within Pf:
 for ii = 1:num_atlas
     st_f = strfind(deblank(Pf(ii, :)), 'Atlas_rCT');
@@ -341,6 +358,7 @@ aux = spm_write_vol(V_att_map, att_map);
 
 % Add the attenuation map file to the list to be returned:
 Pf(num_atlas+1, 1:length(fn_att_map)) = fn_att_map;
+local_stage_event(output_context, 'attenuation_save', 8, 'COMPLETED', 'Attenuation map and QC completed.');
 
 % Jun/25/2016: Printing a validation image (T003: explicit bundled QC
 % colormap location; single-arg default output is unchanged because the
@@ -366,6 +384,17 @@ pseudo_CT_output('SUCCESS', stage_context, ...
 
 
 return
+end
+
+function local_stage_event(output_context, stage_id, stage_index, status, message)
+% Advisory native boundary record (no-op without an event target). Never
+% changes the science order, parameters, or outputs.
+if isstruct(output_context) && isfield(output_context, 'event_target')
+    rec = struct('event_type', 'stage', 'stage_id', stage_id, ...
+        'stage_index', stage_index, 'status', status, 'message', message, ...
+        'source', 'payload');
+    pseudo_CT_scientific_event(output_context.event_target, rec);
+end
 end
 
 function code_version = local_resolve_code_version()

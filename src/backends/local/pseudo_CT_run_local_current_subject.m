@@ -77,7 +77,15 @@ job.atlas_dir = config.atlas_root;
 job.check_aliasing = double(check_aliasing);
 job.recenter_before_normalization = recenter_before_normalization;
 job.bone_enabled = logical(config.bone_enabled);
+% Native scientific event file for this subject (advisory: the emitter never
+% throws). The compiled payload appends prepare, compute and science-boundary
+% records; this orchestrator appends only normalization. The two never write
+% concurrently because each phase runs to completion before the next starts.
 job.zero_background = config.zero_background;
+event_target = pseudo_CT_scientific_event_target(output_context);
+job.event_path = event_target.path;
+job.event_subject_id = event_target.subject_id;
+job.event_profile = event_target.profile;
 runtime_dir = pseudo_CT_runtime_dir(strtrim(work_dir));
 runtime_guard = onCleanup(@() pseudo_CT_cleanup_runtime_dir(runtime_dir)); %#ok<NASGU>
 job_manifest_path = fullfile(runtime_dir, 'job.mat');
@@ -89,42 +97,29 @@ public('stage') = 1;
 public('open') = false;
 public('started') = tic;
 
-% Scientific event records (JSONL beside the run log). Advisory only: the
-% emitter never throws, so these lines cannot change the processing outcome.
-event_target = pseudo_CT_scientific_event_target(output_context);
-pseudo_CT_scientific_event(event_target, 'current_prepare', 'STARTED', ...
-    'Compiled prepare phase started.');
-try
-    local_run_phase(config.current, 'prepare', job_manifest_path, ...
-        config.current.resource_manifest, output_context, public);
+local_run_phase(config.current, 'prepare', job_manifest_path, ...
+    config.current.resource_manifest, output_context, public);
 
-    handoff_path = fullfile(strtrim(work_dir), 'mlsc_current_handoff.mat');
-    if exist(handoff_path, 'file') ~= 2
-        error('pseudo_CT:LocalCurrentPrepare', ...
-            'Compiled current prepare did not produce its handoff.');
-    end
-    handoff_info = dir(handoff_path);
-    if isempty(handoff_info) || handoff_info(1).bytes == 0
-        error('pseudo_CT:LocalCurrentPrepare', ...
-            'Compiled current prepare produced an empty handoff.');
-    end
-    loaded = load(handoff_path, 'handoff');
-    if ~isfield(loaded, 'handoff') || ~isstruct(loaded.handoff) || ...
-            numel(loaded.handoff) ~= 1
-        error('pseudo_CT:LocalCurrentPrepare', ...
-            'Compiled current prepare produced an invalid handoff.');
-    end
-    handoff = loaded.handoff;
-    clear loaded
-    local_validate_handoff(handoff, job_manifest_path, ...
-        config.current.resource_manifest, config.atlas_root);
-catch prepare_error
-    pseudo_CT_scientific_event(event_target, 'current_prepare', 'FAILED', ...
-        'Compiled prepare phase failed.');
-    rethrow(prepare_error);
+handoff_path = fullfile(strtrim(work_dir), 'mlsc_current_handoff.mat');
+if exist(handoff_path, 'file') ~= 2
+    error('pseudo_CT:LocalCurrentPrepare', ...
+        'Compiled current prepare did not produce its handoff.');
 end
-pseudo_CT_scientific_event(event_target, 'current_prepare', 'COMPLETED', ...
-    'Compiled prepare phase completed with a verified handoff.');
+handoff_info = dir(handoff_path);
+if isempty(handoff_info) || handoff_info(1).bytes == 0
+    error('pseudo_CT:LocalCurrentPrepare', ...
+        'Compiled current prepare produced an empty handoff.');
+end
+loaded = load(handoff_path, 'handoff');
+if ~isfield(loaded, 'handoff') || ~isstruct(loaded.handoff) || ...
+        numel(loaded.handoff) ~= 1
+    error('pseudo_CT:LocalCurrentPrepare', ...
+        'Compiled current prepare produced an invalid handoff.');
+end
+handoff = loaded.handoff;
+clear loaded
+local_validate_handoff(handoff, job_manifest_path, ...
+    config.current.resource_manifest, config.atlas_root);
 
 selected_input = strtrim(handoff.input_selected);
 if logical(handoff.needs_normalization)
@@ -144,13 +139,13 @@ if logical(handoff.needs_normalization)
         'username', 'local', 'password', '', 'autoreconnect', 0);
     normalization_command = sprintf('mri_normalize %s %s', ...
         selected_input, normalized_path);
-    pseudo_CT_scientific_event(event_target, 'workflow.normalize', 'STARTED', ...
+    local_normalize_event(event_target, 'STARTED', ...
         'FreeSurfer MPRAGE normalization started.');
     try
         normalization_status = run_normalization_cmd(normalization_command, ...
             normalization_connection, normalization_context, config);
     catch normalization_error
-        pseudo_CT_scientific_event(event_target, 'workflow.normalize', 'FAILED', ...
+        local_normalize_event(event_target, 'FAILED', ...
             'FreeSurfer MPRAGE normalization failed.');
         % Report the failed stage before the error propagates; no DONE.
         local_normalization_failed(output_context, sprintf( ...
@@ -161,7 +156,7 @@ if logical(handoff.needs_normalization)
     normalized_info = dir(normalized_path);
     if normalization_status ~= 0 || isempty(normalized_info) || ...
             normalized_info(1).bytes == 0
-        pseudo_CT_scientific_event(event_target, 'workflow.normalize', 'FAILED', ...
+        local_normalize_event(event_target, 'FAILED', ...
             'FreeSurfer MPRAGE normalization failed.');
         local_normalization_failed(output_context, sprintf( ...
             'FreeSurfer did not produce a non-empty normalized NIfTI file (exit status %d).', ...
@@ -169,7 +164,7 @@ if logical(handoff.needs_normalization)
         error('pseudo_CT:LocalCurrentNormalization', ...
             'FreeSurfer did not produce a non-empty normalized NIfTI file.');
     end
-    pseudo_CT_scientific_event(event_target, 'workflow.normalize', 'COMPLETED', ...
+    local_normalize_event(event_target, 'COMPLETED', ...
         'FreeSurfer MPRAGE normalization completed.');
     public = local_public_set(public, 4, false);
     pseudo_CT_output('SUCCESS', local_public_context(output_context, 4, 'DONE'), ...
@@ -188,39 +183,29 @@ if exist(normalized_path, 'file') ~= 2
     error('pseudo_CT:LocalCurrentNormalization', ...
         'The current payload normalized input is unavailable.');
 end
-pseudo_CT_scientific_event(event_target, 'current_compute', 'STARTED', ...
-    'Compiled compute phase started.');
-try
-    local_run_phase(config.current, 'compute', job_manifest_path, ...
-        config.current.resource_manifest, output_context, public);
+local_run_phase(config.current, 'compute', job_manifest_path, ...
+    config.current.resource_manifest, output_context, public);
 
-    for ii = 1:numel(config.current.required_outputs)
-        output_path = fullfile(strtrim(work_dir), ...
-            config.current.required_outputs{ii});
-        output_info = dir(output_path);
-        if isempty(output_info) || output_info(1).bytes == 0
-            error('pseudo_CT:LocalCurrentCompute', ...
-                'Compiled current compute did not produce a required output.');
-        end
-    end
-    verification_path = fullfile(strtrim(work_dir), ...
-        'mlsc_current_output_verification.txt');
-    if exist(verification_path, 'file') ~= 2
+for ii = 1:numel(config.current.required_outputs)
+    output_path = fullfile(strtrim(work_dir), ...
+        config.current.required_outputs{ii});
+    output_info = dir(output_path);
+    if isempty(output_info) || output_info(1).bytes == 0
         error('pseudo_CT:LocalCurrentCompute', ...
-            'Compiled current compute did not produce output verification evidence.');
+            'Compiled current compute did not produce a required output.');
     end
-    verification_info = dir(verification_path);
-    if isempty(verification_info) || verification_info(1).bytes == 0
-        error('pseudo_CT:LocalCurrentCompute', ...
-            'Compiled current output verification evidence is empty.');
-    end
-catch compute_error
-    pseudo_CT_scientific_event(event_target, 'current_compute', 'FAILED', ...
-        'Compiled compute phase failed.');
-    rethrow(compute_error);
 end
-pseudo_CT_scientific_event(event_target, 'current_compute', 'COMPLETED', ...
-    'Compiled compute phase completed with verified outputs.');
+verification_path = fullfile(strtrim(work_dir), ...
+    'mlsc_current_output_verification.txt');
+if exist(verification_path, 'file') ~= 2
+    error('pseudo_CT:LocalCurrentCompute', ...
+        'Compiled current compute did not produce output verification evidence.');
+end
+verification_info = dir(verification_path);
+if isempty(verification_info) || verification_info(1).bytes == 0
+    error('pseudo_CT:LocalCurrentCompute', ...
+        'Compiled current output verification evidence is empty.');
+end
 Pf = fullfile(strtrim(work_dir), 'att_map.nii');
 end
 
@@ -425,6 +410,7 @@ while true
     previous_offset = stream_state('offset');
     local_tail_current_output(capture_path, persist_path, stream_state, ...
         false, output_context);
+    local_present_native_events(stream_state, output_context);
     if stream_state('offset') > previous_offset
         last_activity = tic;
     elseif toc(last_activity) >= 60
@@ -531,6 +517,7 @@ try
         true, output_context);
 catch %#ok<CTCH>
 end
+local_present_native_events(stream_state, output_context);
 end
 
 function local_handle_current_line(line, persist_path, stream_state, ...
@@ -656,6 +643,8 @@ elseif strcmp(line_class, 'private') && in_block && isempty(strtrim(line))
 end
 local_flush_warning_block(stream_state, output_context);
 if scientific
+    % Stdout stage events show only until the payload writes native records;
+    % thereafter the native JSONL is the source (see local_present_native_events).
     public = stream_state('public');
     for ii = 1:length(scientific_events)
         event = scientific_events(ii);
@@ -665,9 +654,15 @@ if scientific
             local_public_set(public, event.stage.index, false);
         end
     end
-    if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
-        pseudo_CT_present_scientific_events(scientific_events, output_context);
+    if stream_state.isKey('scientific_shown')
+        shown = stream_state('scientific_shown');
+    else
+        shown = [];
     end
+    stream_state('scientific_shown') = pseudo_CT_scientific_present_once( ...
+        scientific_events, shown, 'stdout', ...
+        local_native_capable(stream_state), output_context, ...
+        strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
     return;
 end
 if ~strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
@@ -1029,6 +1024,73 @@ for ii = 1:size(outcome, 1)
     end
 end
 
+end
+
+function local_normalize_event(event_target, status, message)
+%LOCAL_NORMALIZE_EVENT Orchestrator-owned normalization boundary (stage 4).
+pseudo_CT_scientific_event(event_target, struct('stage_id', 'normalize', ...
+    'stage_index', 4, 'status', status, 'message', message, ...
+    'source', 'local-orchestrator'));
+end
+
+function capable = local_native_capable(stream_state)
+%LOCAL_NATIVE_CAPABLE True once the payload has written native records for this run.
+capable = false;
+if stream_state.isKey('native_reader')
+    reader = stream_state('native_reader');
+    capable = isstruct(reader) && isfield(reader, 'payload') && reader.payload > 0;
+end
+end
+
+function local_present_native_events(stream_state, output_context)
+%LOCAL_PRESENT_NATIVE_EVENTS Present new native scientific records (read-only).
+% The JSONL file is appended by the compiled payload and by this orchestrator's
+% normalization step only. This reader never appends. Records the orchestrator
+% already prints itself (source local-orchestrator) are not presented twice.
+try
+    target = pseudo_CT_scientific_event_target(output_context);
+    if isempty(target.path)
+        return;
+    end
+    reader = [];
+    if stream_state.isKey('native_reader')
+        reader = stream_state('native_reader');
+    end
+    [events, reader] = pseudo_CT_scientific_event_read(target.path, reader);
+    stream_state('native_reader') = reader;
+    keep = true(length(events), 1);
+    for ii = 1:length(events)
+        keep(ii) = ~any(strcmp(events(ii).status, {'WARN'; 'ERROR'})) && ...
+            ~strcmp(events(ii).source.version, 'local-orchestrator');
+    end
+    events = events(keep);
+    public = stream_state('public');
+    for ii = 1:length(events)
+        if strcmp(events(ii).status, 'START')
+            local_public_set(public, events(ii).stage.index, true);
+        elseif strcmp(events(ii).status, 'DONE')
+            local_public_set(public, events(ii).stage.index, false);
+        end
+    end
+    if stream_state.isKey('scientific_shown')
+        shown = stream_state('scientific_shown');
+    else
+        shown = [];
+    end
+    stream_state('scientific_shown') = pseudo_CT_scientific_present_once( ...
+        events, shown, 'native', true, output_context, ...
+        strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
+catch ME
+    if ~stream_state.isKey('native_failed')
+        stream_state('native_failed') = true;
+        try
+            pseudo_CT_output('WARN', output_context, ...
+                'Scientific event log could not be read (%s); stage progress is unavailable.', ...
+                ME.identifier);
+        catch %#ok<CTCH>
+        end
+    end
+end
 end
 
 function local_normalization_failed(output_context, reason)

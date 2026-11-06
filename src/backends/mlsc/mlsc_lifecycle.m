@@ -162,6 +162,8 @@ output_tracker = local_output_init(runtime, transport);
 [slurm_log_paths, slurm_log_cursors] = local_slurm_log_init( ...
     result.log_paths, job_id);
 slurm_log_state = struct();
+% Native scientific events (read-only here; the remote payload is the writer).
+native_events_path = local_native_events_path(runtime);
 direct_stdout = local_direct_stdout_init();
 local_emit_accepted(runtime, job_id);
 terminal_observed = false;
@@ -197,6 +199,8 @@ try
         end
         direct_stdout = local_scientific_stdout_poll(slurm_log_paths.stdout, ...
             direct_stdout, stream_version, runtime, job_id, false);
+        direct_stdout = local_native_events_poll(native_events_path, ...
+            direct_stdout, runtime, job_id);
         output_tracker = local_output_note(output_tracker, runtime, ...
             job_id, squeue_state, transport);
 
@@ -310,6 +314,8 @@ end
 % the final progress poll, then one release of whatever is still held.
 direct_stdout = local_scientific_stdout_poll(slurm_log_paths.stdout, ...
     direct_stdout, stream_version, runtime, job_id, true);
+direct_stdout = local_native_events_poll(native_events_path, ...
+    direct_stdout, runtime, job_id);
 try
     [progress_cursor, progress_milestones, direct_stdout] = ...
         local_progress_poll(progress_path, progress_cursor, ...
@@ -2647,6 +2653,58 @@ catch %#ok<CTCH>
 end
 end
 
+function direct = local_native_events_poll(path_name, direct, runtime, job_id)
+%LOCAL_NATIVE_EVENTS_POLL Present new native records of this job (read-only).
+%   The remote payload is the only writer; this reader never appends. A stage
+%   already shown from stdout is not shown again. A missing or delayed file is
+%   non-fatal. A reader failure is reported once and stops native reading.
+context = struct();
+try
+    if ~isstruct(direct) || direct.native_failed || ~ischar(path_name) || ...
+            isempty(path_name)
+        return;
+    end
+    context = local_output_context(runtime, job_id);
+    [events, direct.native] = pseudo_CT_scientific_event_read(path_name, ...
+        direct.native);
+    direct.native_capable = direct.native.payload > 0;
+    keep = true(numel(events), 1);
+    for ii = 1:numel(events)
+        keep(ii) = ~any(strcmp(events(ii).status, {'WARN'; 'ERROR'}));
+    end
+    events = events(keep);
+    direct.shown = pseudo_CT_scientific_present_once(events, direct.shown, ...
+        'native', true, context, true);
+    if ~isempty(events)
+        direct = local_direct_stdout_settle(direct, events);
+    end
+catch ME
+    if isstruct(direct) && isfield(direct, 'native_failed') && ~direct.native_failed
+        direct.native_failed = true;
+        try
+            pseudo_CT_output('ERROR', context, ...
+                '%s; native scientific reporting stopped for this job.', ...
+                local_stdout_failure_detail(ME));
+        catch %#ok<CTCH>
+        end
+    end
+end
+end
+
+function path_name = local_native_events_path(runtime)
+%LOCAL_NATIVE_EVENTS_PATH Per-run JSONL event file of this job ('' when unknown).
+path_name = '';
+try
+    if isstruct(runtime) && isfield(runtime, 'output_context') && ...
+            isstruct(runtime.output_context) && numel(runtime.output_context) == 1
+        target = pseudo_CT_scientific_event_target(runtime.output_context);
+        path_name = target.path;
+    end
+catch %#ok<CTCH>
+    path_name = '';
+end
+end
+
 function direct = local_direct_stdout_init()
 %LOCAL_DIRECT_STDOUT_INIT Per-job state for the direct stdout parser.
 %   The shared presenter keeps process-wide dedupe state per subject slot, so
@@ -2661,6 +2719,8 @@ try
 catch %#ok<CTCH>
 end
 direct = struct('state', struct('reader', [], 'parser', []), ...
+    'shown', containers.Map(), 'native', [], 'native_capable', false, ...
+    'native_failed', false, ...
     'failed', false, 'pending', {repmat({''}, 1, 4)}, ...
     'satisfied', false(1, 4));
 end
@@ -2672,6 +2732,8 @@ function direct = local_scientific_stdout_poll(path_name, direct, version, ...
 %   WARN/ERROR events are dropped because the diagnostic path owns them. A
 %   reader failure, such as a shrinking file, is reported once as an ERROR and
 %   stops direct parsing for this job; it is never treated as missing stdout.
+%   Stdout stage events are shown only until the payload writes native records
+%   (see pseudo_CT_scientific_present_once).
 try
     if ~isstruct(direct) || direct.failed || ~ischar(path_name) || ...
             isempty(path_name)
@@ -2698,7 +2760,8 @@ try
     end
     events = events(keep);
     if ~isempty(events)
-        pseudo_CT_present_scientific_events(events, context);
+        direct.shown = pseudo_CT_scientific_present_once(events, direct.shown, ...
+            'stdout', direct.native_capable, context, true);
         direct = local_direct_stdout_settle(direct, events);
     end
 catch %#ok<CTCH>
@@ -2708,6 +2771,10 @@ end
 function detail = local_stdout_failure_detail(ME)
 %LOCAL_STDOUT_FAILURE_DETAIL Short, accurate reason for a direct-stream failure.
 switch ME.identifier
+    case 'pseudo_CT:ScientificEventTruncated'
+        detail = 'Scientific event log shrank during the run';
+    case {'pseudo_CT:ScientificEventRead'}
+        detail = 'Scientific event log could not be read';
     case 'pseudo_CT:StreamTruncated'
         detail = 'Scientific stdout shrank during the run';
     case {'pseudo_CT:StreamSeek'; 'pseudo_CT:StreamPath'}
