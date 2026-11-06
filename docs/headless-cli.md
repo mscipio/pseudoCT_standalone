@@ -12,13 +12,50 @@ different executable.
 
 ```sh
 /path/to/pseudoCT_standalone/bin/pseudoct-headless \
-  /private/requests/validate.mat /private/results/validate.mat
+  /subject/MR_PET/tmp/request.mat /subject/MR_PET/tmp/result.mat
 ```
 
 Request and result paths are made absolute before MATLAB changes directory.
 The request must be readable, the result parent must already exist and be
 writable, and the paths must not identify the same file. Credential values are
 never command-line arguments or environment values.
+
+## Runtime storage and read-only scientific replay
+
+The CLI resolves the subject before allocating transport files. Its private
+`MR_PET/tmp/pseudoct-cli.*` directory contains request/result MAT, Python and
+MATLAB diagnostics/cache files and is removed on exit. Multi-subject CLI
+transport belongs to the first subject; each scientific runner uses its own
+subject's resolved temporary directory. Direct `pseudoct-headless` callers must
+place results under the subject's `MR_PET/tmp/`; its owned invocation directory
+is ephemeral. Neither launcher needs installation write access or falls back
+to repository/system scratch. Credentials alone use private tmpfs `/dev/shm`
+directories (0700, files 0600), with no persistent-storage fallback.
+
+Local Current retains sanitized stdout/stderr under
+`MR_PET/tmp/pseudoct-runtime-*/pseudoct_v3_compiled_<timestamp>.log` (0600),
+including failed/interrupted phases. Exit/status files are ephemeral. The
+original mixed run log remains unchanged. Legacy input remains
+`MR_PET/tmp/legacy_backend.log`, read as-is; this change does not retrofit or
+redact legacy jobs.
+
+With `src/io` on the MATLAB path, replay a snapshot without executing science:
+
+```matlab
+[events, state] = pseudo_CT_replay_scientific_stream(path, 'v2', 'subject label', true);
+% Use 'v3' only for current compiled output. For a growing file:
+[events, state] = pseudo_CT_scientific_stream(path, 'v2', 'subject label', [], false);
+[events, state] = pseudo_CT_scientific_stream(path, 'v2', 'subject label', state, false);
+% Pass true only after producer EOF to flush an unterminated final line.
+```
+
+Events have `subject`, `stage` (`index`, `title`, `total=10`), `status`,
+`message`, `source` (`version`, `file`), `source_timestamp` (empty when absent),
+`observation_timestamp`, and `transition_kind` (`explicit`/`inferred`). Inference
+is visibly labelled and never creates a scientific start or completion. Replay
+returns events without writing source files. A mixed run-log demonstration is
+preliminary message evidence, not verification of a retained raw v3 stream;
+real v3 stream replay remains pending a future execution.
 
 ## Request v2 and validate→submit
 

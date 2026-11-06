@@ -100,6 +100,8 @@ if ~isstruct(runtime) || numel(runtime) ~= 1
 end
 runtime = local_runtime_defaults(runtime);
 local_validate_runtime(runtime);
+% Fail closed before any submission when the parser lineage is unknown.
+stream_version = local_scientific_stream_version(config);
 
     result = local_initial_result(subject, runtime, transport);
 evidence = mlsc_evidence('init', local_evidence_values(result));
@@ -160,6 +162,7 @@ output_tracker = local_output_init(runtime, transport);
 [slurm_log_paths, slurm_log_cursors] = local_slurm_log_init( ...
     result.log_paths, job_id);
 slurm_log_state = struct();
+direct_stdout = local_direct_stdout_init();
 local_emit_accepted(runtime, job_id);
 terminal_observed = false;
 accounting_deadline = [];
@@ -192,6 +195,8 @@ try
                 runtime, job_id, false);
         catch %#ok<CTCH>
         end
+        direct_stdout = local_scientific_stdout_poll(slurm_log_paths.stdout, ...
+            direct_stdout, stream_version, runtime, job_id, false);
         output_tracker = local_output_note(output_tracker, runtime, ...
             job_id, squeue_state, transport);
 
@@ -230,10 +235,10 @@ try
         if elapsed >= runtime.timeout_seconds
             result = local_request_cancel(result, transport);
             [result, sacct_record, accounting_done, output_tracker, ...
-                progress_cursor, progress_milestones] = ...
+                progress_cursor, progress_milestones, direct_stdout] = ...
                 local_wait_for_accounting(result, runtime, transport, ...
                 output_tracker, progress_path, progress_cursor, ...
-                progress_milestones);
+                progress_milestones, direct_stdout);
             if accounting_done
                 result = local_apply_accounting(result, sacct_record, subject, transport);
             else
@@ -252,9 +257,9 @@ try
         output_tracker = local_output_maybe_heartbeat(output_tracker, ...
             runtime, job_id, result, transport);
         try
-            [progress_cursor, progress_milestones] = local_progress_poll( ...
-                progress_path, progress_cursor, progress_milestones, ...
-                runtime, job_id);
+            [progress_cursor, progress_milestones, direct_stdout] = ...
+                local_progress_poll(progress_path, progress_cursor, ...
+                progress_milestones, runtime, job_id, direct_stdout);
             result.progress.milestones = progress_milestones;
             try
                 result.progress.cursor_offset = progress_cursor.offset;
@@ -280,10 +285,10 @@ try
         else
             result = local_request_cancel(result, transport);
             [result, sacct_record, accounting_done, output_tracker, ...
-                progress_cursor, progress_milestones] = ...
+                progress_cursor, progress_milestones, direct_stdout] = ...
                 local_wait_for_accounting(result, runtime, transport, ...
                 output_tracker, progress_path, progress_cursor, ...
-                progress_milestones);
+                progress_milestones, direct_stdout);
             if accounting_done
                 result = local_apply_accounting(result, sacct_record, subject, transport);
             else
@@ -301,10 +306,14 @@ try
         runtime, job_id, true);
 catch %#ok<CTCH>
 end
+% Terminal order: final stdout drain (may settle held stage 5-8 SUCCESS), then
+% the final progress poll, then one release of whatever is still held.
+direct_stdout = local_scientific_stdout_poll(slurm_log_paths.stdout, ...
+    direct_stdout, stream_version, runtime, job_id, true);
 try
-    [progress_cursor, progress_milestones] = local_progress_poll( ...
-        progress_path, progress_cursor, progress_milestones, runtime, ...
-        job_id);
+    [progress_cursor, progress_milestones, direct_stdout] = ...
+        local_progress_poll(progress_path, progress_cursor, ...
+        progress_milestones, runtime, job_id, direct_stdout);
     result.progress.milestones = progress_milestones;
     try
         result.progress.cursor_offset = progress_cursor.offset;
@@ -313,6 +322,7 @@ try
     result = local_progress_record_trailing(result, progress_cursor);
 catch %#ok<CTCH>
 end
+direct_stdout = local_release_held_progress(direct_stdout, runtime, job_id);
 local_emit_terminal(runtime, result, transport);
 local_poll_guard('deactivate', guard_id, struct());
 result = local_finish(result, evidence, runtime, transport);
@@ -1637,9 +1647,12 @@ end
 end
 
 function [result, record, terminal, tracker, progress_cursor, ...
-        progress_milestones] = local_wait_for_accounting( ...
+        progress_milestones, direct] = local_wait_for_accounting( ...
         result, runtime, transport, tracker, progress_path, ...
-        progress_cursor, progress_milestones)
+        progress_cursor, progress_milestones, direct)
+%LOCAL_WAIT_FOR_ACCOUNTING Bounded terminal-accounting wait with progress polls.
+%   Progress polls here may hold category (a) milestones in DIRECT but never
+%   release them; release happens once, at the lifecycle terminal path.
 record = local_empty_accounting_record(result.job_id);
 terminal = false;
 if nargin < 4 || ~isstruct(tracker) || numel(tracker) ~= 1
@@ -1678,9 +1691,9 @@ for ii = 1:runtime.max_accounting_polls
                 record.state, transport);
             terminal = true;
             try
-                [progress_cursor, progress_milestones] = ...
+                [progress_cursor, progress_milestones, direct] = ...
                     local_progress_poll(progress_path, progress_cursor, ...
-                    progress_milestones, runtime, job_id);
+                    progress_milestones, runtime, job_id, direct);
                 result.progress.milestones = progress_milestones;
                 try
                     result.progress.cursor_offset = progress_cursor.offset;
@@ -1696,9 +1709,9 @@ for ii = 1:runtime.max_accounting_polls
     tracker = local_output_maybe_heartbeat(tracker, runtime, job_id, ...
         result, transport);
     try
-        [progress_cursor, progress_milestones] = local_progress_poll( ...
+        [progress_cursor, progress_milestones, direct] = local_progress_poll( ...
             progress_path, progress_cursor, progress_milestones, ...
-            runtime, job_id);
+            runtime, job_id, direct);
         result.progress.milestones = progress_milestones;
         try
             result.progress.cursor_offset = progress_cursor.offset;
@@ -2614,8 +2627,13 @@ catch %#ok<CTCH>
 end
 end
 
-function [progress_cursor, progress_milestones] = local_progress_poll( ...
-        progress_path, progress_cursor, progress_milestones, runtime, job_id)
+function [progress_cursor, progress_milestones, direct] = local_progress_poll( ...
+        progress_path, progress_cursor, progress_milestones, runtime, job_id, ...
+        direct)
+%LOCAL_PROGRESS_POLL Consume new sidecar milestones. Never releases held items.
+%   Category (a) stage 5-8 SUCCESS milestones are held in DIRECT (or dropped if
+%   stdout already presented that stage SUCCESS). Only the terminal path
+%   releases held items, so repeated polls here cannot show them early.
 try
     if ~ischar(progress_path) || isempty(progress_path)
         return;
@@ -2639,6 +2657,11 @@ try
             continue;
         end
         progress_milestones{end + 1, 1} = milestone; %#ok<AGROW>
+        stage = local_progress_scientific_stage(milestone);
+        if stage > 0
+            direct = local_progress_hold(direct, stage, milestone);
+            continue;
+        end
         try
             local_progress_emit(runtime, job_id, milestone);
         catch %#ok<CTCH>
@@ -2693,16 +2716,168 @@ try
     if ~isfield(state, 'stderr') || ~isstruct(state.stderr)
         state.stderr = local_slurm_log_diagnostic_state();
     end
+    % Stdout scientific lines are owned by the direct parser; stderr keeps the
+    % regex path. Diagnostics (WARN/ERROR, continuations, noise) stay on both.
     [cursors.stdout, state.stdout] = local_slurm_log_tail(paths.stdout, ...
-        cursors.stdout, state.stdout, runtime, job_id, flush_partial);
+        cursors.stdout, state.stdout, runtime, job_id, flush_partial, true);
     [cursors.stderr, state.stderr] = local_slurm_log_tail(paths.stderr, ...
-        cursors.stderr, state.stderr, runtime, job_id, flush_partial);
+        cursors.stderr, state.stderr, runtime, job_id, flush_partial, false);
 catch %#ok<CTCH>
 end
 end
 
+function version = local_scientific_stream_version(config)
+%LOCAL_SCIENTIFIC_STREAM_VERSION Map MLSC implementation lineage to a parser.
+%   Keys only on CONFIG.IMPLEMENTATION: 'legacy-v2' selects v2 and 'current'
+%   selects v3. Runtime profile names, log text, and the generator's
+%   is_current boolean are never used. Any other value fails closed.
+implementation = '';
+if isfield(config, 'implementation') && ischar(config.implementation)
+    implementation = config.implementation;
+end
+if strcmp(implementation, 'legacy-v2')
+    version = 'v2';
+elseif strcmp(implementation, 'current')
+    version = 'v3';
+else
+    error('pseudo_CT:MLSCStreamVersion', ...
+        'MLSC scientific stream requires implementation legacy-v2 or current.');
+end
+end
+
+function direct = local_direct_stdout_init()
+%LOCAL_DIRECT_STDOUT_INIT Per-job state for the direct stdout parser.
+%   The shared presenter keeps process-wide dedupe state per subject slot, so
+%   each MLSC job starts clean; otherwise a later job in the same session could
+%   lose its own stage 5-8 rows as duplicates of an earlier job.
+%   PENDING{k} holds a category (a) SUCCESS milestone for stage k+4 until the
+%   stdout parser presents that stage SUCCESS (then it is discarded) or the
+%   lifecycle releases it at terminal. SATISFIED(k) records that stdout already
+%   presented stage k+4 SUCCESS, so a later progress copy is never held.
+try
+    pseudo_CT_output_console_visible('RESET');
+catch %#ok<CTCH>
+end
+direct = struct('state', struct('reader', [], 'parser', []), ...
+    'failed', false, 'pending', {repmat({''}, 1, 4)}, ...
+    'satisfied', false(1, 4));
+end
+
+function direct = local_scientific_stdout_poll(path_name, direct, version, ...
+        runtime, job_id, final)
+%LOCAL_SCIENTIFIC_STDOUT_POLL Feed the expanded job stdout to the phase-1 parser.
+%   Missing or delayed stdout is non-fatal and yields no events. Parser
+%   WARN/ERROR events are dropped because the diagnostic path owns them. A
+%   reader failure, such as a shrinking file, is reported once as an ERROR and
+%   stops direct parsing for this job; it is never treated as missing stdout.
+try
+    if ~isstruct(direct) || direct.failed || ~ischar(path_name) || ...
+            isempty(path_name)
+        return;
+    end
+    context = local_output_context(runtime, job_id);
+    subject_label = 'subject';
+    if isfield(context, 'subject_index')
+        subject_label = sprintf('subject %d', context.subject_index);
+    end
+    try
+        [events, direct.state] = pseudo_CT_scientific_stream(path_name, ...
+            version, subject_label, direct.state, final);
+    catch ME
+        direct.failed = true;
+        pseudo_CT_output('ERROR', context, ...
+            '%s; direct scientific reporting stopped for this job.', ...
+            local_stdout_failure_detail(ME));
+        return;
+    end
+    keep = true(numel(events), 1);
+    for ii = 1:numel(events)
+        keep(ii) = ~any(strcmp(events(ii).status, {'WARN'; 'ERROR'}));
+    end
+    events = events(keep);
+    if ~isempty(events)
+        pseudo_CT_present_scientific_events(events, context);
+        direct = local_direct_stdout_settle(direct, events);
+    end
+catch %#ok<CTCH>
+end
+end
+
+function detail = local_stdout_failure_detail(ME)
+%LOCAL_STDOUT_FAILURE_DETAIL Short, accurate reason for a direct-stream failure.
+switch ME.identifier
+    case 'pseudo_CT:StreamTruncated'
+        detail = 'Scientific stdout shrank during the run';
+    case {'pseudo_CT:StreamSeek'; 'pseudo_CT:StreamPath'}
+        detail = 'Scientific stdout could not be read';
+    case {'pseudo_CT:StreamIdentity'; 'pseudo_CT:StreamVersion'}
+        detail = 'Scientific stdout parser failed';
+    otherwise
+        detail = 'Scientific stdout processing failed';
+end
+end
+
+function direct = local_direct_stdout_settle(direct, events)
+%LOCAL_DIRECT_STDOUT_SETTLE A presented stage SUCCESS supersedes its held copy.
+for ii = 1:numel(events)
+    if ~strcmp(events(ii).status, 'DONE')
+        continue;
+    end
+    slot = events(ii).stage.index - 4;
+    if slot < 1 || slot > 4
+        continue;
+    end
+    direct.satisfied(slot) = true;
+    direct.pending{slot} = '';
+end
+end
+
+function stage = local_progress_scientific_stage(milestone)
+%LOCAL_PROGRESS_SCIENTIFIC_STAGE Canonical stage of a category (a) milestone.
+%   The four progress SUCCESS milestones that compiled stdout also reports as
+%   stage 5-8 SUCCESS. Returns 0 for every other milestone.
+stage = 0;
+if strcmp(milestone, 'alignment_mask|done')
+    stage = 5;
+elseif strcmp(milestone, 'segmentation|done')
+    stage = 6;
+elseif strcmp(milestone, 'dartel_warp_reslice|done')
+    stage = 7;
+elseif strcmp(milestone, 'attenuation_qc|done')
+    stage = 8;
+end
+end
+
+function direct = local_progress_hold(direct, stage, milestone)
+%LOCAL_PROGRESS_HOLD Hold a category (a) SUCCESS unless stdout already showed it.
+if direct.satisfied(stage - 4)
+    return;
+end
+direct.pending{stage - 4} = milestone;
+end
+
+function direct = local_release_held_progress(direct, runtime, job_id)
+%LOCAL_RELEASE_HELD_PROGRESS Show each still-held stage 5-8 milestone once.
+%   Called only at terminal, after the final stdout drain and final progress
+%   poll. Released milestones use the existing progress display path.
+if ~isstruct(direct) || numel(direct) ~= 1
+    return;
+end
+for slot = 1:4
+    milestone = direct.pending{slot};
+    if isempty(milestone)
+        continue;
+    end
+    direct.pending{slot} = '';
+    try
+        local_progress_emit(runtime, job_id, milestone);
+    catch %#ok<CTCH>
+    end
+end
+end
+
 function [cursor, state] = local_slurm_log_tail(path_name, cursor, state, ...
-        runtime, job_id, flush_partial)
+        runtime, job_id, flush_partial, direct_scientific)
 if ~ischar(path_name) || size(path_name, 1) ~= 1 || isempty(path_name)
     return;
 end
@@ -2745,7 +2920,7 @@ try
                 bytes = uint8(bytes(:)');
                 cursor.offset = cursor.offset + length(bytes);
                 [cursor, state] = local_slurm_log_bytes(cursor, state, ...
-                    char(bytes), runtime, job_id);
+                    char(bytes), runtime, job_id, direct_scientific);
             end
         end
         fclose(fid);
@@ -2764,7 +2939,8 @@ if flush_partial
         if ~isempty(line) && line(end) == char(13)
             line(end) = '';
         end
-        state = local_slurm_log_forward(line, state, runtime, job_id);
+        state = local_slurm_log_forward(line, state, runtime, job_id, ...
+            direct_scientific);
     end
     cursor.pending = '';
     cursor.discarding_line = false;
@@ -2793,7 +2969,7 @@ end
 end
 
 function [cursor, state] = local_slurm_log_bytes(cursor, state, bytes, ...
-        runtime, job_id)
+        runtime, job_id, direct_scientific)
 max_line_bytes = 8192;
 while ~isempty(bytes)
     newline_at = find(bytes == char(10), 1);
@@ -2817,7 +2993,8 @@ while ~isempty(bytes)
         if ~isempty(line) && line(end) == char(13)
             line(end) = '';
         end
-        state = local_slurm_log_forward(line, state, runtime, job_id);
+        state = local_slurm_log_forward(line, state, runtime, job_id, ...
+            direct_scientific);
         cursor.pending = '';
     else
         cursor.pending = '';
@@ -2826,7 +3003,8 @@ while ~isempty(bytes)
 end
 end
 
-function state = local_slurm_log_forward(line, state, runtime, job_id)
+function state = local_slurm_log_forward(line, state, runtime, job_id, ...
+        direct_scientific)
 %LOCAL_SLURM_LOG_FORWARD Forward scientific output and relevant diagnostics.
 try
     if ~isstruct(state) || ~isfield(state, 'diagnostic_level')
@@ -2838,7 +3016,7 @@ try
         return;
     end
     [level, message, original_stage, event_time] = ...
-        local_slurm_log_event(line);
+        local_slurm_log_event(line, direct_scientific);
     raw_continuation = false;
     if isempty(strtrim(line))
         if state.diagnostic_error_using
@@ -2958,7 +3136,7 @@ yes = ischar(message) && ~isempty(regexp(lower(strtrim(message)), ...
 end
 
 function [level, message, original_stage, event_time] = ...
-        local_slurm_log_event(line)
+        local_slurm_log_event(line, direct_scientific)
 level = '';
 message = '';
 original_stage = [];
@@ -2993,6 +3171,9 @@ elseif ~isempty(regexp(lower_body, ...
         '^(\?+ *error|error)([ \t]*:|[ \t]+using([ \t]|$))', 'once'))
     level = 'ERROR';
     message = local_slurm_log_safe_message(body);
+elseif direct_scientific
+    % Direct stdout stages 5-8 are interpreted only by the phase-1 parser.
+    % WARN/ERROR above remain the diagnostic path for every stream.
 elseif local_slurm_log_has(lower_body, ...
         'aligning mprage and creating subject mask')
     level = 'INFO'; message = 'Aligning MPRAGE and creating subject mask.';

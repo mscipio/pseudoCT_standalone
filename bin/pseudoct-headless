@@ -80,13 +80,27 @@ matlab_bin=$(readlink -f -- "$matlab_bin") ||
 PSEUDOCT_REQUEST_MAT=$request_path
 PSEUDOCT_RESULT_MAT=$result_path
 export PSEUDOCT_REQUEST_MAT PSEUDOCT_RESULT_MAT
-cd -P -- "$install_root" || fail 'cannot enter installation root' 70
+case "$result_parent/" in
+    */MR_PET/tmp/*) ;;
+    *) fail 'runtime directory must be under the resolved subject MR_PET/tmp' 70 ;;
+esac
+runtime_dir=$(umask 077; mktemp -d "$result_parent/pseudoct-headless.XXXXXXXX") ||
+    fail 'subject runtime directory unavailable' 70
+chmod 00700 "$runtime_dir" || fail 'cannot secure subject runtime directory' 70
+trap 'rm -rf -- "$runtime_dir"' 0
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+export PSEUDOCT_INSTALL_ROOT="$install_root"
+export TMPDIR="$runtime_dir" TMP="$runtime_dir" TEMP="$runtime_dir"
+export MATLAB_PREFDIR="$runtime_dir/matlab-prefs" MCR_CACHE_ROOT="$runtime_dir/mcr-cache"
+cd -P -- "$runtime_dir" || fail 'cannot enter subject runtime directory' 70
 
 # Keep this fixed: no paths or request values are interpolated into MATLAB
 # source or command-line expressions. The bootstrap keeps the JVM enabled.
 "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB'
 try
-    run(fullfile(pwd, 'src', 'cli', 'pseudoct_headless_cli_r2010b.m'));
+    addpath(fullfile(getenv('PSEUDOCT_INSTALL_ROOT'), 'src', 'cli'), '-begin');
+    pseudoct_headless_cli_r2010b;
 catch
     status = 70;
 end

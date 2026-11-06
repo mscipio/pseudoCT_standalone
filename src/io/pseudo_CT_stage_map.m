@@ -1,19 +1,21 @@
-function [stage_map, public_stage, public_total, stage_title] = ...
+function [stage_map, public_stage, public_total, stage_title, public_span] = ...
         pseudo_CT_stage_map(policy, producer_stage, producer_total)
 %PSEUDO_CT_STAGE_MAP Return the public stage map for one profile policy.
 %   STAGE_MAP = PSEUDO_CT_STAGE_MAP(CONFIG) accepts a profile config or a
 %   compact policy struct with mode, implementation, output_policy, and
 %   reference_policy fields. The map is keyed by those four policy values.
-%   [STAGE_MAP, NUMBER, TOTAL, TITLE] = PSEUDO_CT_STAGE_MAP(STAGE_MAP, N, M)
-%   translates one producer stage into its public number and total. A policy
+%   [STAGE_MAP, NUMBER, TOTAL, TITLE, SPAN] = PSEUDO_CT_STAGE_MAP(STAGE_MAP, N, M)
+%   translates one producer stage into its public number and total, or returns
+%   a declared multi-stage public span when one producer operation covers a
+%   composite workflow range. A policy
 %   that does not match a shipped profile raises pseudo_CT:StageMap:UnknownPolicy
 %   (fail closed; no legacy numbering is inferred). An empty policy returns an
 %   empty map. An undeclared producer stage returns NUMBER=0.
 %
 %   Public workflow numbering is fixed at ten logical stages for every
 %   supported profile. Producer stages are mapped only when they correspond to
-%   a logical workflow stage; scheduler, retrieval, promotion-only and cleanup
-%   events remain unnumbered when they are not one of those stages.
+%   a logical workflow stage or a declared composite span; scheduler, retrieval,
+%   promotion-only and cleanup events remain unnumbered otherwise.
 %   PRODUCER_TOTAL is retained as producer provenance, never as the public
 %   total.
 
@@ -21,6 +23,7 @@ stage_map = local_empty_map();
 public_stage = 0;
 public_total = 0;
 stage_title = '';
+public_span = [];
 
 if local_is_map(policy)
     stage_map = policy;
@@ -73,6 +76,26 @@ if producer_total == stage_map.producer_total
         public_stage = stage_map.public_stage_numbers(slot);
         public_total = stage_map.total;
         stage_title = stage_map.titles{slot};
+        return;
+    end
+    if isfield(stage_map, 'producer_span_numbers') && ...
+            isfield(stage_map, 'public_stage_spans')
+        slot = find(stage_map.producer_span_numbers == producer_stage, 1);
+        if ~isempty(slot)
+            candidate_span = stage_map.public_stage_spans{slot};
+            if isnumeric(candidate_span) && numel(candidate_span) == 2 && ...
+                    all(isfinite(candidate_span(:))) && ...
+                    all(candidate_span(:) == floor(candidate_span(:))) && ...
+                    candidate_span(1) >= 1 && candidate_span(2) <= stage_map.total && ...
+                    candidate_span(2) >= candidate_span(1)
+                public_span = reshape(candidate_span, 1, 2);
+                public_total = stage_map.total;
+                stage_title = sprintf('Composite producer stages %d-%d', ...
+                    public_span(1), public_span(2));
+            end
+        end
+    end
+    if ~isempty(public_span)
         return;
     end
 end
@@ -143,7 +166,8 @@ function map = local_empty_map()
 map = struct('profile', '', 'mode', '', 'implementation', '', ...
     'output_policy', '', 'reference_policy', '', 'producer_total', 0, ...
     'total', 0, 'producer_stage_numbers', [], ...
-    'public_stage_numbers', [], 'titles', {{}}, 'stage_ids', {{}});
+    'public_stage_numbers', [], 'producer_span_numbers', [], ...
+    'public_stage_spans', {{}}, 'titles', {{}}, 'stage_ids', {{}});
 end
 
 function maps = local_maps()
@@ -182,6 +206,10 @@ maps(3) = local_make_map('local-legacy', 'local', 'legacy-v2', ...
     {'Input MPRAGE preparation'; 'FreeSurfer MPRAGE normalization'; ...
      'Attenuation-map verification'; 'Writing DICOM output'; ...
      'Output promotion'});
+% The compiled legacy producer reports stage 3/8 as one indivisible operation
+% spanning public stages 5-8; it must not be presented as a single stage DONE.
+maps(3).producer_span_numbers = 3;
+maps(3).public_stage_spans = {[5 8]};
 maps(4) = local_make_map('local-mprage-only', 'local', 'current', ...
     'nifti-only', 'none', 9, 10, 1:8, 1:8, ...
     {'Input MPRAGE preparation'; 'MPRAGE recentering'; ...

@@ -77,6 +77,7 @@ local_touch(subject.shared_input);
 config = struct();
 config.mode = 'mlsc';
 config.aliasing_default = 1;
+config.implementation = 'legacy-v2';
 config.mlsc = struct('host', 'mlsc.nmr.mgh.harvard.edu', ...
     'runner', fullfile(temp_root, 'runner.sh'), ...
     'mcr_root', fullfile(temp_root, 'mcr'), ...
@@ -254,6 +255,218 @@ result = mlsc_lifecycle(subject, config, runtime, transport);
 assert(result.terminal && ~result.success && ~result.eligible_for_finalization);
 assert(strcmp(result.state, 'failed') && result.exit_code == 2);
 assert(result.accounting_record_found && result.primary_allocation);
+
+% T002 direct scientific stdout: real mlsc_lifecycle poll/drain with stubs only.
+% Each case appends scripted bytes to the job stdout, stderr, and progress
+% sidecar at one scheduler poll. No sbatch, ssh, or scheduler command runs.
+% Presenter rows are matched by canonical stage tag and ACTIVE/DONE status.
+t002_nl = char(10);
+t002_failures = 0;
+t002_done_line = 'Alignment and masking completed (elapsed 00:01:00).';
+t002_completed = '31415|COMPLETED|0:0|2026-09-02T10:00:00|2026-09-02T10:01:00|60';
+t002_cancelled = '31415|CANCELLED|0:15|2026-09-02T10:00:00|2026-09-02T10:01:00|60';
+t002_clock_base = datenum(2026, 9, 2, 10, 0, 0);
+t002_root = '';
+t002_corr = '';
+t002_steps = t002_step('', '', '', '');
+t002_idx = 0;
+t002_submit_calls = 0;
+t002_cancel_calls = 0;
+
+% C1: v3 split line, unchanged poll, and an unterminated terminal EOF line.
+t002_s = [t002_step(['Aligning MPRAGE and creating subject mask.' t002_nl ...
+    'Running SPM New Seg'], '', '', ''), ...
+    t002_step('', '', '', ''), ...
+    t002_step(['ment.' t002_nl], '', '', ''), ...
+    t002_step('Building attenuation map and QC image.', '', '', t002_completed)];
+[t002_t1, t002_r1, t002_f1] = t002_run_case('c01', 'current', t002_s);
+t002_check(isempty(t002_f1), 'C1 lifecycle ran without an exception');
+t002_check(t002_rows(t002_t1, '[5/10]', 'ACTIVE') == 1, ...
+    'C1 stage 5 START rendered once');
+t002_check(t002_rows(t002_t1, '[6/10]', 'ACTIVE') == 1, ...
+    'C1 split line yields stage 6 START once (no early partial emission)');
+t002_check(t002_rows(t002_t1, '[8/10]', 'ACTIVE') == 1, ...
+    'C1 unterminated terminal EOF yields stage 8 START exactly once');
+t002_check(t002_r1.terminal, 'C1 terminal observed');
+
+% C2/C3: a v2-only inferred line and a v3-only START line. Each parser shows
+% only its own interpretation of the same stdout.
+t002_s = [t002_step(['Opening the Template and calculating its position in real space ...' t002_nl ...
+    'Aligning MPRAGE and creating subject mask.' t002_nl], '', '', t002_completed)];
+[t002_t2, t002_r2, t002_f2] = t002_run_case('c02', 'legacy-v2', t002_s);
+t002_check(isempty(t002_f2), 'C2 legacy-v2 lifecycle ran');
+t002_check(t002_count(t002_t2, '[inferred]') == 1, ...
+    'C2 v2 selected: v2-only inferred line is interpreted');
+t002_check(t002_rows(t002_t2, '[5/10]', 'ACTIVE') == 0, ...
+    'C2 v2 selected: v3-only START text is not interpreted');
+[t002_t3, t002_r3, t002_f3] = t002_run_case('c03', 'current', t002_s);
+t002_check(isempty(t002_f3), 'C3 current lifecycle ran');
+t002_check(t002_count(t002_t3, '[inferred]') == 0, ...
+    'C3 v3 selected: v2-only inferred line is not interpreted');
+t002_check(t002_rows(t002_t3, '[5/10]', 'ACTIVE') == 1, ...
+    'C3 v3 selected: v3 START text is interpreted once');
+
+% C4: an unknown implementation fails closed before any submission.
+[t002_t4, t002_r4, t002_f4] = t002_run_case('c04', 'bogus-lineage', t002_s);
+t002_check(strcmp(t002_f4, 'pseudo_CT:MLSCStreamVersion'), ...
+    'C4 unknown implementation fails with pseudo_CT:MLSCStreamVersion');
+t002_check(t002_submit_calls == 0, 'C4 no submission was attempted');
+
+% C5/C6: related progress and stdout in both arrival orders give one transition.
+t002_s = [t002_step('', '', ['stage_in|done' t002_nl 'alignment_mask|done' t002_nl], ''), ...
+    t002_step(['Aligning MPRAGE and creating subject mask.' t002_nl ...
+    t002_done_line t002_nl], '', '', ''), ...
+    t002_step('', '', '', t002_completed)];
+[t002_t5, t002_r5, t002_f5] = t002_run_case('c05', 'current', t002_s);
+t002_check(isempty(t002_f5), 'C5 lifecycle ran (progress first)');
+t002_check(t002_rows(t002_t5, 'DONE', 'Alignment and masking completed') == 1, ...
+    'C5 progress first: stage 5 SUCCESS rendered once');
+t002_check(t002_count(t002_t5, 'alignment-mask completed') == 0, ...
+    'C5 progress first: duplicate progress text suppressed');
+t002_check(t002_count(t002_t5, 'MLSC stage-in completed.') == 1, ...
+    'C5 category (b) stage_in|done still displayed');
+t002_check(any(strcmp(t002_r5.progress.milestones, 'alignment_mask|done')), ...
+    'C5 suppressed milestone still recorded in progress state');
+t002_s = [t002_step(['Aligning MPRAGE and creating subject mask.' t002_nl ...
+    t002_done_line t002_nl], '', '', ''), ...
+    t002_step('', '', ['alignment_mask|done' t002_nl], ''), ...
+    t002_step('', '', '', t002_completed)];
+[t002_t6, t002_r6, t002_f6] = t002_run_case('c06', 'current', t002_s);
+t002_check(isempty(t002_f6), 'C6 lifecycle ran (stdout first)');
+t002_check(t002_rows(t002_t6, 'DONE', 'Alignment and masking completed') == 1, ...
+    'C6 stdout first: stage 5 SUCCESS rendered once');
+t002_check(t002_count(t002_t6, 'alignment-mask completed') == 0, ...
+    'C6 stdout first: duplicate progress text suppressed');
+t002_check(any(strcmp(t002_r6.progress.milestones, 'alignment_mask|done')), ...
+    'C6 suppressed milestone still recorded in progress state');
+
+% C10: progress-only alignment_mask|done with no stdout line is held and shown
+% exactly once at terminal, after the terminal state and before the summary.
+t002_s = [t002_step('', '', ['alignment_mask|done' t002_nl], ''), ...
+    t002_step('', '', '', t002_completed)];
+[t002_t10, t002_r10, t002_f10] = t002_run_case('c10', 'current', t002_s);
+t002_check(isempty(t002_f10), 'C10 lifecycle ran');
+t002_check(t002_count(t002_t10, 'alignment-mask completed') == 1, ...
+    'C10 progress-only milestone shown exactly once');
+t002_p_state = strfind(t002_t10, 'state completed');
+t002_p_held = strfind(t002_t10, 'alignment-mask completed');
+t002_p_term = strfind(t002_t10, 'completed exit');
+t002_check(~isempty(t002_p_state) && ~isempty(t002_p_held) && ...
+    ~isempty(t002_p_term) && t002_p_state(1) < t002_p_held(1) && ...
+    t002_p_held(1) < t002_p_term(1), ...
+    'C10 held milestone released at terminal, after the state and before the summary');
+t002_check(any(strcmp(t002_r10.progress.milestones, 'alignment_mask|done')), ...
+    'C10 held milestone recorded in progress state');
+
+% C7: missing stdout is non-fatal and emits nothing; delayed stdout is read once.
+t002_s = [t002_step('', '', '', ''), ...
+    t002_step(['Aligning MPRAGE and creating subject mask.' t002_nl], '', '', ''), ...
+    t002_step(['Running SPM New Segment.' t002_nl ...
+    'Segmentation completed (elapsed 00:00:30).' t002_nl], '', '', ''), ...
+    t002_step('', '', '', t002_completed)];
+[t002_t7, t002_r7, t002_f7] = t002_run_case('c07', 'current', t002_s);
+t002_check(isempty(t002_f7), 'C7 lifecycle ran with missing then delayed stdout');
+t002_check(t002_rows(t002_t7, '[5/10]', 'ACTIVE') == 1, ...
+    'C7 delayed stage 5 START rendered once');
+t002_check(t002_rows(t002_t7, 'DONE', 'SPM New Segment completed') == 1, ...
+    'C7 delayed stage 6 SUCCESS rendered once');
+t002_check(strcmp(t002_r7.scheduler_state, 'completed'), ...
+    'C7 scheduler outcome retained');
+
+% C8: a representative warning with continuation and stderr is shown once.
+t002_s = [t002_step(['Warning: Synthetic T002 warning.' t002_nl ...
+    '> In t002_synthetic (line 3)' t002_nl ...
+    'Running SPM New Segment.' t002_nl], ...
+    ['ERROR: Synthetic T002 error.' t002_nl], '', ''), ...
+    t002_step('', '', '', t002_completed)];
+[t002_t8, t002_r8, t002_f8] = t002_run_case('c08', 'current', t002_s);
+t002_check(isempty(t002_f8), 'C8 lifecycle ran');
+t002_check(t002_count(t002_t8, 'Synthetic T002 warning') == 1, ...
+    'C8 stdout WARN printed once (parser WARN dropped)');
+t002_check(t002_count(t002_t8, '> In t002_synthetic') == 0, ...
+    'C8 WARN continuation is not on the console (protected run log only)');
+t002_check(t002_count(t002_t8, 'Synthetic T002 error') == 1, ...
+    'C8 stderr ERROR printed once');
+t002_check(t002_rows(t002_t8, '[6/10]', 'ACTIVE') == 1, ...
+    'C8 scientific line beside diagnostics rendered once');
+t002_log8 = t006_read_text(fullfile(temp_root, 't002-c08', 'run.log'));
+t002_check(t002_count(t002_log8, 'Synthetic T002 warning') == 1, ...
+    'C8 run log holds the WARN once');
+t002_check(t002_count(t002_log8, 'Synthetic T002 error') == 1, ...
+    'C8 run log holds the ERROR once');
+t002_check(t002_count(t002_log8, '> In t002_synthetic') == 1, ...
+    'C8 run log holds the WARN continuation once');
+
+% C9: terminal cancellation keeps the scheduler outcome without synthetic success.
+t002_s = [t002_step(['Aligning MPRAGE and creating subject mask.' t002_nl], '', '', ''), ...
+    t002_step('', '', '', t002_cancelled)];
+[t002_t9, t002_r9, t002_f9] = t002_run_case('c09', 'current', t002_s);
+t002_check(isempty(t002_f9), 'C9 lifecycle ran');
+t002_check(strcmp(t002_r9.scheduler_state, 'cancelled'), ...
+    'C9 scheduler cancellation retained');
+t002_check(~t002_r9.success, 'C9 not reported as success');
+t002_check(t002_rows(t002_t9, '[5/10]', 'ACTIVE') == 1, ...
+    'C9 pre-cancel stage 5 START rendered once');
+t002_check(t002_rows(t002_t9, 'DONE', 'Attenuation map') == 0, ...
+    'C9 no synthetic stage 8 success');
+t002_check(t002_count(t002_t9, 'Attenuation map and QC completed') == 0, ...
+    'C9 no synthetic attenuation success text');
+t002_check(t002_count(t002_t9, 'pseudo-CT completed') == 0, ...
+    'C9 no synthetic pseudo-CT completion');
+
+% C11: a stdout reader failure (shrinking file) is one ERROR, direct parsing
+% stops, and a progress milestone held before the failure is still released once.
+t002_s = [t002_step(['Aligning MPRAGE and creating subject mask.' t002_nl], '', ...
+    ['alignment_mask|done' t002_nl], ''), ...
+    t002_step('x', '', '', '', 'w'), ...
+    t002_step('', '', '', t002_completed)];
+[t002_t11, t002_r11, t002_f11] = t002_run_case('c11', 'current', t002_s);
+t002_check(isempty(t002_f11), 'C11 lifecycle ran (reader failure is not fatal)');
+t002_check(t002_count(t002_t11, 'Scientific stdout shrank during the run') == 1, ...
+    'C11 reader failure reported as one ERROR');
+t002_check(t002_count(t002_t11, 'direct scientific reporting stopped') == 1, ...
+    'C11 direct parsing stopped once');
+t002_log11 = t006_read_text(fullfile(temp_root, 't002-c11', 'run.log'));
+t002_check(t002_count(t002_log11, 'Scientific stdout shrank during the run') == 1, ...
+    'C11 run log holds the ERROR once');
+t002_check(t002_rows(t002_t11, '[5/10]', 'ACTIVE') == 1, ...
+    'C11 stdout before the failure rendered once');
+t002_check(t002_count(t002_t11, 'alignment-mask completed') == 1, ...
+    'C11 held milestone released once at terminal');
+t002_check(strcmp(t002_r11.scheduler_state, 'completed'), ...
+    'C11 scheduler outcome retained');
+
+% Observed equivalence table (stdout-sourced scientific rows vs progress text).
+fprintf('T002 TABLE case | observed item | count | expected\n');
+fprintf('T002 TABLE c01 | [5/10] ACTIVE stdout START | %d | 1\n', t002_rows(t002_t1, '[5/10]', 'ACTIVE'));
+fprintf('T002 TABLE c01 | [6/10] ACTIVE stdout START (split line) | %d | 1\n', t002_rows(t002_t1, '[6/10]', 'ACTIVE'));
+fprintf('T002 TABLE c01 | [8/10] ACTIVE stdout START (EOF) | %d | 1\n', t002_rows(t002_t1, '[8/10]', 'ACTIVE'));
+fprintf('T002 TABLE c02 | v2 inferred stdout (v2 selected) | %d | 1\n', t002_count(t002_t2, '[inferred]'));
+fprintf('T002 TABLE c03 | v2 inferred stdout (v3 selected) | %d | 0\n', t002_count(t002_t3, '[inferred]'));
+fprintf('T002 TABLE c03 | v3 [5/10] ACTIVE stdout (v3 selected) | %d | 1\n', t002_rows(t002_t3, '[5/10]', 'ACTIVE'));
+fprintf('T002 TABLE c02 | v3 [5/10] ACTIVE stdout (v2 selected) | %d | 0\n', t002_rows(t002_t2, '[5/10]', 'ACTIVE'));
+fprintf('T002 TABLE c05 | DONE stage 5 rendered, progress first | %d | 1\n', t002_rows(t002_t5, 'DONE', 'Alignment and masking completed'));
+fprintf('T002 TABLE c05 | progress text alignment-mask (suppressed) | %d | 0\n', t002_count(t002_t5, 'alignment-mask completed'));
+fprintf('T002 TABLE c06 | DONE stage 5 rendered, stdout first | %d | 1\n', t002_rows(t002_t6, 'DONE', 'Alignment and masking completed'));
+fprintf('T002 TABLE c06 | progress text alignment-mask (suppressed) | %d | 0\n', t002_count(t002_t6, 'alignment-mask completed'));
+fprintf('T002 TABLE c05 | category (b) MLSC stage-in completed. | %d | 1\n', t002_count(t002_t5, 'MLSC stage-in completed.'));
+fprintf('T002 TABLE c07 | delayed [5/10] ACTIVE | %d | 1\n', t002_rows(t002_t7, '[5/10]', 'ACTIVE'));
+fprintf('T002 TABLE c07 | DONE stage 6 rendered after delayed stdout | %d | 1\n', t002_rows(t002_t7, 'DONE', 'SPM New Segment completed'));
+fprintf('T002 TABLE c08 | stdout WARN text | %d | 1\n', t002_count(t002_t8, 'Synthetic T002 warning'));
+fprintf('T002 TABLE c08 | WARN continuation on console | %d | 0\n', t002_count(t002_t8, '> In t002_synthetic'));
+fprintf('T002 TABLE c08 | WARN continuation in run log | %d | 1\n', t002_count(t002_log8, '> In t002_synthetic'));
+fprintf('T002 TABLE c08 | stderr ERROR text | %d | 1\n', t002_count(t002_t8, 'Synthetic T002 error'));
+fprintf('T002 TABLE c09 | DONE stage 8 synthetic | %d | 0\n', t002_rows(t002_t9, 'DONE', 'Attenuation map'));
+fprintf('T002 TABLE c10 | progress-only held milestone shown once at terminal | %d | 1\n', ...
+    t002_count(t002_t10, 'alignment-mask completed'));
+fprintf('T002 TABLE c11 | reader-failure ERROR shown once | %d | 1\n', ...
+    t002_count(t002_t11, 'Scientific stdout shrank during the run'));
+fprintf('T002 TABLE c11 | held milestone released once after failure | %d | 1\n', ...
+    t002_count(t002_t11, 'alignment-mask completed'));
+fprintf('T002 TABLE summary failures=%d\n', t002_failures);
+assert(t002_failures == 0, 'T002 direct scientific stdout checks failed; see CHECK FAIL lines.');
+fprintf('=== T002 direct scientific stdout checks passed ===\n');
+
 
 % Regression C: a backend exception retains the underlying identifier/message
 % in failure_detail, lifecycle evidence, the persisted lifecycle record, and
@@ -434,6 +647,7 @@ t006_subject = struct('subject_id', 't006-s1', 'shared_input', ...
 t006_config = struct();
 t006_config.mode = 'mlsc';
 t006_config.aliasing_default = 1;
+t006_config.implementation = 'legacy-v2';
 t006_config.mlsc = struct('host', 'mlsc.nmr.mgh.harvard.edu', ...
     'runner', fullfile(t006_s1_root, 'runner.sh'), ...
     'mcr_root', fullfile(t006_s1_root, 'mcr'), ...
@@ -1721,5 +1935,228 @@ if ~isempty(t006_correlation_current)
 else
     progress_path = fullfile(t006_case_root_current, '.mlsc_progress');
 end
+end
+
+function [text, result, failure] = t002_run_case(tag, implementation, steps)
+%T002_RUN_CASE One scripted MLSC lifecycle run with captured console text.
+t002_root = fullfile(temp_root, ['t002-' tag]);
+t002_corr = ['t002' tag];
+t002_steps = steps;
+t002_idx = 0;
+t002_submit_calls = 0;
+t002_cancel_calls = 0;
+mkdir(t002_root);
+mkdir(fullfile(t002_root, 'mcr'));
+mkdir(fullfile(t002_root, 'Batch_atlas'));
+local_touch(fullfile(t002_root, 'runner.sh'));
+local_touch(fullfile(t002_root, 'defaults.mat'));
+local_touch(fullfile(t002_root, 'freesurfer-env'));
+local_touch(fullfile(t002_root, 'mprage.nii'));
+t002_subject = struct('subject_id', ['t002-' tag], 'shared_input', ...
+    fullfile(t002_root, 'mprage.nii'), 'shared_temp', t002_root);
+t002_config = struct('mode', 'mlsc', 'aliasing_default', 1, ...
+    'implementation', implementation);
+t002_config.mlsc = struct('host', 'mlsc.nmr.mgh.harvard.edu', ...
+    'runner', fullfile(t002_root, 'runner.sh'), ...
+    'mcr_root', fullfile(t002_root, 'mcr'), ...
+    'defaults_mat', fullfile(t002_root, 'defaults.mat'), ...
+    'batch_templates', fullfile(t002_root, 'Batch_atlas'), ...
+    'shell', '/bin/bash', 'freesurfer_env', ...
+    fullfile(t002_root, 'freesurfer-env'), 'partition', 'basic', ...
+    'nodes', 1, 'ntasks', 1, 'cpus_per_task', 1, 'memory', '1G', ...
+    'time', '00:01:00');
+if strcmp(implementation, 'current')
+    % Pinned current artifact contract with synthetic manifests, as in
+    % test_mlsc_current_orchestration; the selected v3 parser lineage needs it.
+    t002_pinned = mlsc_current_validate('pinned_mcr_root');
+    t002_runner = fullfile(t002_root, 'run_mlsc_current_payload.sh');
+    t002_write_file(t002_runner, '# fixture runner');
+    t002_atlas_dir = fullfile(t002_root, 'Batch_atlas_current');
+    mkdir(t002_atlas_dir);
+    t002_build_path = fullfile(t002_root, 'build.mat');
+    t002_resource_path = fullfile(t002_root, 'resources.mat');
+    t002_write_manifests(t002_build_path, t002_resource_path, t002_runner, ...
+        t002_atlas_dir, t002_pinned);
+    % The current profile must not carry the legacy compiled-runner fields.
+    t002_config.mlsc = rmfield(t002_config.mlsc, ...
+        {'runner'; 'mcr_root'; 'defaults_mat'; 'batch_templates'});
+    t002_config.aliasing_default = 0;
+    t002_config.recenter_before_normalization = 'No';
+    t002_config.bone_enabled = false;
+    t002_config.zero_background = 'No';
+    t002_config.current = struct('runner', t002_runner, ...
+        'mcr_root', t002_pinned, 'build_manifest', t002_build_path, ...
+        'resource_manifest', t002_resource_path);
+    t002_subject.check_aliasing = 0;
+    t002_subject.recenter_before_normalization = 'No';
+end
+t002_runtime = struct('account', 'project', ...
+    'script_path', fullfile(t002_root, 'job.sh'), ...
+    'evidence_dir', t002_root, 'log_archive_dir', t002_root, ...
+    'timeout_seconds', 10000, 'poll_interval_seconds', 1, ...
+    'accounting_timeout_seconds', 1, 'max_polls', numel(steps) + 2, ...
+    'max_accounting_polls', 2, 'output_context', struct('log_file', ...
+    fullfile(t002_root, 'run.log'), 'subject_index', 1, ...
+    'subject_count', 1, 'scope', 'subject'), ...
+    'submission_correlation_id', t002_corr);
+t002_transport = struct('verify', @t002_verify, ...
+    'submit_script', @t002_submit, 'query_squeue', @t002_squeue, ...
+    'query_sacct', @t002_sacct, 'query_squeue_by_name', @t002_no_name, ...
+    'query_sacct_by_name', @t002_no_name, 'cancel_job', @t002_cancel, ...
+    'sleep', @t002_sleep, 'clock', @t002_clock);
+text = '';
+result = struct();
+failure = '';
+try
+    text = evalc('result = mlsc_lifecycle(t002_subject, t002_config, t002_runtime, t002_transport);');
+catch ME
+    failure = ME.identifier;
+end
+% Retain the captured console transcript and terminal summary as run evidence.
+t002_summary = sprintf('failure_identifier=%s\n', failure);
+if isfield(result, 'state')
+    t002_summary = [t002_summary sprintf('state=%s scheduler_state=%s job_id=%d\n', ...
+        result.state, result.scheduler_state, result.job_id)];
+end
+if isfield(result, 'failure_detail')
+    t002_summary = [t002_summary sprintf('failure_detail=%s\n', result.failure_detail)];
+end
+t002_fid = fopen(fullfile(tempdir, ['t002_console_' tag '.txt']), 'w');
+if t002_fid ~= -1
+    fwrite(t002_fid, [text t002_summary]);
+    fclose(t002_fid);
+end
+end
+
+function step = t002_step(stdout_text, stderr_text, progress_text, sacct_text, mode)
+%T002_STEP One scripted scheduler poll; MODE 'w' overwrites stdout (shrink).
+if nargin < 5
+    mode = 'a';
+end
+step = struct('stdout', stdout_text, 'stderr', stderr_text, ...
+    'progress', progress_text, 'sacct', sacct_text, 'mode', mode);
+end
+
+function accepted = t002_verify(~)
+accepted = true;
+end
+
+function response = t002_submit(~)
+t002_submit_calls = t002_submit_calls + 1;
+response = '31415;mlsc';
+end
+
+function response = t002_squeue(~)
+t002_idx = t002_idx + 1;
+if t002_idx <= numel(t002_steps)
+    step = t002_steps(t002_idx);
+    t002_append(fullfile(t002_root, 'pseudoCT_mlsc_31415.out'), step.stdout, step.mode);
+    t002_append(fullfile(t002_root, 'pseudoCT_mlsc_31415.err'), step.stderr);
+    t002_append(mlsc_progress('path_for', t002_root, t002_corr), step.progress);
+end
+response = 'RUNNING';
+end
+
+function response = t002_sacct(~)
+pick = min(max(t002_idx, 1), numel(t002_steps));
+response = t002_steps(pick).sacct;
+end
+
+function response = t002_no_name(~)
+response = '';
+end
+
+function t002_cancel(~)
+t002_cancel_calls = t002_cancel_calls + 1;
+end
+
+function t002_sleep(~)
+end
+
+function value = t002_clock()
+value = t002_clock_base;
+end
+
+function t002_append(path_name, text, mode)
+if nargin < 3
+    mode = 'a';
+end
+if isempty(text) && strcmp(mode, 'a')
+    return;
+end
+fid = fopen(path_name, mode);
+assert(fid ~= -1, 'The focused stream fixture could not be written.');
+fwrite(fid, text);
+fclose(fid);
+end
+
+function count = t002_count(haystack, needle)
+count = length(strfind(haystack, needle));
+end
+
+function t002_check(ok, label)
+%T002_CHECK Record one named check; every case still runs.
+if ok
+    fprintf('T002 CHECK PASS %s\n', label);
+else
+    fprintf('T002 CHECK FAIL %s\n', label);
+    t002_failures = t002_failures + 1;
+end
+end
+
+function count = t002_rows(text, stage_tag, status)
+%T002_ROWS Presenter rows carrying a canonical stage tag and a status word.
+count = 0;
+lines = regexp(text, '\r\n|\n|\r', 'split');
+for ii = 1:numel(lines)
+    if ~isempty(strfind(lines{ii}, stage_tag)) && ...
+            ~isempty(strfind(lines{ii}, status))
+        count = count + 1;
+    end
+end
+end
+
+function t002_write_file(path_name, text)
+fid = fopen(path_name, 'w');
+assert(fid ~= -1, 'The focused current fixture could not be created.');
+fwrite(fid, text);
+fclose(fid);
+end
+
+function t002_write_manifests(build_path, resource_path, runner_path, ...
+        atlas_dir, pinned)
+build = struct();
+build.schema = 'pseudo-CT.mlsc-current-build/v1';
+build.manifest_version = 1;
+build.runner = runner_path;
+build.mcr_root = pinned;
+build.release = 'R2010b';
+build.update_minimum = 0;
+build.mcr_version = [7 14];
+build.arch = 'glnxa64';
+build.generation = '7.14';
+build.runner_checksum = t002_sha256(runner_path);
+build.source_commit = 'fixture-commit';
+build.source_provenance_fingerprint = t002_sha256(runner_path);
+build.required_outputs = {'att_map.nii'; ...
+    'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
+save(build_path, 'build');
+resources = struct();
+resources.schema = 'pseudo-CT.mlsc-current-resources/v1';
+resources.manifest_version = 1;
+resources.atlas_dir = atlas_dir;
+save(resource_path, 'resources');
+end
+
+function hex = t002_sha256(path_name)
+fid = fopen(path_name, 'r');
+assert(fid ~= -1, 'The focused current fixture could not be hashed.');
+raw = fread(fid, inf, '*uint8')';
+fclose(fid);
+digest = java.security.MessageDigest.getInstance('SHA-256');
+digest.update(raw);
+bytes = typecast(digest.digest(), 'uint8');
+hex = lower(reshape(dec2hex(bytes, 2)', 1, []));
+assert(length(hex) == 64, 'The focused current fixture hash failed.');
 end
 end

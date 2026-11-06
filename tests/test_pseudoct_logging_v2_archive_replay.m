@@ -38,7 +38,12 @@ configs = { ...
         'output_policy','nifti-and-dicom','reference_policy','umap-required'); ...
     struct('mode','launchpad','implementation','legacy-v2', ...
         'output_policy','nifti-and-dicom','reference_policy','umap-required')};
-expected_counts = [45 42 139 103 119 141 92];
+% V4: allowlisted parent transitions, INFO children, source-position warning
+% groups, explicit preparation skips, and two numbered legacy delegations.
+% These are streaming corpus counts (including retained secondary sources),
+% not the separately reconciled offline-reference replay counts.
+% Repeated warning occurrences are not confirmed duplicate-source messages.
+expected_counts = [39 36 120 97 98 126 102];
 stage_ids = {'workflow.input_prepare'; 'workflow.recenter'; ...
     'workflow.alias_correct'; 'workflow.normalize'; ...
     'workflow.align_mask'; 'workflow.segment'; 'workflow.dartel'; ...
@@ -83,18 +88,29 @@ for pi = 1:length(profiles)
     skips = local_event_count(json_events, 'event_kind', 'stage_skipped');
     delegations = local_event_count(json_events, 'event_kind', 'delegation');
     if pi == 2 || pi == 5
-        assert(skips == 1, ...
-            'Archived MPRAGE-only logs should show only the observed stage-9 skip.');
+        assert(skips == 3, ...
+            'MPRAGE-only logs must show preparation skips plus the stage-9 skip.');
         archived_skip = local_select_events(json_events, ...
             'event_kind', 'stage_skipped');
+        assert(isequal(sort(str2double({archived_skip.stage_number})), [2 3 9]));
+        archived_skip = archived_skip(strcmp({archived_skip.stage_number}, '9'));
         assert(strcmp(archived_skip.stage_id, 'workflow.dicom_output') && ...
             strcmp(archived_skip.stage_number, '9') && ...
             strcmp(archived_skip.reason, 'profile_policy:mprage_only'));
+    elseif pi == 1 || pi == 4
+        assert(skips == 2, 'Current full-mode profiles must retain both preparation skips.');
+        archived_skip = local_select_events(json_events, 'event_kind', 'stage_skipped');
+        assert(isequal(sort(str2double({archived_skip.stage_number})), [2 3]));
     else
         assert(skips == 0, 'Unexpected archived policy skip for %s.', profile);
     end
-    assert(delegations == 0, ...
-        'The archive must not invent unsupported legacy delegation evidence.');
+    assert(delegations == 2 * ~isempty(strfind(profile, 'legacy')), ...
+        'Legacy input completion must expose stages 2 and 3 as INFO delegation, not outcomes.');
+    if delegations > 0
+        delegated = local_select_events(json_events, 'event_kind', 'delegation');
+        assert(isequal(str2double({delegated.stage_number}), [2 3]) && ...
+            all(strcmp({delegated.status}, 'INFO')));
+    end
 
     profile_warnings = local_select_events(json_events, 'event_kind', 'warning');
     assert(~isempty(profile_warnings), ...
@@ -139,10 +155,12 @@ end
 
 assert(~isempty(warning_events), 'No archived warning events were exercised.');
 fprintf('CASE warnings PASS: archive warnings retain source and retrospective provenance.\n');
+local_assert_multiline_warning();
+fprintf('CASE multiline warning PASS: ANSI opener is emitted immediately, without future-line aggregation.\n');
 local_assert_duplicate_terminal(terminal_sample);
-fprintf('CASE duplicate output PASS: repeated archived terminal output is emitted once.\n');
+fprintf('CASE duplicate output PASS: repeated orphan completion is not emitted.\n');
 local_assert_truncated_tail(terminal_sample);
-fprintf('CASE truncated logs PASS: production presenter renders the partial terminal row.\n');
+fprintf('CASE truncated logs PASS: preceding observation is retained, orphan completion is not fabricated.\n');
 local_assert_missing_outputs(exit_zero_sample);
 fprintf('CASE missing outputs PASS: archived scheduler exit 0 alone is not VERIFIED.\n');
 local_assert_failure(terminal_sample, stage_ids);
@@ -150,7 +168,7 @@ fprintf('CASE failure PASS: finalization failure is ERROR, never completion.\n')
 local_assert_cancellation(terminal_sample);
 fprintf('CASE cancellation PASS: cancellation is terminal, not a stage completion.\n');
 local_assert_policy_fixtures(profiles, configs, stage_ids);
-fprintf('CASE delegation PASS: synthetic legacy fixture reserves stages 2-3 as one event.\n');
+fprintf('CASE delegation PASS: legacy stages 2 and 3 have separate INFO rows with caller-supplied metadata.\n');
 fprintf('CASE MPRAGE skip PASS: archived stage 9 and synthetic stage 9-10 JSON fixtures pass.\n');
 fprintf('REPRESENTATIVE_TEXT %s\n', representative_text);
 fprintf('REPRESENTATIVE_JSONL %s\n', representative_json);
@@ -344,19 +362,89 @@ for li = 1:length(lines)
     if isempty(strtrim(lines{li}))
         continue;
     end
-    records{end + 1} = jsondecode(lines{li}); %#ok<AGROW>
+        [value, position] = local_decode_json(lines{li}, 1);
+        assert(position == length(lines{li}) + 1, 'Trailing JSON content.');
+        records{end + 1} = value; %#ok<AGROW>
 end
+end
+
+function [value, position] = local_decode_json(text, position)
+% R2010b has no jsondecode. Decode the emitted JSON grammar strictly in MATLAB;
+% do not involve the Python presentation oracle (or any external process).
+while position <= length(text) && isspace(text(position)), position = position + 1; end
+assert(position <= length(text), 'Unexpected JSON EOF.');
+first = text(position); position = position + 1;
+if first == '{'
+    value = struct();
+    while position <= length(text) && text(position) ~= '}'
+        [key, position] = local_decode_json(text, position);
+        assert(ischar(key) && text(position) == ':', 'Invalid JSON object key.');
+        [item, position] = local_decode_json(text, position + 1);
+        value.(key) = item;
+        if text(position) ~= ',', break; end
+        position = position + 1;
+    end
+    assert(text(position) == '}', 'Unterminated JSON object.'); position = position + 1;
+elseif first == '['
+    items = {};
+    while position <= length(text) && text(position) ~= ']'
+        [item, position] = local_decode_json(text, position);
+        items{end + 1} = item; %#ok<AGROW>
+        if text(position) ~= ',', break; end
+        position = position + 1;
+    end
+    assert(text(position) == ']', 'Unterminated JSON array.'); position = position + 1;
+    value = items;
+    if all(cellfun(@isnumeric, items)), value = [items{:}]; end
+elseif first == '"'
+    value = '';
+    while position <= length(text) && text(position) ~= '"'
+        code = text(position); position = position + 1;
+        if code == char(92)
+            assert(position <= length(text));
+            escape = text(position); position = position + 1;
+            escapes = ['"' char(92) '/bfnrt'];
+            decoded = ['"' char(92) '/' char([8 12 10 13 9])];
+            slot = find(escapes == escape, 1);
+            if escape == 'u'
+                assert(position + 3 <= length(text) && ...
+                    ~isempty(regexp(text(position:position + 3), '^[0-9a-fA-F]{4}$', 'once')));
+                code = char(hex2dec(text(position:position + 3))); position = position + 4;
+            else
+                assert(~isempty(slot), 'Invalid JSON escape.'); code = decoded(slot);
+            end
+        else
+            assert(double(code) >= 32, 'Unescaped JSON control character.');
+        end
+        value = [value code]; %#ok<AGROW>
+    end
+    assert(position <= length(text) && text(position) == '"'); position = position + 1;
+else
+    position = position - 1;
+    token = regexp(text(position:end), ...
+        '^(true|false|null|-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?)', 'match', 'once');
+    assert(~isempty(token), 'Invalid JSON scalar.');
+    if strcmp(token, 'true'), value = true;
+    elseif strcmp(token, 'false'), value = false;
+    elseif strcmp(token, 'null'), value = [];
+    else value = str2double(token);
+    end
+    position = position + length(token);
+end
+while position <= length(text) && isspace(text(position)), position = position + 1; end
 end
 
 function local_assert_event_stages(events, stage_ids, profile)
 for ei = 1:length(events)
     event = events(ei);
+    assert(isempty(event.stage_span) || ...
+        (strcmp(event.event_kind, 'delegation') && isequal(event.stage_span, [2 3])), ...
+        'Unexpected caller-supplied stage span for %s.', profile);
     assert(~strcmp(event.status, 'UNCONFIRMED'), ...
         'UNCONFIRMED was published for %s.', profile);
     if isempty(event.stage_number) || strcmp(event.stage_number, 'unavailable')
         if strcmp(event.event_kind, 'delegation')
-            assert(isequal(event.stage_span, [2 3]), ...
-                'Legacy delegation lost its stages 2-3 span for %s.', profile);
+            error('Legacy delegation must identify stage 2 or 3 for %s.', profile);
         end
         continue;
     end
@@ -372,7 +460,7 @@ end
 
 function local_assert_ten_stage_fixture(profile, stage_map, stage_ids)
 % Structured in-memory events exercise all ten production tags per profile.
-% Legacy profiles reserve 2-3 for one delegation; MPRAGE-only profiles skip 9-10.
+% Legacy profiles reserve 2-3 for delegation; MPRAGE-only skips 9, promotes at 10.
 setenv('PSEUDOCT_OUTPUT_FORMAT', 'text');
 pseudo_CT_output_console_visible('RESET');
 covered = false(1, 10);
@@ -396,11 +484,11 @@ for si = 1:10
         context.operation_ids = {'prepare.recenter', 'prepare.alias_correct'};
         context.stage_status = 'INFO';
         line = '[2026-11-04 12:00:02] INFO [subject 1/1] Recentering and aliasing delegated to compiled v2 backend.';
-        [visible, ~, event] = local_emit('INFO', line, context);
-        assert(visible && strcmp(event.event_kind, 'delegation') && ...
-            isequal(event.stage_span, [2 3]));
+        % Legacy stage 2/3 notices are held until stage 4 starts.
+        [visible, ~, ~] = local_emit('INFO', line, context);
+        assert(~visible);
         covered(2:3) = true;
-        emitted = emitted + 1;
+        emitted = emitted + 2; % numbered stages 2 and 3, no unnumbered duplicate
         continue;
     end
     context.stage_index = si;
@@ -408,8 +496,8 @@ for si = 1:10
     context.stage_id = stage_ids{si};
     context.operation_id = stage_ids{si};
     context.event_category = local_stage_category(si);
-    if is_mprage_only && si >= 9
-        % SYNTHETIC FIXTURE: repeat archived stage 9 and cover missing stage 10.
+    if is_mprage_only && si == 9
+        % SYNTHETIC FIXTURE: explicit DICOM bypass; stage 10 is real promotion.
         context.event_kind = 'stage_skipped';
         context.stage_status = 'SKIPPED';
         context.reason = 'profile_policy:mprage_only';
@@ -420,20 +508,32 @@ for si = 1:10
         line = sprintf('[2026-11-04 12:00:%02d] INFO [subject 1/1] Stage %d started.', si, si);
     end
     [visible, row, event] = local_emit('INFO', line, context);
-    assert(visible && strcmp(event.stage_id, stage_ids{si}) && ...
-        str2double(event.stage_number) == si && ...
+    if si == 5 && ~visible
+        % The accepted bounded stage-5 hold applies while stage 4 is open.
+        covered(si) = true;
+        emitted = emitted + 1;
+        continue;
+    end
+    released_stage5 = si == 6 && strcmp(event.stage_number, '5');
+    released_notices = is_legacy && si == 4 && strcmp(event.stage_number, '2');
+    assert(visible && (released_stage5 || released_notices || ...
+        (strcmp(event.stage_id, stage_ids{si}) && str2double(event.stage_number) == si)) && ...
         strcmp(event.stage_total, '10') && ...
         ~isempty(strfind(row, sprintf('[%d/10]', si))), ...
         'Production text stage tag %d/10 failed for %s.', si, profile);
-    if is_mprage_only && si >= 9
+    if is_mprage_only && si == 9
         assert(strcmp(event.event_kind, 'stage_skipped') && ...
             strcmp(event.status, 'SKIPPED') && ...
             strcmp(event.reason, 'profile_policy:mprage_only'));
     end
     covered(si) = true;
     emitted = emitted + 1;
+    if is_legacy && si == 6
+        emitted = emitted + 1;   % legacy: inferred DONE(5) precedes ACTIVE(6)
+    end
 end
 events = pseudo_CT_output_console_visible('DRAIN_EVENTS');
+local_assert_event_stages(events, stage_ids, profile);
 assert(all(covered) && length(events) == emitted, ...
     'Not all ten logical stages were represented once for %s.', profile);
 end
@@ -445,9 +545,51 @@ pseudo_CT_output_console_visible('RESET');
 [first_visible, ~, first_event] = local_emit('INFO', sample.line, sample.context);
 [second_visible, ~, ~] = local_emit('INFO', sample.line, sample.context);
 events = pseudo_CT_output_console_visible('DRAIN_EVENTS');
-assert(first_visible && strcmp(first_event.event_kind, 'stage_completed') && ...
-    ~second_visible && length(events) == 1, ...
-    'Duplicate archived terminal output was not suppressed.');
+% No ACTIVE was replayed after RESET: neither completion has start evidence.
+assert(~first_visible && strcmp(first_event.event_kind, 'unavailable') && ...
+    ~second_visible && isempty(events), ...
+    'Repeated orphan completion was incorrectly admitted.');
+end
+
+function local_assert_multiline_warning()
+policy = struct('mode','local','implementation','current', ...
+    'output_policy','nifti-and-dicom','reference_policy','umap-required');
+context = local_context('local-current', pseudo_CT_stage_map(policy), ...
+    'synthetic/ansi-multiline-warning.log');
+long_token = repmat('x', 1, 180);
+opener = ['[2026-11-04 12:00:00] INFO [subject 1/1] ' ...
+    char(27) '[31m{Warning: first warning line'];
+continuation = '    second line from warning';
+% Do not label this fixture "token": credential redaction intentionally hides it.
+ending = ['    third line with long value ' long_token '}'];
+
+setenv('PSEUDOCT_OUTPUT_FORMAT', 'text');
+pseudo_CT_output_console_visible('RESET');
+evalc(['[opener_visible, opener_row] = pseudo_CT_output_console_visible(''INFO'', opener, ', ...
+    'context, opener); pseudo_CT_output_console_visible(''INFO'', ', ...
+    'continuation, context, continuation); pseudo_CT_output_console_visible(', ...
+    '''INFO'', ending, context, ending); ', ...
+    'pseudo_CT_output_console_visible(''FLUSH'');']);
+events = pseudo_CT_output_console_visible('DRAIN_EVENTS');
+assert(length(events) == 1 && strcmp(events(1).event_kind, 'warning') && ...
+    strcmp(events(1).timestamp, '2026-11-04 12:00:00') && ...
+    strcmp(events(1).original_timestamp, '2026-11-04 12:00:00') && ...
+    strcmp(events(1).source_file, 'synthetic/ansi-multiline-warning.log') && ...
+    strcmp(events(1).message, 'first warning line') && ...
+    opener_visible && ~isempty(strfind(opener_row, 'first warning line')));
+% The accepted incremental architecture cannot append future continuation
+% lines to an event that has already been emitted (only stage 5 may be held).
+
+setenv('PSEUDOCT_OUTPUT_FORMAT', 'jsonl');
+pseudo_CT_output_console_visible('RESET');
+json_output = evalc(['pseudo_CT_output_console_visible(''INFO'', opener, ', ...
+    'context, opener); pseudo_CT_output_console_visible(''INFO'', ', ...
+    'continuation, context, continuation); pseudo_CT_output_console_visible(', ...
+    '''INFO'', ending, context, ending); ', ...
+    'pseudo_CT_output_console_visible(''FLUSH'');']);
+records = local_json_records(json_output);
+assert(length(records) == 1 && strcmp(records{1}.message, events(1).message) && ...
+    strcmp(records{1}.original_timestamp, '2026-11-04 12:00:00'));
 end
 
 function local_assert_truncated_tail(sample)
@@ -459,10 +601,6 @@ setenv('PSEUDOCT_OUTPUT_FORMAT', 'text');
 pseudo_CT_output_console_visible('RESET');
 truncated = sample.line(1:end - 8);
 last_tag = find(truncated == ']', 1, 'last');
-expected_partial_text = '';
-if ~isempty(last_tag)
-    expected_partial_text = strtrim(truncated(last_tag + 1:end));
-end
 [preceding_visible, ~, preceding_event] = local_emit('INFO', ...
     sample.preceding_line, sample.preceding_context);
 [partial_visible, partial_row, partial_event] = local_emit('INFO', ...
@@ -475,17 +613,11 @@ events = pseudo_CT_output_console_visible('DRAIN_EVENTS');
 assert(preceding_visible && ...
     strcmp(preceding_event.event_kind, sample.preceding_event.event_kind) && ...
     strcmp(preceding_event.message, sample.preceding_event.message) && ...
-    partial_visible && strcmp(partial_event.event_kind, 'stage_completed') && ...
-    strcmp(partial_event.status, 'DONE') && ~isempty(last_tag) && ...
-    strcmp(partial_event.message, expected_partial_text) && ...
-    length(events) == 2 && ...
+    ~partial_visible && strcmp(partial_event.event_kind, 'unavailable') && ...
+    isempty(partial_row) && ~isempty(last_tag) && length(events) == 1 && ...
     strcmp(events(1).event_kind, sample.preceding_event.event_kind) && ...
-    strcmp(events(1).message, sample.preceding_event.message) && ...
-    strcmp(events(2).event_kind, 'stage_completed') && ...
-    strcmp(events(2).status, 'DONE') && ...
-    strcmp(events(2).message, expected_partial_text) && ...
-    ~isempty(strfind(partial_row, expected_partial_text)), ...
-    'Production flush lost the complete archived event or partial terminal row.');
+    strcmp(events(1).message, sample.preceding_event.message), ...
+    'Production flush lost the preceding event or fabricated an orphan DONE.');
 end
 
 function local_assert_missing_outputs(sample)
@@ -536,6 +668,7 @@ policy = struct('mode','local','implementation','current', ...
     'output_policy','nifti-and-dicom','reference_policy','umap-required');
 context = local_context('local-current', pseudo_CT_stage_map(policy), ...
     'synthetic/cancellation.log');
+context.event_kind = 'cancelled';
 % SYNTHETIC VARIANT: preserve the archived record prefix, replace its outcome.
 line = regexprep(sample.line, 'SUCCESS', 'INFO', 'once');
 line = regexprep(line, '\[stage[ \t]+[0-9]+/[0-9]+\]', '');
@@ -557,7 +690,7 @@ for pi = 1:length(profiles)
     end
     stage_map = pseudo_CT_stage_map(configs{pi});
     if ~isempty(strfind(profile, 'mprage-only'))
-        % SYNTHETIC FIXTURE: repeat archived stage 9 and cover missing stage 10.
+        % SYNTHETIC FIXTURE: DICOM is skipped; NIfTI promotion really starts.
         setenv('PSEUDOCT_OUTPUT_FORMAT', 'jsonl');
         pseudo_CT_output_console_visible('RESET');
         for si = 9:10
@@ -573,17 +706,26 @@ for pi = 1:length(profiles)
             context.stage_status = 'SKIPPED';
             context.reason = 'profile_policy:mprage_only';
             line = sprintf('[2026-11-04 12:02:%02d] INFO [subject 1/1] MPRAGE-only stage %d skipped.', si, si);
+            expected_kind = 'stage_skipped'; expected_status = 'SKIPPED';
+            if si == 10
+                context.event_kind = 'stage_started'; context.stage_status = 'START';
+                context.reason = ''; expected_kind = 'stage_started'; expected_status = 'ACTIVE';
+                line = '[2026-11-04 12:02:10] INFO [subject 1/1] Promoting final outputs.';
+            end
             [visible, ~, event, record] = local_emit_json('INFO', line, context);
-            assert(visible && strcmp(event.event_kind, 'stage_skipped') && ...
-                strcmp(event.status, 'SKIPPED') && ...
+            assert(visible && strcmp(event.event_kind, expected_kind) && ...
+                strcmp(event.status, expected_status) && ...
                 strcmp(event.stage_id, stage_ids{si}) && ...
                 str2double(event.stage_number) == si && ...
-                strcmp(event.reason, 'profile_policy:mprage_only'));
+                ((si == 9 && strcmp(event.reason, 'profile_policy:mprage_only')) || ...
+                 (si == 10 && strcmp(event.reason, 'unavailable'))));
             assert(strcmp(record.type, 'progress') && ...
-                strcmp(record.event_kind, 'stage_skipped') && ...
+                strcmp(record.event_kind, expected_kind) && ...
+                strcmp(record.status, expected_status) && ...
                 strcmp(record.stage_id, stage_ids{si}) && ...
                 record.stage_number == si && record.stage_total == 10 && ...
-                strcmp(record.reason, 'profile_policy:mprage_only'));
+                ((si == 9 && strcmp(record.reason, 'profile_policy:mprage_only')) || ...
+                 (si == 10 && ~isfield(record, 'reason'))));
         end
         events = pseudo_CT_output_console_visible('DRAIN_EVENTS');
         assert(length(events) == 2 && ...
@@ -605,18 +747,28 @@ for pi = 1:length(profiles)
         context.stage_status = 'INFO';
         line = ['[2026-11-04 12:03:00] INFO [subject 1/1] ', ...
             'Recentering and aliasing delegated to compiled v2 backend.'];
-        [visible, ~, event, record] = local_emit_json('INFO', line, context);
+        % Held until stage 4 / terminal row / FLUSH; FLUSH releases both notices.
+        capture = evalc(['[visible, ~, ~] = ', ...
+            'pseudo_CT_output_console_visible(''INFO'', line, context, line);', ...
+            'pseudo_CT_output_console_visible(''FLUSH'');']);
+        records = local_json_records(capture);
+        assert(length(records) == 2);
+        record = records{1};
         events = pseudo_CT_output_console_visible('DRAIN_EVENTS');
-        assert(visible && length(events) == 1 && ...
+        event = events(1);
+        assert(~visible && length(events) == 2 && ...
             strcmp(event.event_kind, 'delegation') && ...
-            strcmp(event.stage_number, 'unavailable') && ...
+            strcmp(event.stage_number, '2') && ...
             isequal(event.stage_span, [2 3]) && ...
             isequal(event.operation_ids, ...
                 {'prepare.recenter', 'prepare.alias_correct'}));
         assert(strcmp(record.type, 'progress') && ...
             strcmp(record.event_kind, 'delegation') && ...
-            isequal(record.stage_span(:)', [2 3]) && ...
-            ~local_has_public_number(record));
+            isequal(record.stage_span, [2 3]) && ...
+            record.stage_number == 2 && record.stage_total == 10);
+        assert(strcmp(events(1).stage_number, '2') && ...
+            strcmp(events(2).stage_number, '3') && ...
+            all(strcmp({events(1:2).status}, 'INFO')));
     end
 end
 

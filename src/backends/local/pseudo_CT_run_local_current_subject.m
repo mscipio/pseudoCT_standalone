@@ -80,7 +80,9 @@ job.check_aliasing = double(check_aliasing);
 job.recenter_before_normalization = recenter_before_normalization;
 job.bone_enabled = logical(config.bone_enabled);
 job.zero_background = config.zero_background;
-job_manifest_path = [tempname(strtrim(work_dir)) '.mat'];
+runtime_dir = pseudo_CT_runtime_dir(strtrim(work_dir));
+runtime_guard = onCleanup(@() pseudo_CT_cleanup_runtime_dir(runtime_dir)); %#ok<NASGU>
+job_manifest_path = fullfile(runtime_dir, 'job.mat');
 save(job_manifest_path, 'job', '-v6');
 
 % Local Current public-stage state (stage 1 was reported by the orchestrator).
@@ -89,29 +91,42 @@ public('stage') = 1;
 public('open') = false;
 public('started') = tic;
 
-local_run_phase(config.current, 'prepare', job_manifest_path, ...
-    config.current.resource_manifest, output_context, public);
+% Scientific event records (JSONL beside the run log). Advisory only: the
+% emitter never throws, so these lines cannot change the processing outcome.
+event_target = pseudo_CT_scientific_event_target(output_context);
+pseudo_CT_scientific_event(event_target, 'current_prepare', 'STARTED', ...
+    'Compiled prepare phase started.');
+try
+    local_run_phase(config.current, 'prepare', job_manifest_path, ...
+        config.current.resource_manifest, output_context, public);
 
-handoff_path = fullfile(strtrim(work_dir), 'mlsc_current_handoff.mat');
-if exist(handoff_path, 'file') ~= 2
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current prepare did not produce its handoff.');
+    handoff_path = fullfile(strtrim(work_dir), 'mlsc_current_handoff.mat');
+    if exist(handoff_path, 'file') ~= 2
+        error('pseudo_CT:LocalCurrentPrepare', ...
+            'Compiled current prepare did not produce its handoff.');
+    end
+    handoff_info = dir(handoff_path);
+    if isempty(handoff_info) || handoff_info(1).bytes == 0
+        error('pseudo_CT:LocalCurrentPrepare', ...
+            'Compiled current prepare produced an empty handoff.');
+    end
+    loaded = load(handoff_path, 'handoff');
+    if ~isfield(loaded, 'handoff') || ~isstruct(loaded.handoff) || ...
+            numel(loaded.handoff) ~= 1
+        error('pseudo_CT:LocalCurrentPrepare', ...
+            'Compiled current prepare produced an invalid handoff.');
+    end
+    handoff = loaded.handoff;
+    clear loaded
+    local_validate_handoff(handoff, job_manifest_path, ...
+        config.current.resource_manifest, config.atlas_root);
+catch prepare_error
+    pseudo_CT_scientific_event(event_target, 'current_prepare', 'FAILED', ...
+        'Compiled prepare phase failed.');
+    rethrow(prepare_error);
 end
-handoff_info = dir(handoff_path);
-if isempty(handoff_info) || handoff_info(1).bytes == 0
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current prepare produced an empty handoff.');
-end
-loaded = load(handoff_path, 'handoff');
-if ~isfield(loaded, 'handoff') || ~isstruct(loaded.handoff) || ...
-        numel(loaded.handoff) ~= 1
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current prepare produced an invalid handoff.');
-end
-handoff = loaded.handoff;
-clear loaded
-local_validate_handoff(handoff, job_manifest_path, ...
-    config.current.resource_manifest, config.atlas_root);
+pseudo_CT_scientific_event(event_target, 'current_prepare', 'COMPLETED', ...
+    'Compiled prepare phase completed with a verified handoff.');
 
 selected_input = strtrim(handoff.input_selected);
 if logical(handoff.needs_normalization)
@@ -131,10 +146,14 @@ if logical(handoff.needs_normalization)
         'username', 'local', 'password', '', 'autoreconnect', 0);
     normalization_command = sprintf('mri_normalize %s %s', ...
         selected_input, normalized_path);
+    pseudo_CT_scientific_event(event_target, 'workflow.normalize', 'STARTED', ...
+        'FreeSurfer MPRAGE normalization started.');
     try
         normalization_status = run_normalization_cmd(normalization_command, ...
             normalization_connection, normalization_context, config);
     catch normalization_error
+        pseudo_CT_scientific_event(event_target, 'workflow.normalize', 'FAILED', ...
+            'FreeSurfer MPRAGE normalization failed.');
         % Report the failed stage before the error propagates; no DONE.
         local_normalization_failed(output_context, sprintf( ...
             'FreeSurfer normalization could not be completed: %s', ...
@@ -144,12 +163,16 @@ if logical(handoff.needs_normalization)
     normalized_info = dir(normalized_path);
     if normalization_status ~= 0 || isempty(normalized_info) || ...
             normalized_info(1).bytes == 0
+        pseudo_CT_scientific_event(event_target, 'workflow.normalize', 'FAILED', ...
+            'FreeSurfer MPRAGE normalization failed.');
         local_normalization_failed(output_context, sprintf( ...
             'FreeSurfer did not produce a non-empty normalized NIfTI file (exit status %d).', ...
             normalization_status));
         error('pseudo_CT:LocalCurrentNormalization', ...
             'FreeSurfer did not produce a non-empty normalized NIfTI file.');
     end
+    pseudo_CT_scientific_event(event_target, 'workflow.normalize', 'COMPLETED', ...
+        'FreeSurfer MPRAGE normalization completed.');
     public = local_public_set(public, 4, false);
     pseudo_CT_output('SUCCESS', local_public_context(output_context, 4, 'DONE'), ...
         'MPRAGE normalization completed (elapsed %s).', ...
@@ -167,29 +190,39 @@ if exist(normalized_path, 'file') ~= 2
     error('pseudo_CT:LocalCurrentNormalization', ...
         'The current payload normalized input is unavailable.');
 end
-local_run_phase(config.current, 'compute', job_manifest_path, ...
-    config.current.resource_manifest, output_context, public);
+pseudo_CT_scientific_event(event_target, 'current_compute', 'STARTED', ...
+    'Compiled compute phase started.');
+try
+    local_run_phase(config.current, 'compute', job_manifest_path, ...
+        config.current.resource_manifest, output_context, public);
 
-for ii = 1:numel(config.current.required_outputs)
-    output_path = fullfile(strtrim(work_dir), ...
-        config.current.required_outputs{ii});
-    output_info = dir(output_path);
-    if isempty(output_info) || output_info(1).bytes == 0
-        error('pseudo_CT:LocalCurrentCompute', ...
-            'Compiled current compute did not produce a required output.');
+    for ii = 1:numel(config.current.required_outputs)
+        output_path = fullfile(strtrim(work_dir), ...
+            config.current.required_outputs{ii});
+        output_info = dir(output_path);
+        if isempty(output_info) || output_info(1).bytes == 0
+            error('pseudo_CT:LocalCurrentCompute', ...
+                'Compiled current compute did not produce a required output.');
+        end
     end
+    verification_path = fullfile(strtrim(work_dir), ...
+        'mlsc_current_output_verification.txt');
+    if exist(verification_path, 'file') ~= 2
+        error('pseudo_CT:LocalCurrentCompute', ...
+            'Compiled current compute did not produce output verification evidence.');
+    end
+    verification_info = dir(verification_path);
+    if isempty(verification_info) || verification_info(1).bytes == 0
+        error('pseudo_CT:LocalCurrentCompute', ...
+            'Compiled current output verification evidence is empty.');
+    end
+catch compute_error
+    pseudo_CT_scientific_event(event_target, 'current_compute', 'FAILED', ...
+        'Compiled compute phase failed.');
+    rethrow(compute_error);
 end
-verification_path = fullfile(strtrim(work_dir), ...
-    'mlsc_current_output_verification.txt');
-if exist(verification_path, 'file') ~= 2
-    error('pseudo_CT:LocalCurrentCompute', ...
-        'Compiled current compute did not produce output verification evidence.');
-end
-verification_info = dir(verification_path);
-if isempty(verification_info) || verification_info(1).bytes == 0
-    error('pseudo_CT:LocalCurrentCompute', ...
-        'Compiled current output verification evidence is empty.');
-end
+pseudo_CT_scientific_event(event_target, 'current_compute', 'COMPLETED', ...
+    'Compiled compute phase completed with verified outputs.');
 Pf = fullfile(strtrim(work_dir), 'att_map.nii');
 end
 
@@ -236,6 +269,7 @@ if isfield(output_context, 'log_file') && ...
         ~isempty(strtrim(output_context.log_file))
     stream_log = strtrim(output_context.log_file);
 end
+stage_context.runtime_temp_dir = fileparts(fileparts(job_manifest_path));
 status = local_run_streaming(command, stream_log, stage_context, ...
     phase_started, phase, public);
 if status ~= 0
@@ -290,8 +324,8 @@ end
 function status = local_run_streaming(command, log_path, output_context, ...
         phase_started, phase_label, public)
 %LOCAL_RUN_STREAMING Tail a private capture of the merged child stream.
-%   The merged compiled stdout/stderr is teed into a private capture file in
-%   scratch. Every line is secret-filtered and appended to the per-subject run
+%   The merged compiled stdout/stderr is teed into a private retained capture
+%   under job.temp_dir. Every line is secret-filtered and appended to the run
 %   log (success, failure, or interruption); only structured lifecycle events
 %   reach the shared presenter. Startup and dependency chatter stay log-only.
 if nargin < 5
@@ -303,10 +337,22 @@ if nargin < 6
     public('open') = false;
     public('started') = tic;
 end
-scratch_dir = local_current_scratch_dir();
+if ~isfield(output_context, 'runtime_temp_dir')
+    error('pseudo_CT:RuntimeDirectory', 'Resolved subject job.temp_dir is required.');
+end
+scratch_dir = pseudo_CT_runtime_dir(output_context.runtime_temp_dir);
+runtime_guard = onCleanup(@() pseudo_CT_cleanup_runtime_dir(scratch_dir)); %#ok<NASGU>
 status_path = fullfile(scratch_dir, 'runner.exit');
 status_tmp_path = [status_path '.tmp'];
-capture_path = fullfile(scratch_dir, 'runner.capture');
+capture_path = fullfile(scratch_dir, ...
+    ['pseudoct_v3_compiled_' datestr(now, 'yyyymmddTHHMMSS') '.log']);
+% The unique mode-0700 directory isolates concurrent invocations. Create the
+% stream exclusively at mode 0600 BEFORE tee opens it; never retain raw bytes.
+[capture_status, ~] = system(['umask 077; set -C; : > ' ...
+    local_shell_quote(capture_path) ' && chmod 600 -- ' local_shell_quote(capture_path)]);
+if capture_status ~= 0
+    error('pseudo_CT:LocalCurrentRunner', 'Cannot securely create compiled stream.');
+end
 persist_path = '';
 if ~isempty(log_path)
     persist_path = log_path;
@@ -336,7 +382,8 @@ stream_state('warn_lines') = 0;
 stream_state('warn_counts') = containers.Map();
 stream_state('warn_order') = {};
 stream_state('public') = public;
-% Drain, persist, and remove the private capture on every exit path.
+stream_state('scientific_source') = capture_path;
+% Drain and persist on every exit path; retain the redacted capture.
 stream_guard = onCleanup(@() local_finish_current_stream( ...
     capture_path, persist_path, stream_state, output_context)); %#ok<NASGU>
 
@@ -352,13 +399,22 @@ pipeline_command = [command ' 2>&1 | ' redact_filter ' | tee -a ' ...
     local_shell_quote(capture_path) ...
     '; set -- ${PIPESTATUS[*]}; if [ "$1" -ne 0 ]; then ' ...
     'exit "$1"; fi; if [ "$2" -ne 0 ]; then exit "$2"; fi; exit "$3"'];
-launch_command = ['( /bin/bash -o pipefail -c ' ...
+launch_command = ['( cd ' local_shell_quote(scratch_dir) ...
+    ' || exit 1; export TMPDIR=' local_shell_quote(scratch_dir) ...
+    ' TMP=' local_shell_quote(scratch_dir) ' TEMP=' local_shell_quote(scratch_dir) ...
+    ' MCR_CACHE_ROOT=' local_shell_quote(fullfile(scratch_dir, 'mcr-cache')) ...
+    '; /bin/bash -o pipefail -c ' ...
     local_shell_quote(pipeline_command) ...
     '; runner_status=$?; printf "%s\n" "$runner_status" > ' ...
     local_shell_quote(status_tmp_path) '; mv -f ' ...
     local_shell_quote(status_tmp_path) ' ' ...
-    local_shell_quote(status_path) '; exit "$runner_status" ) ' ...
-    '</dev/null >/dev/null 2>&1 & echo $!'];
+    local_shell_quote(status_path) '; if [ -f ' ...
+    local_shell_quote(fullfile(scratch_dir, 'monitor.closed')) ...
+    ' ]; then find ' local_shell_quote(scratch_dir) ...
+    ' -mindepth 1 -maxdepth 1 ! -name ''pseudoct_v3_compiled_*'' ' ...
+    '-exec rm -rf -- {} + 2>/dev/null; fi; exit "$runner_status" ) ' ...
+    '</dev/null >/dev/null 2>&1 & wrapper_pid=$!; printf "%s\n" "$wrapper_pid" > ' ...
+    local_shell_quote(fullfile(scratch_dir, 'runner.pid')) '; echo "$wrapper_pid"'];
 [launch_status, pid_text] = system(launch_command);
 runner_pid = str2double(strtrim(pid_text));
 if launch_status ~= 0 || ~isscalar(runner_pid) || ...
@@ -415,45 +471,6 @@ end
 if exist(status_tmp_path, 'file') == 2
     delete(status_tmp_path);
 end
-end
-
-function scratch_dir = local_current_scratch_dir()
-source_dir = fileparts(mfilename('fullpath'));
-project_root = fileparts(fileparts(fileparts(source_dir)));
-scratch_root = fullfile(project_root, 'scratch');
-day_dir = fullfile(scratch_root, datestr(now, 'yyyy-mm-dd'));
-paths = {scratch_root; day_dir};
-for ii = 1:length(paths)
-    [path_check, ~] = system(['test ! -L ' local_shell_quote(paths{ii})]);
-    if path_check ~= 0
-        error('pseudo_CT:LocalCurrentRunner', ...
-            'The local-current scratch path must not be a symbolic link.');
-    end
-    if exist(paths{ii}, 'dir') ~= 7
-        [made, message] = mkdir(paths{ii});
-        if ~made && exist(paths{ii}, 'dir') ~= 7
-            error('pseudo_CT:LocalCurrentRunner', ...
-                'Could not create local-current scratch directory: %s', message);
-        end
-    end
-end
-
-stamp = datestr(now, 'HHMMSS');
-for ii = 1:100
-    if ii == 1
-        suffix = '';
-    else
-        suffix = sprintf('-%d', ii);
-    end
-    candidate = fullfile(day_dir, [stamp '-local-current-runner' suffix]);
-    [made, ~] = system(['mkdir -- ' local_shell_quote(candidate) ' 2>/dev/null']);
-    if made == 0
-        scratch_dir = candidate;
-        return;
-    end
-end
-error('pseudo_CT:LocalCurrentRunner', ...
-    'Could not allocate a unique local-current scratch directory.');
 end
 
 function local_tail_current_output(capture_path, persist_path, ...
@@ -515,12 +532,6 @@ function local_finish_current_stream(capture_path, persist_path, ...
 try
     local_tail_current_output(capture_path, persist_path, stream_state, ...
         true, output_context);
-catch %#ok<CTCH>
-end
-try
-    if exist(capture_path, 'file') == 2
-        delete(capture_path);
-    end
 catch %#ok<CTCH>
 end
 end
@@ -617,6 +628,8 @@ end
 function local_print_current_console_line(line, stream_state, output_context)
 % Outside the CLI the original bracketed MATLAB logging is unchanged: nothing
 % is echoed here and the detailed stream is only persisted to the run log.
+[scientific, scientific_events] = pseudo_CT_live_scientific_line(line, ...
+    stream_state('scientific_source'), 'v3', output_context, stream_state);
 in_block = stream_state('in_warning');
 % The compiled MATLAB runtime emits "{<BS>Warning: ...}<BS>" (backspace,
 % which STRTRIM does not remove). The raw line is already in the run log;
@@ -645,6 +658,21 @@ elseif strcmp(line_class, 'private') && in_block && isempty(strtrim(line))
     return;  % blank line inside an open warning block
 end
 local_flush_warning_block(stream_state, output_context);
+if scientific
+    public = stream_state('public');
+    for ii = 1:length(scientific_events)
+        event = scientific_events(ii);
+        if strcmp(event.status, 'START')
+            local_public_set(public, event.stage.index, true);
+        elseif strcmp(event.status, 'DONE')
+            local_public_set(public, event.stage.index, false);
+        end
+    end
+    if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+        pseudo_CT_present_scientific_events(scientific_events, output_context);
+    end
+    return;
+end
 if ~strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
     return;
 end
@@ -951,8 +979,8 @@ end
 
 function [context, mapped] = local_canonical_stream_event(line, output_context, public)
 %LOCAL_CANONICAL_STREAM_EVENT Canonical event for a compiled-stream line.
-%   The stage knowledge of the compiled PREPARE/COMPUTE messages lives here.
-%   Lines that are not stage events keep the active stage context only.
+%   Preserve the existing PREPARE outcome adapter. COMPUTE interpretation is
+%   version-specific in src/io, shared with direct stream replay.
 context = output_context;
 mapped = false;
 active = public('stage');
@@ -1005,59 +1033,6 @@ for ii = 1:size(outcome, 1)
     end
 end
 
-if strcmp(level, 'WARN') || strcmp(level, 'ERROR')
-    return;
-end
-starts = {'aligning mprage and creating subject mask', 5; ...
-    'running spm new segment', 6; 'starting the new segment process', 6; ...
-    'registering atlases with dartel', 7; ...
-    'starting the dartel coregistration process', 7; ...
-    'building attenuation map and qc image', 8};
-dones = {'alignment and masking completed (elapsed ', 5; ...
-    'segmentation completed (elapsed ', 6; ...
-    'atlas registration completed (elapsed ', 7; ...
-    'attenuation map and qc completed (elapsed ', 8};
-substeps = {'applying inverse warp', 'reslicing atlases into mprage space', ...
-    'coregistration and reslicing finished', 'starting the inverse warped process', ...
-    'starting the final reslicing', 'done ''create inverse warped'''};
-if strcmp(level, 'INFO')
-    for ii = 1:size(starts, 1)
-        if strncmp(text, starts{ii, 1}, length(starts{ii, 1}))
-            n = starts{ii, 2};
-            if public('stage') == n && public('open')
-                status = 'INFO';   % further message of the running stage
-            else
-                status = 'START';
-                public('started') = tic;
-            end
-            public('stage') = n;
-            public('open') = true;
-            context = local_public_context(output_context, n, status);
-            mapped = true;
-            return;
-        end
-    end
-    if public('stage') == 7
-        for ii = 1:length(substeps)
-            if strncmp(text, substeps{ii}, length(substeps{ii}))
-                context = local_public_context(output_context, 7, 'INFO');
-                mapped = true;
-                return;
-            end
-        end
-    end
-elseif strcmp(level, 'SUCCESS')
-    for ii = 1:size(dones, 1)
-        if strncmp(text, dones{ii, 1}, length(dones{ii, 1}))
-            n = dones{ii, 2};
-            public('stage') = n;
-            public('open') = false;
-            context = local_public_context(output_context, n, 'DONE');
-            mapped = true;
-            return;
-        end
-    end
-end
 end
 
 function local_normalization_failed(output_context, reason)

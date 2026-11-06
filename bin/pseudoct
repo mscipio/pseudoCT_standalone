@@ -199,14 +199,53 @@ fi
 
 root_dir=$(CDPATH= cd -P -- "$(dirname -- "$(readlink -f -- "$0")")/.." 2>/dev/null && pwd -P) || \
     error_record "$EXIT_RUNTIME" 'Cannot resolve pseudoCT installation root.'
-date_part=$(date '+%Y-%m-%d')
-stamp=$(date '+%H%M%S')
-scratch_parent=$root_dir/scratch/$date_part
-mkdir -p -- "$scratch_parent" 2>/dev/null || error_record "$EXIT_RUNTIME" 'Cannot create the local scratch directory.'
+# Resolve the request's owning subject before creating ANY runtime files.
+# A multi-subject request's CLI transport belongs to its first subject;
+# scientific runners still allocate beneath each individual job.temp_dir.
 umask 077
-tmp_dir=$(mktemp -d "$scratch_parent/$stamp-pseudoct-cli.XXXXXX" 2>/dev/null) || \
+subject_temp=$(python3 - "$config" "$mprage" "$seen_config" <<'PY'
+import json, os, sys
+try:
+    if sys.argv[3] == '1':
+        with open(sys.argv[1], encoding='utf-8') as f:
+            job = json.load(f)
+        paths = job['mprage']
+        if not isinstance(paths, list) or not paths:
+            raise ValueError()
+        value = paths[0]
+    else:
+        value = sys.argv[2]
+    if not isinstance(value, str) or not value or any(c in value for c in '\0\r\n'):
+        raise ValueError()
+    path = os.path.abspath(os.path.expanduser(value))
+    if not os.path.isfile(path) or not os.access(path, os.R_OK):
+        raise ValueError()
+    series = os.path.dirname(path)
+    search = series
+    processing_root = ''
+    while os.path.basename(search).lower() != 'mr':
+        if not processing_root and os.path.basename(search).lower() == 'mr_pet':
+            processing_root = search
+        parent = os.path.dirname(search)
+        if parent == search:
+            search = ''
+            break
+        search = parent
+    subject = os.path.dirname(search) if search else (
+        os.path.dirname(processing_root) if processing_root else os.path.dirname(series))
+    target = os.path.join(subject, 'MR_PET', 'tmp')
+    if os.path.islink(target):
+        raise ValueError()
+    os.makedirs(target, mode=0o700, exist_ok=True)
+    print(target)
+except (OSError, ValueError, TypeError, KeyError):
+    raise SystemExit(1)
+PY
+) || error_record "$EXIT_RUNTIME" 'Cannot resolve a writable subject MR_PET/tmp directory.'
+umask 077
+tmp_dir=$(mktemp -d "$subject_temp/pseudoct-cli.XXXXXXXX" 2>/dev/null) || \
     error_record "$EXIT_RUNTIME" 'Cannot create a private temporary directory.'
-chmod 700 "$tmp_dir" || error_record "$EXIT_RUNTIME" 'Cannot secure the temporary directory.'
+chmod 00700 "$tmp_dir" || error_record "$EXIT_RUNTIME" 'Cannot secure the temporary directory.'
 secret_dir=''
 handoff_registry=$tmp_dir/handoff-path.txt
 tty_state=''
@@ -269,6 +308,12 @@ PY
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
+
+# MATLAB/MCR caches, crash diagnostics and Python subprocess temporaries must
+# share the resolved subject location, never the installation or system temp.
+export TMPDIR="$tmp_dir" TMP="$tmp_dir" TEMP="$tmp_dir"
+export MATLAB_PREFDIR="$tmp_dir/matlab-prefs" MCR_CACHE_ROOT="$tmp_dir/mcr-cache"
+export PSEUDOCT_RUNTIME_DIR="$tmp_dir"
 
 invocation_id=$(uuidgen | tr 'A-F' 'a-f') || error_record "$EXIT_RUNTIME" 'Cannot generate an invocation UUID.'
 # Private index of relative MR_PET run-log paths reported by the lifecycle.
@@ -355,6 +400,8 @@ fi
 
 matlab_support() {
     support_mode=$1
+    (
+    cd -- "$tmp_dir" || exit 69
     PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE="$support_mode" \
     PSEUDOCT_CLI_INPUT="$input_file" PSEUDOCT_CLI_REQUEST="$2" \
     PSEUDOCT_CLI_RESULT="${3:-}" PSEUDOCT_CLI_SUMMARY="${4:-}" \
@@ -383,6 +430,7 @@ if ~exist('status', 'var') || ~isnumeric(status) || ~isscalar(status)
 end
 exit(status);
 MATLAB
+    )
 }
 
 run_headless() {
@@ -421,15 +469,15 @@ BARE_COMPILED_MARKER = re.compile(r"(?<!stage )(?<!stage\t)\[\d+/\d+\]", re.I)
 def remap_stage(value):
     return value
 
-# Presenter text table row: TIME(8)  SUBJECT(7) STAGE(8)  STATUS ... with a
-# bracketed [n/m] STAGE cell. These are public rows, not compiled markers.
-TABLE_ROW = re.compile(r"^(\d\d:\d\d:\d\d {2}.{7} )(.{8})( {2}.*)$", re.S)
+# Recognize public TIME SUBJECT [n/m] STATUS rows by their fields, not column
+# padding. The presenter uses --:--:-- when no source timestamp is available.
+TABLE_ROW = re.compile(
+    r"^((?:\d\d:\d\d:\d\d|--:--:--)[ \t]+\S+[ \t]+)(\[\d+/\d+\])"
+    r"([ \t]+(?:ACTIVE|DONE|SKIPPED|INFO|WARN|ERROR|CANCELLED|VERIFIED)\b.*)$",
+    re.S)
 
 def table_row_stage(text):
-    match = TABLE_ROW.match(text)
-    if match and re.fullmatch(r"\[\d+/\d+\]\s*", match.group(2)):
-        return match
-    return None
+    return TABLE_ROW.match(text)
 
 def remap_table_row(text):
     return text
@@ -542,7 +590,12 @@ def matlab_noise(text):
         return True
     return False
 
-text_header_state = {"seen": False, "suppressing_duplicate": False}
+text_header_state = {"seen": False, "suppressing_duplicate": False,
+                     "rule_pending": False}
+TABLE_HEADER = re.compile(r"^TIME\s+SUBJECT\s+STAGE\s+STATUS\s+MESSAGE\s*$")
+TABLE_RULE = re.compile(r"^-{20,}\s*$")
+header_marker = os.path.join(os.path.dirname(diagnostics_path),
+                             "table-header-seen")
 
 def is_header_continuation(text):
     value = text.strip()
@@ -585,6 +638,27 @@ def write_line(channel, raw, diagnostics):
         return
     if channel == "stdout" and output_format != "jsonl":
         header_line = candidate.rstrip("\r\n")
+        # Each MATLAB phase (validate, submit) is a new process with its own
+        # presenter, which prints the table header again. The first header
+        # (and its rule) is public output; later ones are diverted. The
+        # "seen" marker is a file next to the diagnostics so it survives
+        # across the per-phase transport processes. Rows are never touched.
+        if text_header_state["rule_pending"]:
+            text_header_state["rule_pending"] = False
+            if TABLE_RULE.match(header_line):
+                diagnostics.write("[stdout duplicate header] " + text)
+                diagnostics.flush()
+                return
+        if TABLE_HEADER.match(header_line):
+            if os.path.exists(header_marker):
+                text_header_state["rule_pending"] = True
+                diagnostics.write("[stdout duplicate header] " + text)
+                diagnostics.flush()
+                return
+            try:
+                open(header_marker, "w").close()
+            except OSError:
+                pass
         if text_header_state["suppressing_duplicate"]:
             if is_header_continuation(header_line):
                 diagnostics.write("[stdout duplicate header] " + text)
@@ -765,9 +839,9 @@ PY
             printf 'Remote username: ' > /dev/tty
             IFS= read -r username < /dev/tty || error_record "$EXIT_AUTH" 'Username prompt was cancelled.'
             [ -n "$username" ] || error_record "$EXIT_AUTH" 'Username cannot be empty.'
-            printf 'Remote password (not echoed): ' > /dev/tty
             tty_state=$(stty -g < /dev/tty 2>/dev/null) || error_record "$EXIT_AUTH" 'Cannot disable terminal echo for password input.'
             stty -echo < /dev/tty 2>/dev/null || error_record "$EXIT_AUTH" 'Cannot disable terminal echo for password input.'
+            printf 'Remote password (not echoed): ' > /dev/tty
             if IFS= read -r password < /dev/tty; then
                 stty "$tty_state" < /dev/tty 2>/dev/null || true
                 tty_state=''
@@ -778,15 +852,19 @@ PY
                 error_record "$EXIT_AUTH" 'Password prompt was cancelled.'
             fi
             [ -n "$password" ] || error_record "$EXIT_AUTH" 'Password cannot be empty.'
+            [ -d /dev/shm ] && [ -w /dev/shm ] && [ -x /dev/shm ] && \
+                [ "$(stat -f -c %T /dev/shm 2>/dev/null)" = tmpfs ] || \
+                error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
             secret_dir=$(mktemp -d /dev/shm/pseudoct-cli-credentials-XXXXXX 2>/dev/null) || \
                 error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
-            chmod 700 "$secret_dir" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
+            chmod 00700 "$secret_dir" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
             (umask 077; printf '%s\n%s\n' "$username" "$password" > "$secret_dir/login") || \
                 error_record "$EXIT_AUTH" 'Credential staging failed.'
             chmod 600 "$secret_dir/login" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
             unset username password
             handoff_output=$handoff_registry
-            if ! PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE=store_credentials \
+            if ! (cd -- "$tmp_dir" || exit 69
+                PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE=store_credentials \
                 PSEUDOCT_CLI_SECRET_FILE="$secret_dir/login" \
                 PSEUDOCT_CLI_HANDOFF_OUTPUT="$handoff_output" \
                 "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB' \
@@ -803,6 +881,7 @@ catch ME
 end
 exit(status);
 MATLAB
+                )
             then
                 error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.' AUTHENTICATION_FAILED
             fi

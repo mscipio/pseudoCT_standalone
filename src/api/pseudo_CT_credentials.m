@@ -68,14 +68,23 @@ end
 
 credential = struct('username', username, 'password', password);
 created = false;
+store_state = containers.Map();
+store_state('keep') = false;
+store_state('created') = false;
+store_guard = onCleanup(@() local_store_cleanup(credential_path, store_state)); %#ok<NASGU>
 try
     [status, ~] = system(['mkdir -m 700 -- ' local_quote(private_dir)]);
     if status ~= 0
         error('pseudo_CT:CredentialStoreFailed', 'Secure storage failed.');
     end
     created = true;
+    store_state('created') = true;
     local_require_mode(private_dir, '700', 'directory');
     local_require_absent(credential_path);
+    [status, ~] = system(['umask 077; set -C; : > ' local_quote(credential_path)]);
+    if status ~= 0
+        error('pseudo_CT:CredentialStoreFailed', 'Secure storage failed.');
+    end
     save(credential_path, 'credential', '-v6');
     local_require_mode(credential_path, '*', 'regular file');
     [status, ~] = system(['chmod 600 -- ' local_quote(credential_path)]);
@@ -84,6 +93,7 @@ try
     end
     local_require_mode(credential_path, '600', 'regular file');
     path_name = credential_path;
+    store_state('keep') = true;
 catch
     clear credential username password
     if created
@@ -95,6 +105,12 @@ end
 clear credential username password
 end
 
+function local_store_cleanup(path_name, state)
+if state('created') && ~state('keep')
+    local_best_effort_erase(path_name);
+end
+end
+
 function credentials = local_consume(path_name)
 credentials = struct('username', '', 'password', '');
 if ~local_safe_path(path_name)
@@ -102,6 +118,7 @@ if ~local_safe_path(path_name)
         'Single-use credential MAT file is invalid or already consumed.');
 end
 private_dir = fileparts(path_name);
+consume_guard = onCleanup(@() local_consume_cleanup(path_name)); %#ok<NASGU>
 loaded = struct();
 valid = false;
 erase_ok = false;
@@ -156,6 +173,12 @@ if ~valid
 end
 credentials = loaded.credential;
 clear loaded
+end
+
+function local_consume_cleanup(path_name)
+if exist(fileparts(path_name), 'dir') == 7
+    local_best_effort_erase(path_name);
+end
 end
 
 function ok = local_erase(path_name)
@@ -252,7 +275,8 @@ end
 
 function local_require_tmpfs()
 [status, filesystem] = system('stat -f -c %T /dev/shm');
-if status ~= 0 || ~strcmp(strtrim(filesystem), 'tmpfs')
+[access_status, ~] = system('test -d /dev/shm && test -w /dev/shm && test -x /dev/shm');
+if status ~= 0 || access_status ~= 0 || ~strcmp(strtrim(filesystem), 'tmpfs')
     error('pseudo_CT:CredentialStorageUnavailable', ...
         'Private memory-backed credential storage is unavailable.');
 end

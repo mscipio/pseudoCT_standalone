@@ -1092,7 +1092,7 @@ pseudo_CT_output('SUCCESS', local_promotion_completed_context(promotion_context)
 pseudo_CT_output('SUCCESS', local_output_event_context(promotion_context, ...
     'output.verify', 'output_verified'), 'Promoted outputs verified.');
 if config.cleanup_on_success
-    [remove_success, msg] = rmdir(temp_working_dir, 's');
+    [remove_success, msg] = pseudo_CT_cleanup_subject_temp(temp_working_dir);
     if ~remove_success
         % Legacy output: disp(sprintf('There was an error removing the temporary directory %s\n%s', ...
         %     temp_working_dir, msg));
@@ -1222,7 +1222,7 @@ cleanup_context = local_output_event_context(context, ...
     'output.cleanup', 'operation_started');
 pseudo_CT_output('INFO', cleanup_context, 'Cleaning up temporary files.');
 if config.cleanup_on_success
-    [remove_success, msg] = rmdir(job.temp_dir, 's');
+    [remove_success, msg] = pseudo_CT_cleanup_subject_temp(job.temp_dir);
     if ~remove_success
         pseudo_CT_output('WARN', local_output_event_context(cleanup_context, ...
             'output.cleanup', 'warning'), 'Temporary cleanup failed: %s', msg);

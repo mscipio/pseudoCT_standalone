@@ -252,8 +252,14 @@ if needs_normalization
     inner_cmd = ['source ' q_env '; mri_normalize ' q_in ' ' q_out];
     q_inner = local_shell_quote(inner_cmd);
     norm_cmd = ['env -u LD_LIBRARY_PATH tcsh -f -c ' q_inner];
+    % Scientific event records (JSONL beside the run log); advisory only.
+    norm_events = pseudo_CT_scientific_event_target(base_context);
+    pseudo_CT_scientific_event(norm_events, 'workflow.normalize', 'STARTED', ...
+        'FreeSurfer MPRAGE normalization started.');
     [norm_status, norm_detail] = system(norm_cmd);
     if norm_status ~= 0
+        pseudo_CT_scientific_event(norm_events, 'workflow.normalize', 'FAILED', ...
+            'FreeSurfer MPRAGE normalization failed.');
         pseudo_CT_output('ERROR', norm_context, 'FreeSurfer normalization failed.');
         if ischar(norm_detail) && ~isempty(strtrim(norm_detail))
             pseudo_CT_output('ERROR', norm_context, 'FreeSurfer failure detail: %s', strtrim(norm_detail));
@@ -262,14 +268,20 @@ if needs_normalization
         return;
     end
     if exist(normalized_path, 'file') ~= 2
+        pseudo_CT_scientific_event(norm_events, 'workflow.normalize', 'FAILED', ...
+            'FreeSurfer MPRAGE normalization failed.');
         pseudo_CT_output('ERROR', norm_context, 'FreeSurfer did not create the normalized NIfTI file.');
         return;
     end
     norm_info = dir(normalized_path);
     if isempty(norm_info) || norm_info(1).bytes == 0
+        pseudo_CT_scientific_event(norm_events, 'workflow.normalize', 'FAILED', ...
+            'FreeSurfer MPRAGE normalization failed.');
         pseudo_CT_output('ERROR', norm_context, 'FreeSurfer normalized file is empty.');
         return;
     end
+    pseudo_CT_scientific_event(norm_events, 'workflow.normalize', 'COMPLETED', ...
+        'FreeSurfer MPRAGE normalization completed.');
     pseudo_CT_output('SUCCESS', norm_context, 'MPRAGE normalization completed (elapsed %s).', ...
         local_elapsed(toc(subject_started)));
 else
@@ -280,6 +292,9 @@ end
 
 staged_input = normalized_path;
 invoke_context = local_stage_context(base_context, 3);
+% The compiled phase starting is operational evidence, not scientific stage 5.
+% Actual scientific starts arrive through the direct stream parser below.
+invoke_context.direct_scientific_stream = true;
 q_runner = local_shell_quote(legacy_runner);
 q_mcr = local_shell_quote(legacy_mcr);
 q_staged = local_shell_quote(staged_input);
@@ -287,7 +302,10 @@ q_batch = local_shell_quote(legacy_batch);
 q_defaults = local_shell_quote(legacy_defaults);
 runner_cmd = [q_runner ' ' q_mcr ' ' q_staged ' ' q_batch ' 0 ' num2str(check_aliasing) ' ' q_defaults];
 backend_log = fullfile(temp_dir, 'legacy_backend.log');
-backend_status_path = fullfile(temp_dir, 'legacy_backend.exit');
+status_dir = pseudo_CT_runtime_dir(temp_dir);
+status_guard = onCleanup(@() pseudo_CT_cleanup_runtime_dir(status_dir)); %#ok<NASGU>
+backend_status_path = fullfile(status_dir, 'legacy_backend.exit');
+invoke_context.scientific_source = backend_log;
 backend_started = tic;
 [backend_pid, launch_error] = local_launch_legacy_backend(runner_cmd, backend_log, backend_status_path);
 if ~(isnumeric(backend_pid) && isscalar(backend_pid) && isfinite(backend_pid) && backend_pid > 0)
@@ -400,7 +418,7 @@ if isfield(config, 'cleanup_on_success')
     do_cleanup = isequal(config.cleanup_on_success, true);
 end
 if do_cleanup
-    [remove_success, remove_msg] = rmdir(temp_dir, 's');
+    [remove_success, remove_msg] = pseudo_CT_cleanup_subject_temp(temp_dir);
     if ~remove_success
         pseudo_CT_output('WARN', cleanup_context, 'Temporary cleanup failed: %s', remove_msg);
     end
@@ -562,7 +580,18 @@ end
 q_log = local_shell_quote(log_path);
 q_status = local_shell_quote(status_path);
 q_status_tmp = local_shell_quote(status_tmp_path);
-launch_cmd = ['( ' runner_cmd ' > ' q_log ' 2>&1 & runner_pid=$!; trap ''kill $runner_pid 2>/dev/null'' TERM; wait $runner_pid; code=$?; echo $code > ' q_status_tmp '; mv -f ' q_status_tmp ' ' q_status '; trap - TERM; exit $code ) & echo $!'];
+runtime_dir = fileparts(status_path);
+launch_cmd = ['( cd ' local_shell_quote(runtime_dir) ' || exit 1; export TMPDIR=' ...
+    local_shell_quote(runtime_dir) ' TMP=' local_shell_quote(runtime_dir) ...
+    ' TEMP=' local_shell_quote(runtime_dir) ' MCR_CACHE_ROOT=' ...
+    local_shell_quote(fullfile(runtime_dir, 'mcr-cache')) '; ' ...
+    runner_cmd ' > ' q_log ' 2>&1 & runner_pid=$!; trap ''kill $runner_pid 2>/dev/null'' TERM; wait $runner_pid; code=$?; echo $code > ' q_status_tmp '; mv -f ' q_status_tmp ' ' q_status ...
+    '; trap - TERM; if [ -f ' local_shell_quote(fullfile(runtime_dir, 'monitor.closed')) ...
+    ' ]; then find ' local_shell_quote(runtime_dir) ...
+    ' -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; rmdir ' ...
+    local_shell_quote(runtime_dir) ' 2>/dev/null; fi; exit $code ) & wrapper_pid=$!; ' ...
+    'printf "%s\n" "$wrapper_pid" > ' local_shell_quote(fullfile(runtime_dir, 'runner.pid')) ...
+    '; echo "$wrapper_pid"'];
 [launch_status, pid_text] = system(launch_cmd);
 if launch_status ~= 0
     launch_error = strtrim(char(pid_text));
@@ -613,6 +642,12 @@ last_heartbeat = 0;
 use_seam = (nargin >= 5 && isstruct(seam) && ~isempty(fieldnames(seam)));
 seam_iter = 0;
 backend_log = fullfile(fileparts(status_path), 'legacy_backend.log');
+if isfield(invoke_context, 'scientific_source')
+    backend_log = invoke_context.scientific_source;
+end
+output_context_science = containers.Map();
+invoke_context.scientific_state = output_context_science;
+invoke_context.scientific_source = backend_log;
 run_log = '';
 if isfield(invoke_context, 'log_file') && ischar(invoke_context.log_file)
     run_log = invoke_context.log_file;
@@ -788,6 +823,16 @@ end
 end
 
 function local_print_legacy_console_line(line, output_context)
+if isfield(output_context, 'scientific_state')
+    [scientific, events] = pseudo_CT_live_scientific_line(line, ...
+        output_context.scientific_source, 'v2', output_context, output_context.scientific_state);
+    if scientific
+        if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+            pseudo_CT_present_scientific_events(events, output_context);
+        end
+        return;
+    end
+end
 if ~strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
     return;
 end

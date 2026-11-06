@@ -1232,4 +1232,3 @@ else
         dt  = [spm_type('uint16') be];
     end
 end
-
