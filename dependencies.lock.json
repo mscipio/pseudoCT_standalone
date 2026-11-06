@@ -532,7 +532,7 @@
     "localCommandAvailabilityEvidence": {
       "command": "scratch/2026-10-29/165623-t026-dependency-interfaces/local-interface-availability.sh",
       "transcript": "scratch/2026-10-29/165623-t026-dependency-interfaces/local-interface-availability.txt",
-      "method": "Local PATH lookup via command -v only; Slurm, tcsh, SSH, network, remote command, job, or science operation was performed.",
+      "method": "Local PATH lookup via command -v only; no Slurm, tcsh, SSH, network, remote command, job, or science operation was performed.",
       "scope": "Availability paths are evidence only; missing local Slurm client executables do not establish remote command availability. No versions were queried."
     },
     "preferenceIsolationNote": "A preliminary smoke launch used unsupported -prefdir while MATLAB_PREFDIR was unset; MATLAB preference files under $HOME/.matlab/R2010b have modification times aligned with that attempt. Their prior contents are unknown, so they were left untouched. The retained successful command explicitly sets MATLAB_PREFDIR to the scratch evidence directory.",

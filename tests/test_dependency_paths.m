@@ -14,19 +14,26 @@ cd(tempdir);
 paths = pseudo_CT_dependency_paths();
 assert(strcmp(paths.install_root, root_dir));
 assert(strcmp(paths.spm_root, fullfile(root_dir, 'external', 'spm8-r6313')));
-assert(strcmp(paths.spm8_dan_root, fullfile(root_dir, 'external', 'spm8-dan')));
 assert(strcmp(paths.atlas_root, fullfile(root_dir, 'external', 'Batch_atlas')));
+assert(strcmp(paths.d2n_root, fullfile(root_dir, ...
+    'external', 'dicom2nifti-1.2.5')));
+assert(strcmp(paths.aliasing_root, fullfile(root_dir, ...
+    'external', 'correct_aliasing-0.4.0')));
+assert(strcmp(paths.overrides_root, fullfile(root_dir, ...
+    'src', 'science', 'overrides')));
+assert(strcmp(paths.ssh2_root, fullfile(root_dir, ...
+    'external', 'ssh2_v2_m1_r5')));
 assert(strcmp(paths.current_root, fullfile(root_dir, 'compiled', 'current')));
 
 % Profiles use the same pinned local roots.
 profile_dir = fullfile(root_dir, 'src', 'config', 'profiles');
 addpath(profile_dir, '-begin');
-for fn = {'local_current', 'mlsc_current', 'local_mprage_only', 'devel'}
+for fn = {'local', 'mlsc', 'local_mprage_only', 'mlsc_mprage_only'}
     clear(fn{1});
     config = feval(fn{1});
     assert(strcmp(config.spm_root, paths.spm_root));
     assert(strcmp(config.atlas_root, paths.atlas_root));
-    if strcmp(fn{1}, 'mlsc_current')
+    if strcmp(fn{1}, 'mlsc')
         assert(strcmp(config.current.build_manifest, ...
             fullfile(paths.current_root, 'mlsc_current_build.mat')));
         assert(strcmp(config.current.resource_manifest, ...
@@ -37,10 +44,12 @@ end
 % Setup already owns the fail-closed root checks; exercise each missing-root
 % path before any path additions or workflow dependencies are touched.
 missing_spm = struct('spm_root', fullfile(root_dir, 'external', ...
-    'absent-spm'), 'atlas_root', paths.atlas_root);
+    'absent-spm'), 'atlas_root', paths.atlas_root, ...
+    'd2n_root', paths.d2n_root, 'mode', 'local');
 local_assert_setup_error(root_dir, missing_spm, 'pseudo_CT:SPMRootMissing');
 missing_atlas = struct('spm_root', paths.spm_root, 'atlas_root', ...
-    fullfile(root_dir, 'external', 'absent-atlas'));
+    fullfile(root_dir, 'external', 'absent-atlas'), ...
+    'd2n_root', paths.d2n_root, 'mode', 'local');
 local_assert_setup_error(root_dir, missing_atlas, ...
     'pseudo_CT:AtlasRootMissing');
 

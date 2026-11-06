@@ -10,8 +10,15 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import os
+import datetime
 
 repo = pathlib.Path(__file__).resolve().parents[1]
+scratch_root = os.environ.get('PSEUDOCT_TEST_SCRATCH')
+if not scratch_root:
+    scratch_root = repo / '.aria' / 'scratch' / 'unplanned' / \
+        (datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '-pseudoct-tests')
+    pathlib.Path(scratch_root).mkdir(parents=True, exist_ok=True)
 source = (repo / 'bin/pseudoct').read_text()
 marker = "<<'PY'\nimport json\nimport os\nimport re\nimport selectors\n"
 transport = 'import json\nimport os\nimport re\nimport selectors\n' + \
@@ -20,7 +27,7 @@ compile(transport, 'bin/pseudoct:run_headless', 'exec')
 
 HEADER = 'TIME     SUBJECT STAGE   STATUS    MESSAGE\n'
 RULE = '-' * 123 + '\n'
-# Captured mlsc-current console rows (presenter-v4 run, 2026-11-05).
+# Captured MLSC console rows (presenter-v4 run, 2026-11-05).
 PHASE1 = HEADER + RULE + (
     '10:24:59 S01     [1/10]  ACTIVE    Preparing input MPRAGE\n'
     '10:25:44 S01             DONE      Input MPRAGE prepared\n')
@@ -35,13 +42,13 @@ def run_phase(workdir, name, text, output_format='text'):
     result = subprocess.run(
         [sys.executable, '-c', transport, '/bin/cat', str(stream), '/dev/null',
          output_format, str(workdir / ('diagnostics-' + name + '.log')),
-         'stdout-filter-test', str(workdir / 'unused-index'), 'mlsc-current'],
+         'stdout-filter-test', str(workdir / 'unused-index'), 'mlsc'],
         capture_output=True, check=True)
     assert not result.stderr, result.stderr
     return result.stdout.decode()
 
 
-with tempfile.TemporaryDirectory() as tmp:
+with tempfile.TemporaryDirectory(dir=scratch_root) as tmp:
     workdir = pathlib.Path(tmp)
     first = run_phase(workdir, 'validate', PHASE1)
     second = run_phase(workdir, 'submit', PHASE2)

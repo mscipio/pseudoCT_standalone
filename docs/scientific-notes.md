@@ -1,26 +1,71 @@
 # Scientific method and evidence
 
-## Method
+## Method and attribution
 
-This software implements the SPM8-based atlas method described by Izquierdo-Garcia et al., *An SPM8-based Approach for Attenuation Correction Combining Segmentation and Non-rigid Template Formation: Application to Simultaneous PET/MR Brain Imaging*, *Journal of Nuclear Medicine* 2014;55(11):1825–1830. It combines tissue segmentation and non-rigid template formation to generate a subject-specific pseudoCT attenuation map from a T1-weighted MPRAGE. Cite the publication when using the method. The software implementation should also be acknowledged as appropriate; see the repository's [release history](../CHANGELOG.md).
+PseudoCT implements the SPM8-based atlas method described by Izquierdo-Garcia
+et al., *An SPM8-based Approach for Attenuation Correction Combining
+Segmentation and Non-rigid Template Formation: Application to Simultaneous
+PET/MR Brain Imaging*, *Journal of Nuclear Medicine* 2014;55(11):1825–1830. The
+method combines tissue segmentation and non-rigid template formation to
+generate a subject-specific attenuation map from a T1-weighted MPRAGE. Cite
+the publication when using the method; acknowledge the software and its
+maintainers as appropriate. See the repository's [release history](../CHANGELOG.md).
 
-## Current and legacy implementations
+The four supported profiles (`local`, `mlsc`, `local-mprage-only`, and
+`mlsc-mprage-only`) use the same compiled scientific payload. Profile choice
+controls execution location and input/output policy, not a separate algorithm.
+The two MPRAGE-only profiles omit UMAP collection and DICOM output.
 
-`current` is the MATLAB source processing path; `legacy-v2` is the compiled v2.0 backend (Aether lineage). Local and remote execution are separate choices from implementation. The two implementations follow different numerical paths, so results are not assumed to be universally equivalent.
+## Bounded comparison evidence
 
-The v3.2.0-rc2 profile correction makes `mlsc-mprage-only` use the same current-lineage R2010b compiled payload and integrity contract as `mlsc-current`; the MPRAGE-only profile changes collection/output/UI policy, not the scientific executable. The payload was reused unchanged. This is not a new scientific run, parity result, or deployment claim.
+One controlled MLSC dataset produced an attenuation map byte-identical to its
+matched Local reference. This is evidence for that dataset and those exact
+artifacts only; it is not a general parity result. Existing archived
+comparisons also include older scientific artifacts and execution paths. They
+are historical evidence, not supported profile choices or general-purpose
+reference outputs.
 
-One controlled MLSC CURRENT dataset produced an attenuation map byte-identical to its local-current reference. This is a bounded finding for that dataset and those exact artifacts, not a general equivalence claim. The v3.0.2 corrective release changed installation-path resolution and did not change the compiled scientific backend or add a new scientific run. The published v3.0.2 archive contains the current local CURRENT source, in which the local facade delegates preparation and computation to the shared `pseudo_CT_current_prepare`/`pseudo_CT_current_compute` helpers; the controlled MLSC CURRENT evidence above applies unchanged, and no additional validation is claimed for the refactored local facade. Always inspect the generated QC and output.
+A user-accepted MLSC production run (Slurm job `10515471`) was recorded as
+completed with exit code 0 in 43m50; one subject succeeded, no subject failed,
+and MLSC result/copy-back, DICOM output, output promotion, and cleanup were
+verified. The accepted executable described by the artifact provenance record
+was compiled with MATLAB R2010b. Its exact association with job `10515471` was
+not independently verified. The
+user-supplied `att_map.nii` SHA-256 was
+`1517efbe3fbb8e0f4df3fb3b2a4e40c387ba09fbcbac326496fe47cf8a6981ff`.
+The source fingerprint for that run was not independently reconstructed.
 
-Historical comparisons distinguish LocalLegacy/MLSCLegacy references from LaunchpadLegacy. Separate matched October 19, v2.6.0/v2.6.4 archives were compared on 40 NIfTI stages; these are distinct historical reference paths, not interchangeable labels for current processing. A historical recentering “No” comparison is not the current default (“Yes”). Launchpad ignores the local recentering setting; only the remote aliasing check is forwarded, a workflow limitation rather than proof of numerical equivalence.
+In a controlled host comparison, New Segment differed between the historical
+host and the Celer R2010 compiled/interpreted paths; the two Celer paths
+matched each other while following a different iterative numerical path. CPU
+dispatch and system-math effects were not isolated independently, and thread
+pinning is not established as a universal fix.
 
-The bounded six-profile experiment is scientific comparison evidence across those profile paths. A separate user-accepted MLSC production run (Slurm job `10515471`) completed with exit code 0 in 43m50; one subject succeeded, zero failed, and MLSC result/copyback, DICOM output, output promotion, and cleanup were verified. The accepted executable described by the artifact provenance record is current-lineage PseudoCT v3 compiled using MATLAB R2010b, not historical Aether v2; its exact association with job `10515471` is not independently verified. The user-supplied `att_map.nii` SHA-256 is `1517efbe3fbb8e0f4df3fb3b2a4e40c387ba09fbcbac326496fe47cf8a6981ff`. For this dataset, the map was byte-identical to `local-current`, `local-legacy`, `mlsc-legacy`, and `mlsc-current-r2010b`, and differed from R2026a `mlsc-current` and `launchpad-legacy`. These findings apply only to this dataset, output, and artifacts; they do not establish universal equivalence, full-workflow parity, clinical correctness, or accuracy superiority of any profile. The dirty source fingerprint was not independently reconstructed.
+These records are dataset-, artifact-, and environment-bounded. They do not
+establish universal equivalence, full-workflow parity, clinical correctness,
+or accuracy superiority of any implementation or execution environment.
+Comparison tools remain available under `tests/manual/` and `scripts/`; they
+must be used only with authorized existing data and are not run by the
+automated test commands.
 
-In a controlled host comparison, New Segment differed between the historical host and the Celer R2010 compiled/interpreted paths; the latter matched each other while following a different iterative numerical path. CPU dispatch and system-math effects were not isolated independently, and thread pinning is not established as a universal fix. These observations are host- and dataset-bounded; they do not establish a universal cause or parity guarantee.
+## Interpretation and quality control
 
-## Interpretation and limitations
+- Intermediate numerical results may depend on host and runtime behavior; the
+  available evidence does not isolate every contributing factor.
+- Inspect the MPRAGE/pseudoCT fusion QC and scroll through the final volume for
+  misregistration, missing anatomy, and abnormal attenuation outside the
+  head.
+- A successful scheduler state or process exit is not itself proof of verified
+  scientific completion; current MLSC completion requires verified outputs
+  and copy-back evidence.
+- The source version metadata is 3.2.0; the v3.2.0-rc2 material was recorded
+  as a candidate, not a production deployment claim. The release history
+  identifies the prior published archive and withdrawn versions.
 
-- The reported comparisons are bounded to specific datasets, software artifacts, and environments. They do not establish universal parity or clinical correctness.
-- Host/runtime numerical behavior can affect intermediate results; evidence does not isolate every contributing factor.
-- Visual review remains necessary: inspect the MPRAGE/pseudoCT fusion QC and scroll through the final volume for misregistration, missing anatomy, and abnormal attenuation outside the head.
-- The source version metadata is 3.2.0 (candidate v3.2.0-rc2); v3.0.2 is the previous published archive in the preserved release history, while v3.0.0 and v3.0.1 remain withdrawn. No production deployment is claimed.
+## Provenance and licensing
+
+The dependency lock records local identities and hashes; it does not grant
+redistribution rights or replace complete provenance and license review.
+Preserve the repository and dependency license files and notices. Public
+packaging remains subject to dependency-specific provenance, compatibility,
+and redistribution clearance.

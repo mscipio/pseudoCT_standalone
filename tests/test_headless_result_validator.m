@@ -1,30 +1,25 @@
 function test_headless_result_validator()
 %TEST_HEADLESS_RESULT_VALIDATOR Focused MAT v2 result-contract checks.
-%   Synthetic result records are confined to unique worktree-local scratch;
+%   Synthetic result records follow TMPDIR (tests/README.md);
 %   no credentials, network, scheduler, or scientific processing is used.
 %   Minimum supported MATLAB: R2010b.
 
 root_dir = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(root_dir, 'src', 'api'));
-stamp = clock; %#ok<CLOCK> R2010b-compatible scratch timestamp.
-date_text = sprintf('%04d-%02d-%02d', stamp(1), stamp(2), stamp(3));
-time_text = sprintf('%02d%02d%02d', stamp(4), stamp(5), floor(stamp(6)));
-scratch_parent = fullfile(root_dir, 'scratch', date_text);
-if exist(scratch_parent, 'dir') ~= 7
-    mkdir(scratch_parent);
+scratch_root = getenv('PSEUDOCT_TEST_SCRATCH');
+if isempty(scratch_root)
+    scratch_root = fullfile(root_dir, '.aria', 'scratch', 'unplanned', ...
+        [datestr(now, 'yyyymmdd-HHMMSS') '-pseudoct-tests']);
 end
-scratch_dir = fullfile(scratch_parent, ...
-    [time_text '-headless-result-validator']);
-suffix = 0;
-while exist(scratch_dir, 'dir') == 7
-    suffix = suffix + 1;
-    scratch_dir = fullfile(scratch_parent, sprintf( ...
-        '%s-headless-result-validator-%d', time_text, suffix));
+if exist(scratch_root, 'dir') ~= 7
+    mkdir(scratch_root);
 end
+scratch_dir = tempname(scratch_root);
 mkdir(scratch_dir);
+cleanup = onCleanup(@() local_cleanup(scratch_dir)); %#ok<NASGU>
 
 invocation_id = '6d915c13-2bd1-4db1-a107-b1eab4d34c11';
-profile = 'mlsc-current';
+profile = 'mlsc';
 
 % A successful configuration-only validation has no subject records but is
 % still bound to the same invocation/profile as its resolved job.
@@ -157,4 +152,10 @@ catch ME
         {'pseudo_CT:HeadlessResult'; 'pseudo_CT:HeadlessResultBinding'}));
 end
 assert(rejected, 'Validator accepted an inconsistent synthetic v2 result.');
+end
+
+function local_cleanup(directory)
+if exist(directory, 'dir') == 7
+    rmdir(directory, 's');
+end
 end

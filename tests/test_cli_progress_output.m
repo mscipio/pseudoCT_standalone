@@ -5,10 +5,18 @@ root_dir = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(root_dir, 'src', 'io'));
 addpath(fullfile(root_dir, 'src', 'orchestration'));
 addpath(fullfile(root_dir, 'src', 'gui'));
-test_dir = tempname;
+scratch_root = getenv('PSEUDOCT_TEST_SCRATCH');
+if isempty(scratch_root)
+    scratch_root = fullfile(root_dir, '.aria', 'scratch', 'unplanned', ...
+        [datestr(now, 'yyyymmdd-HHMMSS') '-pseudoct-tests']);
+end
+if exist(scratch_root, 'dir') ~= 7
+    mkdir(scratch_root);
+end
+test_dir = tempname(scratch_root);
 mkdir(test_dir);
 cleanup = onCleanup(@() local_cleanup(test_dir)); %#ok<NASGU>
-log_file = fullfile(test_dir, 'pseudo_CT_local-current_20260728_154230.log');
+log_file = fullfile(test_dir, 'pseudo_CT_local_20260728_154230.log');
 context = struct('log_file', log_file, 'subject_index', 2, ...
     'subject_count', 5, 'stage_index', 4, 'stage_count', 8);
 

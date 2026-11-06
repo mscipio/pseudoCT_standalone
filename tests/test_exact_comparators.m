@@ -2,12 +2,21 @@ function test_exact_comparators()
 %TEST_EXACT_COMPARATORS Synthetic R2010b-compatible comparator fixtures.
 
 tests_dir = fileparts(mfilename('fullpath'));
-scripts_dir = fullfile(fileparts(tests_dir), 'scripts');
-addpath(tests_dir);
-addpath(scripts_dir);
-cleanup_path = onCleanup(@() local_restore_path(tests_dir, scripts_dir)); %#ok<NASGU>
+manual_dir = fullfile(tests_dir, 'manual');
+old_path = path();
+addpath(manual_dir);
+cleanup_path = onCleanup(@() path(old_path)); %#ok<NASGU>
 
-temp_dir = tempname;
+root_dir = fileparts(tests_dir);
+scratch_root = getenv('PSEUDOCT_TEST_SCRATCH');
+if isempty(scratch_root)
+    scratch_root = fullfile(root_dir, '.aria', 'scratch', 'unplanned', ...
+        [datestr(now, 'yyyymmdd-HHMMSS') '-pseudoct-tests']);
+end
+if exist(scratch_root, 'dir') ~= 7
+    mkdir(scratch_root);
+end
+temp_dir = tempname(scratch_root);
 mkdir(temp_dir);
 cleanup_temp = onCleanup(@() rmdir(temp_dir, 's')); %#ok<NASGU>
 
@@ -48,9 +57,4 @@ missing.header = rmfield(missing.header, 'mat');
 assert(~is_equal && strcmp(report.first_difference.state, 'required_field'));
 
 fprintf('Exact comparator tests passed.\n');
-end
-
-function local_restore_path(tests_dir, scripts_dir)
-rmpath(scripts_dir);
-rmpath(tests_dir);
 end
