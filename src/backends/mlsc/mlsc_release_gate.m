@@ -53,8 +53,8 @@ function varargout = mlsc_release_gate(action, varargin)
 %       Strict 64-hex SHA-256 shape test (missing/empty/malformed false).
 %
 %   Every failure raises pseudo_CT:MLSCReleaseGate with an explicit
-%   reason. Confinement: MLSC CURRENT release tooling only; LEGACY,
-%   local, and Launchpad behavior are unchanged.
+%   reason. Confinement: MLSC CURRENT release tooling only;
+%   local behavior is unchanged.
 %
 %   Minimum supported MATLAB: R2010b (era-safe idioms only).
 

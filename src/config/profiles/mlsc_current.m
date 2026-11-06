@@ -17,15 +17,13 @@ function config = mlsc_current()
 %   Source-only checkouts without the packaged artifacts fail closed at
 %   preflight. No catalog, no resolver, no
 %   mutable-alias/current-label authority, no MCR 7.11 release fallback, no
-%   submitting-MATLAB substitute. No config.legacy and no legacy payload
-%   fields inside config.mlsc.
+%   submitting-MATLAB substitute. No payload fields inside config.mlsc.
 
 dependency_paths = pseudo_CT_dependency_paths();
 
 % Select the local processing path or the remote MLSC path.
 config.mode = 'mlsc';
-% Implementation lineage: 'current' selects the compiled current payload;
-% 'legacy-v2' selects the historical compiled Aether backend.
+% Implementation: 'current' selects the compiled current payload (only value).
 config.implementation = 'current';
 % SPM installation used by local finalization support code.
 config.spm_root = dependency_paths.spm_root;
@@ -78,9 +76,8 @@ config.normalization.cluster = 'Yes';
 % Shared subject temporary directories are used by the MLSC backend.
 config.normalization.host_folder = '';
 
-% MLSC scheduler/host/shell/FreeSurfer fields only. No legacy payload
-% fields (runner/mcr_root/defaults_mat/batch_templates) are carried here;
-% a fake legacy contract must neither satisfy nor be required for current.
+% MLSC scheduler/host/shell/FreeSurfer fields only. Payload fields
+% (runner/mcr_root/build_manifest/...) live in config.current, never here.
 % MLSC SSH host.
 config.mlsc.host = 'mlsc.nmr.mgh.harvard.edu';
 % Explicit shell and FreeSurfer environment used by Slurm jobs.

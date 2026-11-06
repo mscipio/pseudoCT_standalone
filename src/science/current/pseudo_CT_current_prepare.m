@@ -1,7 +1,6 @@
 function [P_out, handoff, early_return, fh] = pseudo_CT_current_prepare(P_in, dir_batch_templates_in, check_aliasing_in, config, output_context_in, recenter_override_in)
 %PSEUDO_CT_CURRENT_PREPARE Pre-normalization preparation for current pipeline.
-%   Shared by atlas_based_attenuation_map (local-current facade) and
-%   mlsc_current_payload (compiled-current prepare phase). Implements the
+%   Used by mlsc_current_payload (compiled-current prepare phase). Implements the
 %   pre-normalization order exactly: optional reslice, normalized/moved
 %   suffix gates, correct_aliasing(input,output,'AliasCorrection',bool,
 %   'Centering',bool,'Overwrite',true), success/partial/no-op/early-return

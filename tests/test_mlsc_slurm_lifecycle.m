@@ -289,16 +289,9 @@ t002_check(t002_rows(t002_t1, '[8/10]', 'ACTIVE') == 1, ...
     'C1 unterminated terminal EOF yields stage 8 START exactly once');
 t002_check(t002_r1.terminal, 'C1 terminal observed');
 
-% C2/C3: a v2-only inferred line and a v3-only START line. Each parser shows
-% only its own interpretation of the same stdout.
+% C3: a v3-only START line is interpreted by the current parser.
 t002_s = [t002_step(['Opening the Template and calculating its position in real space ...' t002_nl ...
     'Aligning MPRAGE and creating subject mask.' t002_nl], '', '', t002_completed)];
-[t002_t2, t002_r2, t002_f2] = t002_run_case('c02', 'legacy-v2', t002_s);
-t002_check(isempty(t002_f2), 'C2 legacy-v2 lifecycle ran');
-t002_check(t002_count(t002_t2, '[inferred]') == 1, ...
-    'C2 v2 selected: v2-only inferred line is interpreted');
-t002_check(t002_rows(t002_t2, '[5/10]', 'ACTIVE') == 0, ...
-    'C2 v2 selected: v3-only START text is not interpreted');
 [t002_t3, t002_r3, t002_f3] = t002_run_case('c03', 'current', t002_s);
 t002_check(isempty(t002_f3), 'C3 current lifecycle ran');
 t002_check(t002_count(t002_t3, '[inferred]') == 0, ...

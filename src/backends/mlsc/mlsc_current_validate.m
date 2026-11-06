@@ -20,7 +20,7 @@ function varargout = mlsc_current_validate(action, varargin)
 %       identity/arch/release/
 %       generation/update mismatch, missing outputs contract. No native
 %       certification check remains in this active dev path (T009
-%       remediation): legacy native fields and simplified manifests omitting
+%       remediation): native fields and simplified manifests omitting
 %       them are both accepted; the payload enforces actual file existence.
 %     MLSC_CURRENT_VALIDATE('validate_for_execution', CONFIG)
 %       Same contract plus execution-time content, runtime, output, and
@@ -49,7 +49,7 @@ function varargout = mlsc_current_validate(action, varargin)
 %   Resource manifest (.mat, scalar struct RESOURCES):
 %     schema 'pseudo-CT.mlsc-current-resources/v1', manifest_version 1
 %     (T003 authority; atlas/resource existence validated by payload).
-%     Contract checks existence/schema/version only; legacy native fields
+%     Contract checks existence/schema/version only; native fields
 %     are ignored when present and required of nothing. Detailed
 %     atlas/resource existence checks stay in mlsc_current_payload
 %     (no duplicated science).
@@ -317,7 +317,7 @@ local_validate_build(build, current);
 % Resource manifest: existence plus scalar schema/version only. T009
 % remediation removed every native certification check (pending marker,
 % platform/arch, native inventory, build/resource arch compatibility): manifests
-% carrying legacy native fields and simplified manifests omitting them are
+% carrying native fields and simplified manifests omitting them are
 % both accepted here. The payload enforces actual file existence; output
 % and copy-back verification below are unchanged.
 local_load_scalar(current.resource_manifest, 'resources', ...

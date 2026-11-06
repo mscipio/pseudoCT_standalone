@@ -5,7 +5,7 @@ function [first, second] = mlsc_progress(action, arg1, arg2)
 %       fullfile(SHARED_TEMP, '.mlsc_progress_<correlation-id>')
 %   and contains only tiny deterministic machine-readable records, one per
 %   line, each terminated by LF ('\n'):
-%   The legacy fixed name fullfile(SHARED_TEMP, '.mlsc_progress') is retained
+%   The fixed name fullfile(SHARED_TEMP, '.mlsc_progress') is retained
 %   only for harmless best-effort cleanup of preserved-temp prior runs and
 %   must never be consumed for the current submission.
 %       stage_in|done
@@ -42,7 +42,7 @@ function [first, second] = mlsc_progress(action, arg1, arg2)
 %       dartel_warp_reslice|done (compute sub-stages, emitted after
 %       compute success before pseudoCT|done)
 %       attenuation_qc|done (attenuation + QC outputs verified)
-%   Legacy emits only the original nine records; current emits the
+%   The current contract emits the
 %   extended set in reachable order. Only exact enumerated records are
 %   ever emitted, consumed, archived, or displayed.
 %

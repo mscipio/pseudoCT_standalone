@@ -166,11 +166,6 @@ else
         error('pseudo_CT:HeadlessRequest', ...
             'Remote submit requests require a one-time credential handoff.');
     end
-    if strcmp(request.profile, 'launchpad-legacy') && ...
-            (~isempty(request.group_account) || ~isempty(request.host_key_file))
-        error('pseudo_CT:HeadlessRequest', ...
-            'Launchpad submit does not accept MLSC group or host-key values.');
-    end
 end
 end
 
@@ -426,10 +421,8 @@ end
 end
 
 function backend = local_backend(profile)
-if any(strcmp(profile, {'mlsc-current'; 'mlsc-mprage-only'; 'mlsc-legacy'}))
+if any(strcmp(profile, {'mlsc-current'; 'mlsc-mprage-only'}))
     backend = 'mlsc';
-elseif strcmp(profile, 'launchpad-legacy')
-    backend = 'launchpad';
 else
     backend = 'local';
 end
@@ -460,13 +453,13 @@ end
 
 function valid = local_allowed_profile(value)
 valid = local_plain_text(value) && any(strcmp(value, ...
-    {'mlsc-current'; 'mlsc-mprage-only'; 'mlsc-legacy'; 'launchpad-legacy'; ...
-    'local-current'; 'local-legacy'; 'local-mprage-only'}));
+    {'mlsc-current'; 'mlsc-mprage-only'; ...
+    'local-current'; 'local-mprage-only'}));
 end
 
 function valid = local_is_local_profile(value)
 valid = ischar(value) && size(value, 1) == 1 && any(strcmp(value, ...
-    {'local-current'; 'local-legacy'; 'local-mprage-only'}));
+    {'local-current'; 'local-mprage-only'}));
 end
 
 function valid = local_enum(value, choices)

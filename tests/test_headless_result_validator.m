@@ -24,7 +24,7 @@ end
 mkdir(scratch_dir);
 
 invocation_id = '6d915c13-2bd1-4db1-a107-b1eab4d34c11';
-profile = 'mlsc-legacy';
+profile = 'mlsc-current';
 
 % A successful configuration-only validation has no subject records but is
 % still bound to the same invocation/profile as its resolved job.

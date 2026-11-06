@@ -4,7 +4,7 @@ function test_mlsc_ssh2_compatibility()
 % Every check here is credential-free and network-free: no MLSC connection,
 % no Slurm command, no prompt, no credentials, and no trusted host-key
 % material is ever read, written, or transmitted. The normal MLSC workflow
-% is provider-free (Launchpad-style dialog, password authentication,
+% is provider-free (password dialog, password authentication,
 % sshare account discovery, Slurm lifecycle); a missing provider is not a
 % blocker. The strict-verifier checks below exercise the OPTIONAL
 % development/testing opt-in using the bundled Ganymed classes with
@@ -183,13 +183,13 @@ assert(~isempty(pos_guard) && ~isempty(pos_verified_connect) && ...
 assert(pos_guard(1) < pos_verified_connect(1) && ...
     pos_verified_connect(1) < pos_password_auth(1), ...
     'Connection.connect(verifier) must precede authentication.');
-% The empty-verifier legacy branch stays available BEFORE authentication so
-% the provider-free normal path connects exactly like the Launchpad model.
-pos_legacy_connect = strfind(ssh2_main_source, ...
+% The empty-verifier password branch stays available BEFORE authentication so
+% the provider-free normal path connects with the standard password model.
+pos_password_connect = strfind(ssh2_main_source, ...
     'ssh2_struct.connection.connect();');
-assert(~isempty(pos_legacy_connect) && ...
-    pos_guard(1) < pos_legacy_connect(1) && ...
-    pos_legacy_connect(1) < pos_password_auth(1), ...
+assert(~isempty(pos_password_connect) && ...
+    pos_guard(1) < pos_password_connect(1) && ...
+    pos_password_connect(1) < pos_password_auth(1), ...
     'The empty-verifier connect branch must precede authentication.');
 entry_source = local_read_text(fullfile(root_dir, 'src', 'orchestration', ...
     'pseudo_CT_run_lifecycle.m'));
@@ -214,7 +214,7 @@ assert(~isempty(strfind(transport_source, 'mlsc_host_key_trust(')));
 %% --------------------------- provider-free normal-path seam (network-free)
 % Smallest network-free source audit of the revised normal-path contract:
 % the empty provider default keeps strict trust opt-in, the MLSC dispatch
-% runs the Launchpad-style dialog before transport creation and account
+% runs the password dialog before transport creation and account
 % discovery, and a missing provider never blocks authentication or the
 % sshare/Slurm flow. No connection, prompt, or Slurm command is performed.
 pos_provider_default = strfind(entry_source, ...
@@ -245,8 +245,8 @@ assert(pos_mlsc_dialog(1) < pos_account_flow(1), ...
     ['The MLSC normal path must run dialog before account discovery.']);
 % The provider must never become a required profile field.
 profile_source = [local_read_text(fullfile(root_dir, 'src', 'config', ...
-    'profiles', 'mlsc_legacy.m')), local_read_text(fullfile(root_dir, 'src', ...
-    'config', 'profiles', 'mlsc_mprage_only.m'))];
+    'profiles', 'mlsc_current.m')), local_read_text(fullfile(root_dir, ...
+    'src', 'config', 'profiles', 'mlsc_mprage_only.m'))];
 assert(isempty(strfind(profile_source, 'mlsc_host_key_provider')), ...
     'The host-key provider must not appear in any MLSC profile.');
 
@@ -275,7 +275,7 @@ assert(~isempty(pos_stdout) && ~isempty(pos_status_section));
 drain_region = ssh2_main_source(pos_stdout(1):pos_status_section(1));
 assert(isempty(strfind(drain_region, 'command_success')), ...
     'Stdout handling must never override or imply the exit status.');
-% Legacy one-/two-output ssh2_command callers keep working (verified
+% One- and two-output ssh2_command callers keep working (verified
 % functionally below via a mocked transport, never a live connection).
 command_source = local_read_text(fullfile(ssh2_dir, 'ssh2_command.m'));
 assert(~isempty(strfind(command_source, 'nargout > 2')));
@@ -286,13 +286,6 @@ assert(~isempty(strfind(command_source, ...
 local_check_ssh2_command_outputs(ssh2_dir);
 
 %% --------------------------------------------- preserved credential dialog UX
-% Preserve the deployed Launchpad credential UX rather than introducing a
-% command-line, file-based, or stored credential path. The MLSC runtime uses
-% the same enterUserName dialog shape.
-login_source = local_read_text(fullfile(root_dir, 'src', 'backends', 'shared', ...
-    'ssh_login_pseudo_CT.m'));
-assert(~isempty(strfind(login_source, 'passwordEntryDialog')));
-assert(~isempty(strfind(login_source, '''enterUserName'', true')));
 assert(~isempty(strfind(entry_source, ...
     'passwordEntryDialog(''enterUserName'', true')));
 
@@ -442,7 +435,7 @@ try
     empty_result = {''};
     base = struct('command_result', {ok_result}, ...
         'command_exit_status', 0, 'command_success', true);
-    % Legacy one-output and two-output callers keep working.
+    % One-output and two-output callers keep working.
     s1 = ssh2_command(base, 'true');
     assert(isstruct(s1) && isequal(s1.command_result, ok_result));
     [s2, r2] = ssh2_command(base, 'true', 0);

@@ -10,7 +10,7 @@ function test_mlsc_current_artifact_overrides()
 %     (E) exact Gate-B candidate PASSES validate_contract + validate_for_execution
 %         (+ non-submitting preflight); hashes unchanged
 %     (F) wrong root / corrupted artifact bytes FAIL closed
-%     (G) local-current / local-legacy / mlsc-legacy unaffected (reject overrides)
+%     (G) local-current / local-mprage-only / mlsc-mprage-only unaffected (reject overrides)
 %     (H) summary displays the resolved artifact root
 %
 %   No live SSH/Ganymed/Slurm/subject run or submission, no
@@ -166,7 +166,7 @@ local_assert_error(@() mlsc_current_validate('validate_contract', cfg_f4));
 local_assert_error(@() mlsc_current_validate('validate_for_execution', cfg_f4));
 
 % (G) Other profiles are unaffected: overrides are rejected clearly.
-other_names = {'local-current'; 'local-legacy'; 'mlsc-legacy'};
+other_names = {'local-current'; 'local-mprage-only'; 'mlsc-mprage-only'};
 for ii = 1:length(other_names)
     other_cfg = pseudo_CT_load_profile(other_names{ii}, config_root);
     unchanged = pseudo_CT_apply_mlsc_current_overrides(other_cfg, ...

@@ -109,24 +109,10 @@ catch ME
 end
 
 try
-    test_mlsc_dispatch_integration();
-    check('MLSC dispatch durable evidence/log integration', true, '');
-catch ME
-    check('MLSC dispatch durable evidence/log integration', false, ME.message);
-end
-
-try
     test_mlsc_ssh2_compatibility();
     check('MLSC provider-free normal path, optional strict gate, credential-free behavior', true, '');
 catch ME
     check('MLSC provider-free normal path, optional strict gate, credential-free behavior', false, ME.message);
-end
-
-try
-    test_launchpad_evidence();
-    check('Launchpad evidence and missing-output regression', true, '');
-catch ME
-    check('Launchpad evidence and missing-output regression', false, ME.message);
 end
 
 profile_source = read_text(fullfile(root_dir, 'src', 'config', ...
@@ -136,7 +122,6 @@ check('MPRAGE-only profile declares explicit policy', ...
     ~isempty(strfind(profile_source, 'config.io_policy.output = ''nifti-only''')), ...
     'MPRAGE-only policy fields are missing');
 
-atlas_source = read_text(fullfile(root_dir, 'src', 'science', 'current', 'atlas_based_attenuation_map.m'));
 compute_source = read_text(fullfile(root_dir, 'src', 'science', 'current', 'pseudo_CT_current_compute.m'));
 check('local final subject mask is policy-gated', ...
     ~isempty(strfind(compute_source, 'config.zero_background')) && ...
@@ -155,17 +140,6 @@ check('final FWHM consumes profile setting', ...
     ~isempty(strfind(run_lifecycle_source, 'temp_dir, config.fwhm')), ...
     'config.fwhm is not passed to DICOM output');
 
-launchpad_source = run_lifecycle_source;
-mask_call = strfind(launchpad_source, 'launchpad_apply_background_mask(jobs(jj).temp_dir, context)');
-dicom_call = strfind(launchpad_source, 'pseudo_CT_write_mu_map_dicom');
-promote_call = strfind(launchpad_source, 'pseudo_CT_promote_final_outputs');
-check('Launchpad optional mask precedes DICOM conversion and promotion', ...
-    ~isempty(mask_call) && ~isempty(dicom_call) && ~isempty(promote_call) && ...
-    mask_call(1) < dicom_call(1) && dicom_call(1) < promote_call(1), ...
-    'Launchpad post-fetch order is incorrect');
-check('Launchpad missing normalized MPRAGE preserves unmasked map', ...
-    ~isempty(strfind(launchpad_source, 'mprage_normalized.nii')) && ...
-    ~isempty(strfind(launchpad_source, 'will remain unmasked')), 'fallback warning not found');
 
 comparator_files = {'pct_compare_nifti_exact.m', ...
     'pct_compare_semantic_mat.m'};

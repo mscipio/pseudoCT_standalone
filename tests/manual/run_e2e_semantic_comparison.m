@@ -324,7 +324,6 @@ end
 function expected = is_expected_provenance_name(name)
 expected = strcmp(name, 'Pseudo_CT_AC_Version.txt') || ...
     strcmp(name, 'pseudo_CT_profile_summary.txt') || ...
-    strcmp(name, 'pseudo_CT_launchpad_evidence.mat') || ...
     strcmp(name, 'Fusion_MR_Pseudo_CT_validation.tiff') || ...
     ~isempty(regexp(name, '^(new_segment|dartel_existing_template|create_inverse_warped)_.+_batch\.mat$', 'once')) || ...
     ~isempty(regexp(name, '_params\.mat$', 'once'));
@@ -676,13 +675,9 @@ end
 
 function text = genericize_comparator_text(text)
 text = strrep(text, 'Local:      ', 'Target:    ');
-text = strrep(text, 'Launchpad:  ', 'Reference: ');
 text = strrep(text, 'local_dir not found', 'target_dir not found');
-text = strrep(text, 'launchpad_dir not found', 'reference_dir not found');
 text = strrep(text, 'cannot open local:', 'cannot open target:');
-text = strrep(text, 'cannot open launchpad:', 'cannot open reference:');
 text = strrep(text, 'LOCAL_ONLY', 'TARGET_ONLY');
-text = strrep(text, 'LAUNCHPAD_ONLY', 'REFERENCE_ONLY');
 end
 
 function genericize_comparator_file(path)

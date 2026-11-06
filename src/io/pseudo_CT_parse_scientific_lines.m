@@ -3,8 +3,8 @@ function [events, state] = pseudo_CT_parse_scientific_lines(lines, path, version
 % Each event: subject; stage (index/title/total); status; message; source
 % (version/file); source_timestamp ('' when unavailable); observation_timestamp;
 % transition_kind ('explicit' or 'inferred'). No filesystem writes or science.
-if ~any(strcmp(version, {'v2'; 'v3'}))
-    error('pseudo_CT:StreamVersion', 'Specify v2 or v3 explicitly.');
+if ~strcmp(version, 'v3')
+    error('pseudo_CT:StreamVersion', 'Specify v3 explicitly.');
 end
 if nargin < 5 || isempty(state)
     state = struct('active_stage', 0, 'version', version, ...
@@ -19,11 +19,7 @@ template = struct('subject', subject, 'stage', struct('index', 0, 'title', '', '
 events = repmat(template, 0, 1);
 for ii = 1:length(lines)
     [body, stamp, level] = local_body(lines{ii});
-    if strcmp(version, 'v2')
-        [n, status, kind] = pseudo_CT_parse_v2_line(body);
-    else
-        [n, status, kind] = pseudo_CT_parse_v3_line(body);
-    end
+    [n, status, kind] = pseudo_CT_parse_v3_line(body);
     % Severity takes precedence over milestone-like text in warnings/errors.
     if strcmp(level, 'WARN') || ~isempty(regexp(body, '^[{ ]*[Ww]arning\s*:', 'once'))
         n = state.active_stage; status = 'WARN'; kind = 'explicit';
@@ -65,7 +61,7 @@ body = strtrim(body);
 end
 
 function text = local_redact(text)
-% Raw legacy source stays untouched; never expose credential values in events.
+% Raw source stays untouched; never expose credential values in events.
 text = regexprep(text, ['(?i)(username|user|password|passphrase|account|token|secret)' ...
     '([ \t]*[:=][ \t]*|[ \t]+)[^ \t,;]+'], '$1$2<redacted>');
 end

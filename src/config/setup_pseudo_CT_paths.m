@@ -49,50 +49,12 @@ if needs_spm && exist(config.spm_root, 'dir') ~= 7
     error('pseudo_CT:SPMRootMissing', ...
         'Configured SPM root not found: %s', config.spm_root);
 end
-if isfield(config, 'implementation') && ...
-        ischar(config.implementation) && strcmp(config.implementation, 'legacy-v2')
-    local_validate_legacy_artifacts(config);
-end
-if strcmp(config.mode, 'launchpad')
-    launchpad_files = {config.launchpad.runner; config.launchpad.defaults_mat};
-    for ii = 1:length(launchpad_files)
-        if exist(launchpad_files{ii}, 'file') ~= 2
-            error('pseudo_CT:MissingResource', ...
-                'Configured Launchpad file not found: %s', launchpad_files{ii});
-        end
-    end
-    launchpad_dirs = {config.launchpad.mcr_root; ...
-        config.launchpad.batch_templates};
-    for ii = 1:length(launchpad_dirs)
-        if exist(launchpad_dirs{ii}, 'dir') ~= 7
-            error('pseudo_CT:MissingResource', ...
-                'Configured Launchpad directory not found: %s', ...
-                launchpad_dirs{ii});
-        end
-    end
-elseif strcmp(config.mode, 'mlsc')
-    is_current_setup = false;
-    try
-        is_current_setup = isfield(config, 'implementation') && ...
-            ischar(config.implementation) && ...
-            strcmp(config.implementation, 'current');
-    catch %#ok<CTCH>
-        is_current_setup = false;
-    end
-    if is_current_setup
-        local_validate_current_setup(config);
-        if strcmp(purpose, 'run')
-            mlsc_files = {config.mlsc.shell; config.mlsc.freesurfer_env};
-        else
-            mlsc_files = {};
-        end
+if strcmp(config.mode, 'mlsc')
+    local_validate_current_setup(config);
+    if strcmp(purpose, 'run')
+        mlsc_files = {config.mlsc.shell; config.mlsc.freesurfer_env};
     else
-        if strcmp(purpose, 'run')
-            mlsc_files = {config.mlsc.runner; config.mlsc.defaults_mat; ...
-                config.mlsc.shell; config.mlsc.freesurfer_env};
-        else
-            mlsc_files = {};
-        end
+        mlsc_files = {};
     end
     for ii = 1:length(mlsc_files)
         if exist(mlsc_files{ii}, 'file') ~= 2
@@ -100,20 +62,6 @@ elseif strcmp(config.mode, 'mlsc')
                 'Configured MLSC file not found: %s', mlsc_files{ii});
         end
     end
-    if is_current_setup
-        % Current artifact-file existence and integrity are checked by
-        % preflight/validator; setup checks interpreted host dependencies.
-    elseif strcmp(purpose, 'run')
-        mlsc_dirs = {config.mlsc.mcr_root; config.mlsc.batch_templates};
-        for ii = 1:length(mlsc_dirs)
-            if exist(mlsc_dirs{ii}, 'dir') ~= 7
-                error('pseudo_CT:MissingResource', ...
-                    'Configured MLSC directory not found: %s', mlsc_dirs{ii});
-            end
-        end
-    end
-else
-    % Local mode's external dependencies were validated above.
 end
 
 overrides_path = fullfile(root_dir, 'src', 'science', 'overrides');
@@ -151,7 +99,7 @@ end
 if needs_converter
     addpath(config.d2n_root, '-begin');
 end
-if any(strcmp(config.mode, {'mlsc'; 'launchpad'})) && ...
+if strcmp(config.mode, 'mlsc') && ...
         ~strcmp(purpose, 'validate')
     ssh2_root = fullfile(root_dir, 'external', 'ssh2_v2_m1_r5');
     if exist(ssh2_root, 'dir') ~= 7
@@ -178,36 +126,10 @@ if needs_spm
 end
 end
 
-function local_validate_legacy_artifacts(config)
-%LOCAL_VALIDATE_LEGACY_ARTIFACTS Never fall back to a site-installed runner.
-if ~isfield(config, 'legacy') || ~isstruct(config.legacy) || ...
-        numel(config.legacy) ~= 1
-    error('pseudo_CT:LegacyDependencyMissing', ...
-        'The legacy profile has no local compiled/legacy-v2.0.0 contract.');
-end
-required_files = {config.legacy.runner; config.legacy.defaults_mat};
-for ii = 1:numel(required_files)
-    if exist(required_files{ii}, 'file') ~= 2
-        error('pseudo_CT:LegacyDependencyMissing', ...
-            'Required local legacy-v2.0.0 file is missing: %s', ...
-            required_files{ii});
-    end
-end
-required_dirs = {config.legacy.mcr_root; config.legacy.batch_templates};
-for ii = 1:numel(required_dirs)
-    if exist(required_dirs{ii}, 'dir') ~= 7
-        error('pseudo_CT:LegacyDependencyMissing', ...
-            'Required legacy-v2.0.0 directory is missing: %s', ...
-            required_dirs{ii});
-    end
-end
-end
-
 function local_validate_current_setup(config)
 %LOCAL_VALIDATE_CURRENT_SETUP Validate current artifact strings for setup.
-%   Requires the neutral config.current artifact strings and rejects any
-%   legacy block/fields. Artifact-file existence is checked by preflight and
-%   the execution validator. R2010b only.
+%   Requires the neutral config.current artifact strings. Artifact-file
+%   existence is checked by preflight and the execution validator. R2010b only.
 if ~isfield(config, 'current') || ~isstruct(config.current) || ...
         numel(config.current) ~= 1
     error('pseudo_CT:InvalidProfile', ...
@@ -221,19 +143,6 @@ for ii = 1:length(current_fields)
             isempty(strtrim(value)) || any(value == char(0))
         error('pseudo_CT:InvalidProfile', ...
             'The MLSC current artifact block is invalid.');
-    end
-end
-if isfield(config, 'legacy')
-    error('pseudo_CT:InvalidProfile', ...
-        'The MLSC current profile must not carry a legacy block.');
-end
-legacy_mlsc_fields = {'runner'; 'mcr_root'; 'defaults_mat'; ...
-    'batch_templates'};
-for ii = 1:length(legacy_mlsc_fields)
-    if isfield(config.mlsc, legacy_mlsc_fields{ii})
-        error('pseudo_CT:InvalidProfile', ...
-            'The MLSC current profile must not carry legacy field %s.', ...
-            legacy_mlsc_fields{ii});
     end
 end
 end

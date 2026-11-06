@@ -1,7 +1,6 @@
 function [Pf] = pseudo_CT_current_compute(P_in, dir_batch_templates_in, config, output_context_in, fh_in)
 %PSEUDO_CT_CURRENT_COMPUTE Post-normalization computation for current pipeline.
-%   Shared by atlas_based_attenuation_map (local-current facade) and
-%   mlsc_current_payload (compiled-current compute phase). Implements the
+%   Used by mlsc_current_payload (compiled-current compute phase). Implements the
 %   post-normalization order exactly: MNI/PCA/masking/segmentation/bone/
 %   DARTEL/inverse warp/reslice/attenuation/QC.
 %

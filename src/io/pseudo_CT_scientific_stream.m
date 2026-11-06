@@ -1,5 +1,5 @@
 function [events, state] = pseudo_CT_scientific_stream(path, version, subject, state, final)
-%PSEUDO_CT_SCIENTIFIC_STREAM Incremental direct-file v2/v3 scientific parser.
+%PSEUDO_CT_SCIENTIFIC_STREAM Incremental direct-file v3 scientific parser.
 % STATE contains the byte reader and version-specific interpretation state.
 % FINAL=true declares EOF; false holds an unterminated growing-file line.
 if nargin < 4 || isempty(state)

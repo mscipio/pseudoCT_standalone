@@ -17,7 +17,7 @@ function artifact = mlsc_generate_slurm_script(subject, config, runtime)
 %   the exact per-submission shared "$shared_temp/.mlsc_progress_<id>" file
 %   around the existing work, where <id> is the non-secret submission
 %   correlation identity passed explicitly in RUNTIME (RUNTIME.
-%   submission_correlation_id).  Without that identity the legacy shared
+%   submission_correlation_id).  Without that identity the fixed shared
 %   "$shared_temp/.mlsc_progress" name is used for direct generation only.
 %   Each write is best-effort append-only under umask 077 and can never fail
 %   the job.  Records and the correlation suffix contain only fixed
@@ -31,7 +31,7 @@ function artifact = mlsc_generate_slurm_script(subject, config, runtime)
 %   FreeSurfer tcsh contract, then compute, then verified copy-back. The
 %   launcher is invoked as <runner> <pinned MCR_ROOT> <phase>
 %   <job_manifest> <resource_manifest> matching the T003 payload CLI.
-%   Legacy invocation/ordering is untouched. Resources use CONFIG.mlsc
+%   Resources use CONFIG.mlsc
 %   scheduler values (provisional basic/1/1/32G/4h with CPU unchosen for the
 %   future profile); OMP/MKL exports derive from SLURM_CPUS_PER_TASK without
 %   claiming enforcement and without -singleCompThread forcing. The generated
@@ -39,7 +39,7 @@ function artifact = mlsc_generate_slurm_script(subject, config, runtime)
 %   constructed here. Single generic assembly path (R005): shared
 %   directives/TMPDIR/progress/env/staging/sbatch/metadata via
 %   local_generic_* helpers; narrow current payload/manifest/output-contract
-%   branches only. Legacy emitted behavior is byte-identical.
+%   branches only.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -53,109 +53,11 @@ try
 catch %#ok<CTCH>
     is_current = false;
 end
-if is_current
-    artifact = local_generate_current(subject, config, runtime, preflight);
-    return;
+if ~is_current
+    error('pseudo_CT:MLSCGenerator', ...
+        'MLSC Slurm generation requires the current profile contract.');
 end
-mlsc = config.mlsc;
-
-shared_input = local_subject_value(subject, {'shared_input'; 'seed_nii'});
-shared_temp = local_subject_value(subject, {'shared_temp'; 'temp_dir'});
-shared_temp = local_strip_trailing_separators(shared_temp);
-check_aliasing = preflight.check_aliasing;
-
-input_name = preflight.input_name;
-normalized_name = preflight.normalized_name;
-needs_normalization = preflight.needs_normalization;
-
-q_shared_input = local_shell_quote(shared_input);
-q_shared_temp = local_shell_quote(shared_temp);
-q_input_name = local_shell_quote(input_name);
-q_normalized_name = local_shell_quote(normalized_name);
-q_freesurfer_env = local_shell_quote(mlsc.freesurfer_env);
-q_runner = local_shell_quote(mlsc.runner);
-q_mcr_root = local_shell_quote(mlsc.mcr_root);
-q_batch_templates = local_shell_quote(mlsc.batch_templates);
-q_defaults_mat = local_shell_quote(mlsc.defaults_mat);
-stdout_log_path = fullfile(shared_temp, 'pseudoCT_mlsc_%j.out');
-stderr_log_path = fullfile(shared_temp, 'pseudoCT_mlsc_%j.err');
-q_stdout_log_path = local_shell_quote(stdout_log_path);
-q_stderr_log_path = local_shell_quote(stderr_log_path);
-
-% Single generic assembly path (R005): shared directives/vars/progress/
-% TMPDIR/env/staging/sbatch/metadata via generic helpers; narrow legacy
-% payload/output-contract branches below. Current reuses the same helpers.
-lines = {};
-lines = local_append_generic(lines, local_generic_directives(mlsc, ...
-    q_stdout_log_path, q_stderr_log_path));
-lines = local_append_generic(lines, local_generic_shared_vars( ...
-    q_shared_input, q_shared_temp, q_input_name, q_normalized_name));
-[progress_filename, progress_correlation_id] = ...
-    local_progress_selection(runtime);
-lines = local_append_generic(lines, local_generic_progress_tmpdir( ...
-    progress_filename));
-lines = local_append_generic(lines, local_generic_env_staging());
-
-if needs_normalization
-    tcsh_program = 'source "$MLSC_FREESURFER_ENV"; mri_normalize "$TMPDIR/$MLSC_INPUT_NAME" "$TMPDIR/$MLSC_NORMALIZED_NAME"';
-    lines{end + 1} = 'mlsc_record_progress ''normalize|start''';
-    lines{end + 1} = ['env -u LD_LIBRARY_PATH MLSC_FREESURFER_ENV=' q_freesurfer_env ' MLSC_INPUT_NAME=' q_input_name ' MLSC_NORMALIZED_NAME=' q_normalized_name ' tcsh -f -c ''' tcsh_program ''''];
-    lines{end + 1} = 'mlsc_record_progress ''normalize|done''';
-    runner_input = '"$local_normalized"';
-else
-    runner_input = '"$local_input"';
-end
-
-runner_command = [q_runner ' ' q_mcr_root ' ' runner_input ' ' ...
-    q_batch_templates ' 0 ' num2str(check_aliasing) ' ' q_defaults_mat];
-lines{end + 1} = 'mlsc_record_progress ''pseudoCT|start''';
-lines{end + 1} = runner_command;
-lines{end + 1} = 'mlsc_record_progress ''pseudoCT|done''';
-lines{end + 1} = 'mlsc_record_progress ''verify|start''';
-lines{end + 1} = 'if [ ! -s "$TMPDIR/att_map.nii" ]; then';
-lines{end + 1} = '    printf ''Node-local att_map.nii is missing or empty.\n'' >&2';
-lines{end + 1} = '    exit 73';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'mlsc_record_progress ''verify|done''';
-lines{end + 1} = 'mlsc_record_progress ''copy_back|start''';
-
-% Copy all node-local processing files back to the shared directory.
-lines{end + 1} = 'find "$TMPDIR" -mindepth 1 -maxdepth 1 -exec cp -a -t "$shared_temp" -- {} +';
-
-lines{end + 1} = 'if [ ! -s "$shared_temp/att_map.nii" ]; then';
-lines{end + 1} = '    printf ''Shared att_map.nii copy-back is missing or empty.\n'' >&2';
-lines{end + 1} = '    exit 74';
-lines{end + 1} = 'fi';
-
-lines{end + 1} = 'mlsc_record_progress ''copy_back|done''';
-lines{end + 1} = 'printf ''MLSC node-local processing and verified copy-back completed.\n''';
-
-script_text = local_join_lines(lines);
-submission_command = local_generic_sbatch(runtime);
-
-artifact = struct();
-artifact.schema = 'pseudo-CT.mlsc-slurm-script/v1';
-artifact.script = script_text;
-artifact.script_text = script_text;
-artifact.submission_command = submission_command;
-artifact.sbatch_command = submission_command;
-artifact.stdout_log_path = stdout_log_path;
-artifact.stderr_log_path = stderr_log_path;
-artifact.log_paths = struct('stdout', stdout_log_path, ...
-    'stderr', stderr_log_path);
-artifact.preflight = preflight;
-artifact.progress_filename = progress_filename;
-artifact.progress_correlation_id = progress_correlation_id;
-artifact.progress_records = mlsc_progress('records');
-artifact.progress_path = fullfile(shared_temp, artifact.progress_filename);
-artifact.progress_format = 'stage|state per line, LF terminated';
-artifact.heavy_processing_root = '$TMPDIR';
-artifact.shared_input_staging = 'cp shared subject temp to node-local TMPDIR';
-artifact.shared_output_staging = 'cp node-local TMPDIR outputs to shared subject temp';
-artifact.required_output = 'att_map.nii';
-artifact.optional_outputs = {'Pseudo_CT_AC_Version.txt'; ...
-    'Fusion_MR_Pseudo_CT_validation.tiff'; normalized_name};
-artifact.secure_transport_required = true;
+artifact = local_generate_current(subject, config, runtime, preflight);
 end
 
 function value = local_subject_value(subject, names)
@@ -172,7 +74,7 @@ function [progress_filename, progress_correlation_id] = ...
         local_progress_selection(runtime)
 %LOCAL_PROGRESS_SELECTION Exact per-submission progress artifact selection.
 %   Uses RUNTIME.submission_correlation_id when present; otherwise the
-%   legacy fixed name for direct generation only.  The Slurm script writes
+%   fixed name for direct generation only.  The Slurm script writes
 %   only the selected file.  R2010b only.
 progress_filename = '';
 progress_correlation_id = '';
@@ -240,7 +142,7 @@ end
 
 function lines = local_generic_directives(mlsc, q_stdout_log_path, q_stderr_log_path)
 %LOCAL_GENERIC_DIRECTIVES Single generic Slurm directives path (R005).
-%   Shared by legacy and current; no second construction. R2010b only.
+%   Single construction path. R2010b only.
 lines = {};
 lines{end + 1} = ['#!' mlsc.shell];
 lines{end + 1} = ['#SBATCH --partition=' mlsc.partition];
@@ -409,23 +311,6 @@ lines{end + 1} = 'fi';
 lines{end + 1} = 'shared_probe_created=1';
 end
 
-function lines = local_generic_env_staging()
-%LOCAL_GENERIC_ENV_STAGING Single generic env/staging path (R005).
-%   Node-local input/normalized, MCR cache, OMP/MKL derivation (observability
-%   only, no enforcement), staging, and stage-in milestone. R2010b only.
-lines = {};
-lines{end + 1} = 'local_input="$TMPDIR/$input_name"';
-lines{end + 1} = 'local_normalized="$TMPDIR/$normalized_name"';
-lines{end + 1} = 'MCR_CACHE_ROOT="$TMPDIR/mcr_cache"';
-lines{end + 1} = 'export MCR_CACHE_ROOT';
-lines{end + 1} = ': "${SLURM_CPUS_PER_TASK:?SLURM_CPUS_PER_TASK is required}"';
-lines{end + 1} = 'export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"';
-lines{end + 1} = 'export MKL_NUM_THREADS="$SLURM_CPUS_PER_TASK"';
-lines{end + 1} = 'mkdir -p -- "$MCR_CACHE_ROOT"';
-lines{end + 1} = 'cp -- "$shared_input" "$local_input"';
-lines{end + 1} = 'cd "$TMPDIR"';
-lines{end + 1} = 'mlsc_record_progress ''stage_in|done''';
-end
 
 function lines = local_generic_env_pre()
 %LOCAL_GENERIC_ENV_PRE Shared env/staging prefix without cd/stage-in (R005).
@@ -485,7 +370,7 @@ function artifact = local_generate_current(subject, config, runtime, preflight)
 %   uses the PREPARE-validated handoff derivation (selected input,
 %   normalization need, _normalized basename) resolved at runtime from
 %   controlled basenames without sourcing/evaluating the .mat handoff.
-%   No SCP, no global LD_LIBRARY_PATH, no catalog/resolver, legacy untouched.
+%   No SCP, no global LD_LIBRARY_PATH, no catalog/resolver.
 current = config.current;
 mlsc = config.mlsc;
 shared_input = local_subject_value(subject, {'shared_input'; 'seed_nii'});
@@ -567,8 +452,7 @@ q_stdout_log_path = local_shell_quote(stdout_log_path);
 q_stderr_log_path = local_shell_quote(stderr_log_path);
 % Single generic assembly path (R005): shared directives/vars/progress/
 % TMPDIR/env/staging/sbatch via generic helpers; narrow current
-% payload/manifest/output-contract branches below. Legacy uses the same
-% helpers above.
+% payload/manifest/output-contract branches below.
 lines = {};
 lines = local_append_generic(lines, local_generic_directives(mlsc, ...
     q_stdout_log_path, q_stderr_log_path));

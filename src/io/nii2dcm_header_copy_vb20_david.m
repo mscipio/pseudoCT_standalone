@@ -74,7 +74,6 @@ dicom_ref_info= dicominfo(dcm_ref);
 % length of the image data
 img_bytes = double(dicom_ref_info.Rows)*double(dicom_ref_info.Columns)*double(dicom_ref_info.BitsAllocated)/8;
 % read the dicom image for all files with the same series id
-% Legacy output: display(['Reading reference dicom data with SeriesNumber =' num2str(dicom_ref_info.SeriesNumber)]);
 dicom_ref_meta= cell(1);
 pad_ref_meta  = cell(1);
 file_out_name = cell(1);
@@ -133,7 +132,6 @@ series_num = dicom_ref_info.SeriesNumber;
 % ensure that input and output images are the same dimensions
 if (dicom_ref_info.Rows ~= nifti_in_dims(2)) || (dicom_ref_info.Columns ~= nifti_in_dims(1))...
    || (slice_ref_total ~= nifti_in_dims(3))
-	% Legacy output: display(['Input and reference volumes are different dimensions']);
 	error('pseudo_CT:DICOMDimensionMismatch', ...
 	    ['NIfTI dimensions [%d %d %d] do not match DICOM dimensions ', ...
 	     '[%d %d %d].'], nifti_in_dims(1), nifti_in_dims(2), ...
@@ -143,7 +141,6 @@ end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % write the new dicom series with the copied metadata
-% Legacy output: display(['Writing dicom data...']);
 for m=1:slice_ref_total
 	out_file = fullfile(dcm_out_path,file_out_name{m});	
 	% open the data file and write meta and image data

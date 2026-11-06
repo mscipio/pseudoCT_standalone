@@ -49,7 +49,7 @@ function report = pseudo_CT_run_lifecycle(varargin)
 %   Examples:
 %       run_pseudo_CT()
 %       run_pseudo_CT('profile', 'local-current')
-%       run_pseudo_CT('profile', 'mlsc-legacy', 'subjects', 'batch')
+%       run_pseudo_CT('profile', 'mlsc-current', 'subjects', 'batch')
 %       run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, ...
 %                     'correct_aliasing', 0)
 %       run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, ...
@@ -59,9 +59,8 @@ function report = pseudo_CT_run_lifecycle(varargin)
 %
 %   RUN_PSEUDO_CT(DEFAULTS_MAT) is supported only in deployed mode.
 %   DEFAULTS_MAT should point to a MAT file containing the defaults
-%   structure expected by the compiled application. This preserves the
-%   existing legacy compiled deployed-mode contract (historical Launchpad
-%   contract).
+%   structure expected by the compiled application (profile_name, profile,
+%   or execution_profile must name the canonical profile).
 %
 %   Outputs:
 %       - final DICOM pseudo-muMAP images are written to MR/pseudo_muMAP
@@ -94,7 +93,7 @@ resolved_jobs = struct([]);
 % Optional runtime-only MLSC trusted host-key material/provider seam.  It is
 % never a profile field, never sourced from source control, and never logged;
 % it is supplied out-of-band at runtime and defaults to empty.  An empty
-% provider selects the normal Launchpad-style MLSC workflow: the existing
+% provider selects the normal MLSC workflow: the existing
 % username/password dialog, Ganymed password authentication, account
 % discovery, and the Slurm lifecycle without any known_hosts/fingerprint
 % input or authentication block.  A supplied provider selects strict pinned
@@ -146,7 +145,7 @@ else
     % Optional, out-of-band MLSC trusted host-key material/provider.  Accepts a
     % character known_hosts record or a zero-argument function handle returning
     % one; it is never read from a profile and never logged.  Empty (default)
-    % selects the Launchpad-style password-authentication workflow; a supplied
+    % selects the password-authentication workflow; a supplied
     % value selects strict pinned host-key verification.
     p.addParamValue('mlsc_host_key_provider', [], ...
         @(x) isempty(x) || ischar(x) || isa(x, 'function_handle'));
@@ -193,7 +192,7 @@ if isempty(profile_name)
 end
 if headless_mode
     if ~any(strcmp(requested_profile_name, {'mlsc-current'; ...
-            'mlsc-mprage-only'; 'mlsc-legacy'; 'launchpad-legacy'})) || ...
+            'mlsc-mprage-only'})) || ...
             ~strcmp(requested_profile_name, profile_name)
         error('run_pseudo_CT:HeadlessProfile', ...
             'Headless execution requires one exact approved remote profile.');
@@ -208,7 +207,7 @@ if headless_mode
             'Headless execution requires a validated one-time credential.');
     end
     if any(strcmp(profile_name, {'mlsc-current'; ...
-            'mlsc-mprage-only'; 'mlsc-legacy'})) && ...
+            'mlsc-mprage-only'})) && ...
             (~ischar(group_account))
         error('run_pseudo_CT:HeadlessGroupAccount', ...
             'Headless MLSC submission requires a valid group account value.');
@@ -216,7 +215,7 @@ if headless_mode
 end
 
 %% === Warning handling ===
-% Suppress all warnings during processing (legacy SPM8 generates many
+% Suppress all warnings during processing (SPM8 generates many
 % benign warnings about version compatibility, deprecated functions, and
 % Java classpath conflicts). The original state is restored on exit via
 % the onCleanup guard.
@@ -240,23 +239,18 @@ config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, ...
 % Runtime retention override (comparison use only): omitted keeps the
 % profile default; an explicit 0/1 (or logical) overrides
 % config.cleanup_on_success without changing any profile file. The
-% existing downstream gates (local-current, shared remote finalizer,
-% local-legacy, Launchpad keep_tmp derivation) already read
-% config.cleanup_on_success, so no other change is needed.
+% existing downstream gates (local-current and the shared remote finalizer)
+% already read config.cleanup_on_success, so no other change is needed.
 if ~isempty(cleanup_on_success_arg)
     config.cleanup_on_success = logical(cleanup_on_success_arg);
 end
 if ~isempty(config.required_matlab_release) && ...
         ~strcmp(version('-release'), config.required_matlab_release)
-    % Legacy output: warning(['Profile ''%s'' requires MATLAB R%s; running R%s. ', ...
-    %          'Results may differ from the intended profile output.'], ...
-    %     profile_name, config.required_matlab_release, version('-release'));
     pseudo_CT_output('WARN', struct('scope', 'run'), ...
         'Profile %s requires MATLAB R%s; running R%s. Results may differ.', ...
         profile_name, config.required_matlab_release, version('-release'));
 end
 setup_pseudo_CT_paths(pathp, config);
-dir_batch_templates = config.atlas_root;
 
 %% === Collect jobs ===
 if ~isempty(resolved_jobs)
@@ -396,32 +390,8 @@ mlsc_context.console_release = run_context.console_release;
 mlsc_context.console_started_at = run_context.console_started_at;
 mlsc_context.console_output = run_context.console_output;
 mlsc_context.stage_map = run_context.stage_map;
-if isfield(config, 'implementation') && ischar(config.implementation) && ...
-        strcmp(config.implementation, 'legacy-v2')
-    for ii = 1:length(jobs)
-        if jobs(ii).correct_aliasing ~= ...
-                jobs(ii).recenter_before_normalization
-            warning_record = local_legacy_override_warning(profile_name, ...
-                jobs(ii).correct_aliasing, ...
-                jobs(ii).recenter_before_normalization);
-            report.warnings = warning_record;
-            pseudo_CT_output('WARN', run_context, '%s', warning_record.message);
-            break;
-        end
-    end
-end
 pseudo_CT_output('INFO', run_context, 'Profile: %s; mode: %s; MATLAB: %s.', ...
     profile_name, config.mode, version);
-if isfield(config, 'implementation') && ischar(config.implementation) && ...
-        strcmp(config.implementation, 'legacy-v2')
-    delegation_context = local_workflow_event_context(run_context, ...
-        'workflow.legacy_preprocess_delegated', 'prepare.compiled_preprocess', ...
-        'delegation', 'INFO');
-    delegation_context.stage_span = [2 3];
-    delegation_context.operation_ids = {'prepare.recenter', 'prepare.alias_correct'};
-    pseudo_CT_output('INFO', delegation_context, ...
-        'Recentering and aliasing delegated to compiled v2 backend.');
-end
 % Preserve summaries for skipped subjects as well as jobs, then refresh each
 % processable subject's file with that job's effective requested options.
 pseudo_CT_print_profile_summary(profile_name, config, processing_dirs, run_context);
@@ -447,138 +417,11 @@ end
 
 %% === Dispatch by configured execution mode ===
 report.run_status = 'running';
-if strcmp(config.mode, 'launchpad')
-    report.authentication_status = 'not_observed';
-    report.account_status = 'not_applicable';
-    report.preflight_status = 'not_applicable';
-end
 num_success = 0;
 num_failed = 0;
 num_started = length(jobs);
 
 switch config.mode
-
-    case 'launchpad'
-        % ============================================================
-        % LAUNCHPAD EXECUTION PATH
-        % ============================================================
-        report.submission_status = 'unresolved';
-        P = '';
-        for ii = 1:length(jobs)
-            context = local_subject_context(jobs(ii), ii, length(jobs));
-            context.stage_map = pseudo_CT_stage_map(config);
-            context = local_stage_context(context, 1);
-            stage_started = tic;
-            pseudo_CT_output('INFO', context, 'Preparing input MPRAGE.');
-            if length(jobs) > 1
-                % Legacy output: disp(sprintf('\nPreparing Launchpad pseudo-CT subject %d of %d:\n%s\n', ...
-                %     ii, length(jobs), jobs(ii).mprage_fn));
-            end
-            % Remote converter detail is kept in the subject log only.
-            converter_context = context;
-            converter_context.console_detail_remote = true;
-            jobs(ii).seed_nii = local_convert_dicom(jobs(ii).mprage_fn, ...
-                fullfile(jobs(ii).temp_dir, 'mprage.nii'), converter_context);
-            P(ii, 1:length(jobs(ii).seed_nii)) = jobs(ii).seed_nii;
-            % Legacy output: disp(sprintf('\n\nThis is the temporary working directory where intermediate results will be saved:\n%s\n', temp_dir));
-            pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
-                local_elapsed(toc(stage_started)));
-        end
-
-        % SSH credentials
-        HOSTNAME = config.launchpad.host;
-        if headless_mode
-            USERNAME = headless_credentials.username;
-            PASSWORD = headless_credentials.password;
-            clear headless_credentials
-        else
-            [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, ...
-                'ValidatePassword', true, 'PasswordLengthMax', 50, ...
-                'WindowName', sprintf('Login for: %s', HOSTNAME));
-        end
-        ssh_log = {USERNAME, PASSWORD, HOSTNAME};
-        clear USERNAME PASSWORD HOSTNAME
-
-        keep_tmp_val = ~config.cleanup_on_success;
-        [launchpad_connection, ~, ~, ss_tot, launchpad_job_ids] = ...
-            batch_pseudo_CT_launchpad(P, ssh_log, ...
-            'clean_folder', 0, 'keep_tmp', keep_tmp_val, ...
-            'check_aliasing', jobs(1).correct_aliasing, ...
-            'output_contexts', {jobs.log_file}, config);
-        clear ssh_log
-        if local_connection_authenticated(launchpad_connection)
-            report.authentication_status = 'authenticated';
-        end
-        report.job_ids = local_valid_job_ids(launchpad_job_ids);
-        if ~isempty(report.job_ids)
-            report.submission_status = 'accepted';
-            report.authentication_status = 'authenticated';
-        end
-        % batch_pseudo_CT_launchpad owns and closes its connection after the
-        % existing PBS wait/retrieval lifecycle; clear its returned struct.
-        clear launchpad_connection
-
-        for jj = 1:length(jobs)
-            % Guard: one subject-scoped terminal line per subject (see local path).
-            outcome = pseudo_CT_subject_outcome( ...
-                local_subject_context(jobs(jj), jj, length(jobs)), jobs(jj).subject_started);
-            guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
-            if ss_tot(jj) ~= 0
-                % Legacy output: disp(sprintf('Pseudo-CT Launchpad processing failed for:\n%s\n', jobs(jj).mprage_fn));
-                context = local_subject_context(jobs(jj), jj, length(jobs));
-                pseudo_CT_output('ERROR', context, ...
-                    'Subject failed during Launchpad processing (elapsed %s).', ...
-                    local_elapsed(toc(jobs(jj).subject_started)));
-                outcome.markClosed();
-                num_failed = num_failed + 1;
-                clear guard
-                continue;
-            end
-
-            if length(jobs) > 1
-                % Legacy output: disp(sprintf('\nFinalizing Launchpad pseudo-CT subject %d of %d:\n%s\n', ...
-                %     jj, length(jobs), jobs(jj).mprage_fn));
-            end
-
-            try
-                % The shared finalizer preserves the historical order of
-                % launchpad_apply_background_mask(jobs(jj).temp_dir, context),
-                % pseudo_CT_write_mu_map_dicom, and
-                % pseudo_CT_promote_final_outputs.
-                if local_finalize_remote_subject(jobs(jj), deblank(P(jj, :)), ...
-                        config, jj, length(jobs))
-                    num_success = num_success + 1;
-                else
-                    num_failed = num_failed + 1;
-                    report.completion_status = 'failed';
-                end
-                % The finalizer writes its own SUCCESS or ERROR before returning.
-                outcome.markClosed();
-            catch ME
-                context = local_subject_context(jobs(jj), jj, length(jobs));
-                if headless_mode
-                    local_log_remote_failure(jobs(jj), context, ...
-                        'Launchpad finalization failed; diagnostic text omitted.');
-                else
-                    local_log_remote_failure(jobs(jj), context, ME.message);
-                end
-                outcome.markClosed();
-                num_failed = num_failed + 1;
-                report.completion_status = 'failed';
-                clear guard
-                continue;
-            end
-            clear guard
-        end
-
-        if ~isdeployed && length(jobs) > 1
-            % Legacy output: disp(sprintf('\nLaunchpad pseudo-CT batch finished.  Success: %d  Failed: %d\n', ...
-            %     num_success, num_failed));
-        end
-
-        if interactive_gui && num_success == 1
-            warndlg('Pseudo-CT processing completed.', 'Pseudo-CT completed');
-        end
 
     case 'mlsc'
         % ============================================================
@@ -711,25 +554,12 @@ switch config.mode
                     subject = struct('subject_id', jobs(ii).mprage_fn, ...
                         'shared_input', jobs(ii).seed_nii, ...
                         'shared_temp', jobs(ii).temp_dir);
-                    % T004 current seam: credential-free per-job alias/
-                    % recenter overrides travel in the subject so the
-                    % current job manifest carries effective overrides
-                    % (never profile defaults). The legacy route receives
-                    % only an explicit aliasing override; omission preserves
-                    % its configured default and the compiled runner contract.
-                    try
-                        if isfield(config, 'implementation') && ...
-                                ischar(config.implementation) && ...
-                                strcmp(config.implementation, 'current')
-                            subject.check_aliasing = jobs(ii).correct_aliasing;
-                            subject.recenter_before_normalization = ...
-                                jobs(ii).recenter_before_normalization;
-                        elseif strcmp(profile_name, 'mlsc-legacy') && ...
-                                ~isempty(aliasing_arg)
-                            subject.check_aliasing = logical(aliasing_arg);
-                        end
-                    catch %#ok<CTCH>
-                    end
+                    % Credential-free per-job alias/recenter overrides travel
+                    % in the subject so the job manifest carries the
+                    % effective overrides (never profile defaults).
+                    subject.check_aliasing = jobs(ii).correct_aliasing;
+                    subject.recenter_before_normalization = ...
+                        jobs(ii).recenter_before_normalization;
                     lifecycle = struct();
                     try
                         lifecycle = mlsc_lifecycle(subject, config, runtime, transport);
@@ -845,23 +675,14 @@ switch config.mode
         % ============================================================
         show_subject_dialog = interactive_gui;
         for jj = 1:length(jobs)
-            if length(jobs) > 1
-                % Legacy output: disp(sprintf('\nStarting local pseudo-CT subject %d of %d:\n%s\n', ...
-                %     jj, length(jobs), jobs(jj).mprage_fn));
-            end
             % Guard: writes one subject-scoped ERROR if this iteration exits
             % without a closed outcome. The propagating error is not altered.
             outcome = pseudo_CT_subject_outcome( ...
                 local_subject_context(jobs(jj), jj, length(jobs)), jobs(jj).subject_started);
             guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
             try
-                if strcmp(config.implementation, 'legacy-v2')
-                    subject_success = pseudo_CT_run_local_legacy_subject( ...
-                        jobs(jj), config, jj, length(jobs), show_subject_dialog);
-                else
-                    subject_success = local_run_subject(jobs(jj), dir_batch_templates, ...
-                         show_subject_dialog, profile_name, config, jj, length(jobs));
-                end
+                subject_success = local_run_subject(jobs(jj), ...
+                    show_subject_dialog, profile_name, config, jj, length(jobs));
                 if subject_success
                     num_success = num_success + 1;
                 else
@@ -879,11 +700,6 @@ switch config.mode
                 num_failed = num_failed + 1;
             end
             clear guard
-        end
-
-        if ~isdeployed && length(jobs) > 1
-            % Legacy output: disp(sprintf('\nLocal pseudo-CT batch finished.  Success: %d  Failed: %d\n', ...
-            %     num_success, num_failed));
         end
 
     otherwise
@@ -922,7 +738,7 @@ pseudo_CT_output(summary_level, run_context, ...
      num_success, num_failed, collection_stats.skipped, ...
      local_elapsed(toc(run_started)));
 report.run_status = 'returned';
-clear headless_credentials PASSWORD USERNAME ssh_log gui_credentials
+clear headless_credentials PASSWORD USERNAME gui_credentials
 
 end
 
@@ -938,7 +754,7 @@ end
 %% ========================================================================
 %  LOCAL SUBJECT EXECUTION
 %  ========================================================================
-function success = local_run_subject(job, dir_batch_templates, ...
+function success = local_run_subject(job, ...
     show_dialog, profile_name, config, subject_index, subject_count)
 
 success = 0;
@@ -960,44 +776,12 @@ for ii = 1:length(dir_list)
     if exist(dir_list{ii}, 'dir') ~= 7
         [mkdir_success, msg] = mkdir(dir_list{ii});
         if ~mkdir_success
-            % Legacy output: disp(sprintf('There was an error creating the directory %s\n%s', ...
-            %     dir_list{ii}, msg));
             pseudo_CT_output('ERROR', context, 'Could not create directory: %s', msg);
             pseudo_CT_output('INFO', context, '    %s', dir_list{ii});
             return;
         end
     end
 end
-
-% Legacy output: pseudo_CT_print_profile_summary(profile_name, config, processing_dir);
-
-% Resolve SSH host for FreeSurfer normalization from the selected profile.
-HOSTNAME = config.normalization.host;
-is_current_implementation = isfield(config, 'implementation') && ...
-    ischar(config.implementation) && strcmp(config.implementation, 'current');
-if is_current_implementation
-    % Current-lineage local profiles use the shared compiled payload and local
-    % FreeSurfer only; they never create an SSH connection or prompt.
-    ssh_log = [];
-elseif strcmp(HOSTNAME, '127.0.0.1') || strcmpi(HOSTNAME, 'localhost')
-    USERNAME = getenv('USER');
-    if isempty(USERNAME)
-        USERNAME = getenv('LOGNAME');
-    end
-    if isempty(USERNAME)
-        USERNAME = 'local';
-    end
-    ssh_log = struct('username', USERNAME, 'password', '', ...
-        'hostname', HOSTNAME, 'autoreconnect', 0);
-else
-    [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, ...
-        'ValidatePassword', true, 'PasswordLengthMax', 50, ...
-        'WindowName', sprintf('Login for: %s', HOSTNAME));
-    ssh_log = struct('username', USERNAME, 'password', PASSWORD, ...
-        'hostname', HOSTNAME, 'autoreconnect', 0);
-end
-
-clear USERNAME PASSWORD HOSTNAME
 
 % Convert DICOM to NIfTI
 context = local_stage_context(context, 1);
@@ -1008,22 +792,13 @@ pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'Input prepar
     local_elapsed(toc(stage_started)));
 
 [temp_working_dir, ~, ~] = fileparts(deblank(P));
-% Legacy output: disp(sprintf('\n\nThis is the temporary working directory where intermediate results will be saved:\n%s\n', ...
-%     temp_working_dir));
 
-% Run the pseudo-CT code. local-current shares the exact compiled prepare and
-% compute runner used by mlsc-current, with the existing external local
-% FreeSurfer normalization between phases. Other profiles keep their legacy
-% facade path unchanged.
-if is_current_implementation
-    Pf = pseudo_CT_run_local_current_subject(P, temp_dir, config, ...
-        job.correct_aliasing, job.recenter_before_normalization, context);
-else
-    Pf = atlas_based_attenuation_map(P, dir_batch_templates, ssh_log, ...
-        job.correct_aliasing, context, job.recenter_before_normalization, config);
-end
+% Run the pseudo-CT code. The compiled prepare and compute runner shared with
+% mlsc-current runs with the existing external local FreeSurfer normalization
+% between phases.
+Pf = pseudo_CT_run_local_current_subject(P, temp_dir, config, ...
+    job.correct_aliasing, job.recenter_before_normalization, context);
 if ~ischar(Pf) || isempty(strtrim(Pf))
-    % Legacy output: disp('Pseudo-CT processing stopped before generating atlas outputs.');
     pseudo_CT_output('ERROR', context, 'Processing stopped before atlas outputs were generated.');
     return;
 end
@@ -1041,7 +816,6 @@ if strcmp(config.io_policy.output, 'nifti-and-dicom')
         pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'DICOM output written (elapsed %s).', ...
             local_elapsed(toc(stage_started)));
     catch ME
-        % Legacy output: disp(ME.message);
         pseudo_CT_output('ERROR', local_status_context(context, 'ERROR'), 'DICOM output failed: %s', ME.message);
         return;
     end
@@ -1081,12 +855,10 @@ stage_started = tic;
 pseudo_CT_output('INFO', promotion_context, 'Promoting final NIfTI outputs.');
 promotion_success = pseudo_CT_promote_final_outputs(temp_working_dir, processing_dir, P, promotion_context);
 if ~promotion_success
-    % Legacy output: disp(sprintf('Final pseudo-CT files were left in the temporary folder:\n%s\n', temp_working_dir));
     pseudo_CT_output('ERROR', promotion_context, 'Output promotion failed; temporary files were preserved.');
     pseudo_CT_output('INFO', promotion_context, '    %s', temp_working_dir);
     return;
 end
-% Legacy output: disp(sprintf('The final pseudo-CT NIfTI/QC files were saved in:\n%s\n', processing_dir));
 pseudo_CT_output('SUCCESS', local_promotion_completed_context(promotion_context), ...
     'Outputs promoted (elapsed %s).', local_elapsed(toc(stage_started)));
 pseudo_CT_output('SUCCESS', local_output_event_context(promotion_context, ...
@@ -1094,8 +866,6 @@ pseudo_CT_output('SUCCESS', local_output_event_context(promotion_context, ...
 if config.cleanup_on_success
     [remove_success, msg] = pseudo_CT_cleanup_subject_temp(temp_working_dir);
     if ~remove_success
-        % Legacy output: disp(sprintf('There was an error removing the temporary directory %s\n%s', ...
-        %     temp_working_dir, msg));
         pseudo_CT_output('WARN', local_output_event_context(context, ...
             'output.cleanup', 'warning'), 'Temporary cleanup failed: %s', msg);
     else
@@ -1104,10 +874,7 @@ if config.cleanup_on_success
     end
 end
 
-% Legacy output: disp(sprintf('\n\nYour att-map Dicom images have been saved in:\n%s\n', save_dir));
-
 if show_dialog && ~isdeployed
-    % Legacy output: warndlg('Pseudo-CT image finished!!', 'Pseudo-CT finished!!');
     warndlg('Pseudo-CT processing completed.', 'Pseudo-CT completed');
 end
 
@@ -1125,7 +892,7 @@ function success = local_finalize_remote_subject(job, seed_nii, config, ...
         subject_index, subject_count, job_id)
 %LOCAL_FINALIZE_REMOTE_SUBJECT Apply the common post-remote finalization order.
 %   Optional JOB_ID propagates the accepted numeric MLSC job ID through the
-%   stage 5-8 tags.  Launchpad callers omit it and observe unchanged output.
+%   stage 5-8 tags.  Callers without an accepted job ID omit it.
 
 success = 0;
 if nargin < 6
@@ -1137,20 +904,7 @@ context.stage_map = pseudo_CT_stage_map(config);
 context = local_stage_context(context, 5);
 stage_started = tic;
 pseudo_CT_output('INFO', context, 'Applying local post-processing.');
-% T004 current: the shared current core owns zero-background policy, so the
-% legacy post-fetch re-mask is skipped for current. Legacy/launchpad keep
-% the historical post-fetch mask.
-is_current_finalize = false;
-try
-    is_current_finalize = isfield(config, 'implementation') && ...
-        ischar(config.implementation) && ...
-        strcmp(config.implementation, 'current');
-catch %#ok<CTCH>
-    is_current_finalize = false;
-end
-if strcmp(config.zero_background, 'Yes') && ~is_current_finalize
-    pseudo_CT_apply_background_mask(job.temp_dir, context);
-end
+% The shared current core owns zero-background policy; no post-fetch re-mask.
 pseudo_CT_output('SUCCESS', context, ...
     'Local post-processing completed (elapsed %s).', ...
     local_elapsed(toc(stage_started)));
@@ -1315,17 +1069,6 @@ if isstruct(transport) && isfield(transport, 'cleanup') && ...
         isa(transport.cleanup, 'function_handle')
     feval(transport.cleanup);
 end
-end
-
-
-%% ========================================================================
-%  LEGACY LAUNCHPAD BACKGROUND MASK WRAPPER
-%  ========================================================================
-function launchpad_apply_background_mask(temp_dir, context)
-% The mode-neutral helper retains the legacy fallback that the fetched
-% Launchpad attenuation map will remain unmasked when mprage_normalized.nii
-% or the optional masking operation is unavailable.
-pseudo_CT_apply_background_mask(temp_dir, context);
 end
 
 
@@ -1603,21 +1346,15 @@ end
 
 
 function name = canonical_profile_name(requested, profiles)
-%CANONICAL_PROFILE_NAME Resolve exact hyphenated keys plus deprecated alias.
+%CANONICAL_PROFILE_NAME Resolve exact hyphenated keys discovered from profiles.
 %   Accepts only exact hyphenated canonical keys discovered from
-%   src/config/profiles plus the deprecated alias mlsc -> mlsc-legacy.
-%   Underscore spellings, display labels, Launchpad and
-%   near-parity names are rejected. Discovery stays non-recursive so the
-%   alias creates no row.
+%   src/config/profiles. Underscore spellings and display labels are rejected.
 
 if ~ischar(requested)
     name = '';
     return;
 end
 requested = strtrim(requested);
-if strcmp(requested, 'mlsc')
-    requested = 'mlsc-legacy';
-end
 name = '';
 for ii = 1:length(profiles)
     if strcmp(requested, profiles(ii).name)
@@ -1762,22 +1499,6 @@ report.warnings = struct('code', {}, 'message', {}, 'profile', {}, ...
     'requested_correct_aliasing', {}, ...
     'requested_recenter_before_normalization', {}, ...
     'effective_behavior', {}, 'reason', {});
-end
-
-function warning_record = local_legacy_override_warning(profile_name, ...
-        correct_aliasing, recenter_before_normalization)
-reason = ['The compiled runner contract does not establish the meaning ', ...
-    'or interaction of the numeric aliasing argument and recentering option.'];
-message = sprintf(['Profile %s requested conflicting legacy preprocessing ', ...
-    'values (correct_aliasing=%d, recenter_before_normalization=%d); ', ...
-    'effective behavior is unknown. %s'], profile_name, ...
-    logical(correct_aliasing), logical(recenter_before_normalization), reason);
-warning_record = struct('code', 'LEGACY_PREPROCESSING_OVERRIDE_CONFLICT', ...
-    'message', message, 'profile', profile_name, ...
-    'requested_correct_aliasing', logical(correct_aliasing), ...
-    'requested_recenter_before_normalization', ...
-    logical(recenter_before_normalization), 'effective_behavior', 'unknown', ...
-    'reason', reason);
 end
 
 function local_validate_headless_subjects(subjects)

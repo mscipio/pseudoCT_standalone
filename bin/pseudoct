@@ -8,7 +8,7 @@ EXIT_AUTH=66
 EXIT_SUBMISSION=67
 EXIT_SCIENCE=68
 EXIT_RUNTIME=69
-profiles='local-current local-legacy local-mprage-only mlsc-current mlsc-legacy mlsc-mprage-only launchpad-legacy'
+profiles='local-current local-mprage-only mlsc-current mlsc-mprage-only'
 operation_phase=not_started
 
 usage() {
@@ -171,9 +171,8 @@ for flag_value in "$correct_aliasing" "$recenter" "$cleanup_success"; do
     case "$flag_value" in ''|yes|no) ;; *) error_record "$EXIT_USAGE" 'Processing options accept only yes or no.' ;; esac
 done
 case "$profile" in
-    local-current|local-legacy|local-mprage-only) backend=local ;;
-    mlsc-current|mlsc-legacy|mlsc-mprage-only) backend=mlsc ;;
-    launchpad-legacy) backend=launchpad ;;
+    local-current|local-mprage-only) backend=local ;;
+    mlsc-current|mlsc-mprage-only) backend=mlsc ;;
 esac
 case "$profile" in *mprage-only*) mprage_only=1 ;; *) mprage_only=0 ;; esac
 if [ "$mprage_only" -eq 1 ] && [ "$seen_umap" -eq 1 ]; then

@@ -918,8 +918,7 @@ end
 end
 
 function context = local_public_context(context, stage_number, status, message)
-% Canonical event context for Local Current; other profiles keep the legacy
-% stage tag.
+% Canonical event context for Local Current; other profiles are unchanged.
 if ~local_is_public_profile(context)
     context = local_stage_context(context, 2);
     return;

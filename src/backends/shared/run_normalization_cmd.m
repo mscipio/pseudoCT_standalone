@@ -36,7 +36,6 @@ aa = strfind(cmd, ' ');
 norm_fn = strtrim(cmd((aa(end)+1):end));
 is_local_host = strcmp(ssh2_conn.hostname, '127.0.0.1') || strcmpi(ssh2_conn.hostname, 'localhost');
 
-% Legacy output: disp('Starting FS command (be patient) ...');
 if is_local_host
     [status, command_result] = system(local_prepare_source_command(source_command, cmd, child_lib_path));
 else
@@ -45,14 +44,11 @@ end
 
 if is_local_host
     if exist(norm_fn, 'file') ~= 2
-        % Legacy output: disp(sprintf('Something has gone wrong and the normalized file was not creatd!!'));
         pseudo_CT_output('ERROR', output_context, 'FreeSurfer did not create the normalized NIfTI file.');
         if ~isempty(command_result)
-            % Legacy output: disp(command_result);
             pseudo_CT_output('ERROR', output_context, 'FreeSurfer failure detail: %s', strtrim(command_result));
         end
         if exist('status', 'var') && status ~= 0
-            % Legacy output: disp(sprintf('Local command exit status: %d', status));
             pseudo_CT_output('ERROR', output_context, 'FreeSurfer exit status: %d.', status);
         end
         sts = -1;
@@ -65,14 +61,12 @@ else
     end
     commando = strtrim(commando);
     if ~strcmp(norm_fn, commando)
-        % Legacy output: disp(sprintf('Something has gone wrong and the normalized file was not creatd!!'));
         pseudo_CT_output('ERROR', output_context, 'FreeSurfer did not create the normalized NIfTI file.');
         sts = -1;
         return
     end
 end
     
-% Legacy output: disp('Good News Everyone!! The command ran properly!');
 
 return
 

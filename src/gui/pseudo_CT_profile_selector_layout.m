@@ -1,20 +1,18 @@
 function layout = pseudo_CT_profile_selector_layout(standard_count, ...
-        custom_count, historical_count, custom_expanded, ...
-        historical_expanded, screen_height, selected_section, ...
+        custom_count, custom_expanded, screen_height, selected_section, ...
         selected_row, previous_scroll)
 %PSEUDO_CT_PROFILE_SELECTOR_LAYOUT Calculate compact selector geometry.
-%   Standard Processing stays visible. MPRAGE-only Processing and Legacy
-%   Processing each have an always-visible heading/subtitle row and
-%   independently sized option panels. Oversized layouts are capped at 90
-%   percent of the screen height.
+%   Standard Processing stays visible. MPRAGE-only Processing has an
+%   always-visible heading/subtitle row and an independently sized option
+%   panel. Oversized layouts are capped at 90 percent of the screen height.
 
-if nargin < 7
+if nargin < 5
     selected_section = 0;
 end
-if nargin < 8
+if nargin < 6
     selected_row = 0;
 end
-if nargin < 9
+if nargin < 7
     previous_scroll = NaN;
 end
 
@@ -36,14 +34,8 @@ if custom_expanded
 else
     layout.custom_panel_height = 0;
 end
-if historical_expanded
-    layout.historical_panel_height = panel_height(historical_count, layout, false);
-else
-    layout.historical_panel_height = 0;
-end
 
-layout.content_height = layout.group_gap + 2 * layout.disclosure_height + ...
-    layout.custom_panel_height + layout.historical_panel_height;
+layout.content_height = layout.custom_panel_height + layout.disclosure_height;
 layout.preferred_dialog_height = layout.top_height + ...
     layout.standard_panel_height + layout.group_gap + ...
     layout.content_height + layout.bottom_height;
@@ -64,16 +56,9 @@ if layout.scroll_needed
         layout.scrollbar_width - layout.scrollbar_gap;
 end
 
-layout.historical_panel_position = [0 0 layout.content_width ...
-    layout.historical_panel_height];
-layout.historical_disclosure_position = [0 ...
-    layout.historical_panel_height layout.content_width ...
-    layout.disclosure_height];
-layout.custom_panel_position = [0 ...
-    layout.historical_panel_height + layout.disclosure_height + ...
-    layout.group_gap layout.content_width layout.custom_panel_height];
-layout.custom_disclosure_position = [0 ...
-    layout.custom_panel_position(2) + layout.custom_panel_height ...
+layout.custom_panel_position = [0 0 layout.content_width ...
+    layout.custom_panel_height];
+layout.custom_disclosure_position = [0 layout.custom_panel_height ...
     layout.content_width layout.disclosure_height];
 layout.standard_panel_position = [layout.horizontal_margin ...
     layout.bottom_height + layout.viewport_height + layout.group_gap ...
@@ -87,16 +72,10 @@ if ~isnan(previous_scroll)
     layout.scroll_value = min(layout.maximum_scroll, ...
         max(0, previous_scroll));
 end
-selected_is_open = (selected_section == 2 && custom_expanded) || ...
-    (selected_section == 3 && historical_expanded);
+selected_is_open = selected_section == 2 && custom_expanded;
 if selected_row > 0 && selected_is_open
-    if selected_section == 2
-        selected_panel_height = layout.custom_panel_height;
-        selected_panel_bottom = layout.custom_panel_position(2);
-    else
-        selected_panel_height = layout.historical_panel_height;
-        selected_panel_bottom = layout.historical_panel_position(2);
-    end
+    selected_panel_height = layout.custom_panel_height;
+    selected_panel_bottom = layout.custom_panel_position(2);
     selected_row_bottom = selected_panel_height - ...
         selected_row * layout.row_height;
     selected_radio_center = selected_panel_bottom + ...

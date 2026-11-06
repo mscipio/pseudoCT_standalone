@@ -16,7 +16,6 @@ function report = mlsc_preflight(subject, config, runtime)
 %   CONFIG.current carries the pinned artifact contract (runner, pinned
 %   MCR_ROOT /usr/pubsw/common/matlab/26.1, build/resource manifest paths).
 %   No catalog, no resolver, no dynamic discovery, no MCR 7.11 fallback.
-%   Legacy invocation/ordering is untouched.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -311,20 +310,8 @@ end
 
 function local_validate_current_scheduler(mlsc)
 %LOCAL_VALIDATE_CURRENT_SCHEDULER Scheduler-only MLSC block for current.
-%   Requires host/shell/FreeSurfer/partition/resources only. Rejects legacy
-%   payload fields (runner/mcr_root/defaults_mat/batch_templates) so no
-%   fake legacy contract can satisfy current validation. Mirrors the
-%   legacy text/integer/partition/shell/memory/time checks without
-%   duplicating the current artifact contract (owned by
-%   mlsc_current_validate).
-legacy_fields = {'runner'; 'mcr_root'; 'defaults_mat'; 'batch_templates'};
-for ii = 1:length(legacy_fields)
-    if isfield(mlsc, legacy_fields{ii})
-        error('pseudo_CT:MLSCPreflight', ...
-            'The MLSC current profile must not carry legacy field %s.', ...
-            legacy_fields{ii});
-    end
-end
+%   Requires host/shell/FreeSurfer/partition/resources only. The current
+%   artifact contract is owned by mlsc_current_validate.
 required_fields = {'host'; 'shell'; 'freesurfer_env'; 'partition'; ...
     'nodes'; 'ntasks'; 'cpus_per_task'; 'memory'; 'time'};
 for ii = 1:length(required_fields)

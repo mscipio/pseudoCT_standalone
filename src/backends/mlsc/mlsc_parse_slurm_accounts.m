@@ -3,7 +3,7 @@ function accounts = mlsc_parse_slurm_accounts(response)
 %   ACCOUNTS = MLSC_PARSE_SLURM_ACCOUNTS(RESPONSE) accepts the cell-array or
 %   text response from `sshare -U -u $USER -P --format=Account --noheader`,
 %   whose canonical lines carry a single Account field (with an optional
-%   trailing column pipe), as well as legacy multi-column output where the
+%   trailing column pipe), as well as multi-column output where the
 %   Account is the first whitespace field. Blank, header, separator, and
 %   malformed lines are ignored. Account names are returned in first-seen
 %   order.

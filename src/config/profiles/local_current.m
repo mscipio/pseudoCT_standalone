@@ -3,10 +3,9 @@ function config = local_current()
 
 dependency_paths = pseudo_CT_dependency_paths();
 
-% Select the local processing path or the remote Launchpad path.
+% Execution mode: 'local' runs the pipeline on this computer.
 config.mode = 'local';
-% Implementation lineage: 'current' selects the compiled current payload;
-% 'legacy-v2' is the compiled Aether backend.
+% Implementation: 'current' selects the compiled current payload (only value).
 config.implementation = 'current';
 % SPM installation used by this profile.
 config.spm_root = dependency_paths.spm_root;
@@ -77,18 +76,4 @@ config.current.resource_manifest = fullfile(artifact_dir_here, ...
 config.current.required_outputs = {'att_map.nii'; ...
     'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
 
-% Launchpad SSH host; empty for local use.
-config.launchpad.host = '';
-% Compiled Launchpad runner; empty for local use.
-config.launchpad.runner = '';
-% MATLAB Compiler Runtime root; empty for local use.
-config.launchpad.mcr_root = '';
-% Compiled backend defaults MAT file; empty for local use.
-config.launchpad.defaults_mat = '';
-% Remote batch-template directory; empty for local use.
-config.launchpad.batch_templates = '';
-% PBS queue override; empty for local use.
-config.launchpad.queue = '';
-% Remote scratch root; empty for local use.
-config.launchpad.scratch = '';
 end

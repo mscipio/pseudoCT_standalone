@@ -102,8 +102,8 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %   whole-directory deployed-byte identity is claimed. Extras at
 %   DeployRoot are reported, never treated as proof.
 %
-%   Confinement: MLSC CURRENT only. LEGACY, local, and Launchpad
-%   behavior are unchanged. No SSH/Slurm, no science, no mcc, no
+%   Confinement: MLSC CURRENT only. Local behavior is unchanged. No
+%   SSH/Slurm, no science, no mcc, no
 %   publish/deploy side effects; only reads files and git metadata.
 %
 %   Minimum supported MATLAB: R2010b (era-safe idioms where trivial;

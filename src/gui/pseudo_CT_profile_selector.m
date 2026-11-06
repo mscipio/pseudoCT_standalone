@@ -2,9 +2,8 @@ function profile = pseudo_CT_profile_selector()
 %PSEUDO_CT_PROFILE_SELECTOR Show the profile selection dialog.
 %   Returns the filename-derived canonical profile key, or an empty string
 %   when the user cancels or closes the window. Standard Processing remains
-%   visible; MPRAGE-only Processing and Legacy Processing disclosures start
-%   collapsed and can be opened independently. Selecting an option never
-%   collapses its section.
+%   visible; the MPRAGE-only Processing disclosure starts collapsed. Selecting
+%   an option never collapses its section.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -24,20 +23,13 @@ for ii = 1:length(custom_names)
     is_custom = is_custom | strcmp({profiles.name}, custom_names{ii});
 end
 custom_indices = find(is_custom);
-is_standard = strcmp({profiles.name}, 'local-current') | ...
-    strcmp({profiles.name}, 'mlsc-current');
-% Keep any additional non-development routine options available in the
-% historical disclosure instead of silently dropping future profiles.
-historical_indices = find(~is_standard & ~is_custom);
 selected_name = profiles(default_index).name;
-profiles = profiles([standard_indices custom_indices historical_indices]);
+profiles = profiles([standard_indices custom_indices]);
 selected_index = find(strcmp({profiles.name}, selected_name), 1);
 
 standard_count = length(standard_indices);
 custom_count = length(custom_indices);
-historical_count = length(historical_indices);
 custom_expanded = false;
-historical_expanded = false;
 screen_height = get_screen_height();
 profile_sections = zeros(length(profiles), 1);
 section_rows = zeros(length(profiles), 1);
@@ -83,10 +75,6 @@ custom_panel = uipanel('Parent', content_panel, 'BorderType', 'none', ...
     'Units', 'pixels', 'Position', safe_panel_position( ...
     layout.custom_panel_position, layout.custom_panel_height), ...
     'Visible', 'off', 'Tag', 'custom_processing_options');
-historical_panel = uipanel('Parent', content_panel, 'BorderType', 'none', ...
-    'Units', 'pixels', 'Position', safe_panel_position( ...
-    layout.historical_panel_position, layout.historical_panel_height), ...
-    'Visible', 'off', 'Tag', 'historical_processing_options');
 
 slider_handle = uicontrol('Parent', dialog, 'Style', 'slider', ...
     'Units', 'pixels', 'Min', 0, 'Max', max(1, layout.maximum_scroll), ...
@@ -101,8 +89,8 @@ description_handles = cell(length(profiles), 1);
 recommended_handles = cell(length(profiles), 1);
 profile_sections = zeros(length(profiles), 1);
 section_rows = zeros(length(profiles), 1);
-section_counts = [standard_count custom_count historical_count];
-row_counts = zeros(1, 3);
+section_counts = [standard_count custom_count];
+row_counts = zeros(1, 2);
 for ii = 1:length(profiles)
     if ii <= standard_count
         section = 1;
@@ -110,18 +98,11 @@ for ii = 1:length(profiles)
         row_layout = layout;
         panel_height = layout.standard_panel_height;
         header_height = layout.panel_header_height;
-    elseif ii <= standard_count + custom_count
+    else
         section = 2;
         panel = custom_panel;
         row_layout = layout;
         panel_height = custom_count * layout.row_height + layout.panel_padding;
-        header_height = 0;
-    else
-        section = 3;
-        panel = historical_panel;
-        row_layout = layout;
-        panel_height = historical_count * layout.row_height + ...
-            layout.panel_padding;
         header_height = 0;
     end
     row_counts(section) = row_counts(section) + 1;
@@ -158,26 +139,12 @@ custom_disclosure = uicontrol('Parent', content_panel, 'Style', 'pushbutton', ..
     'Position', disclosure_title_position(layout.custom_disclosure_position), ...
     'Tag', 'custom_processing_disclosure', ...
     'Callback', @toggle_custom);
-historical_disclosure = uicontrol('Parent', content_panel, ...
-    'Style', 'pushbutton', 'String', '', 'HorizontalAlignment', 'left', ...
-    'FontWeight', 'bold', 'FontSize', 9, ...
-    'Position', disclosure_title_position(layout.historical_disclosure_position), ...
-    'Tag', 'historical_processing_disclosure', ...
-    'Callback', @toggle_historical);
 custom_subtitle = uicontrol('Parent', content_panel, 'Style', 'text', ...
     'String', ['No UMAP required ' char(183) ' NIfTI output only'], ...
     'HorizontalAlignment', 'left', 'FontSize', 8, ...
     'Position', disclosure_subtitle_position( ...
     layout.custom_disclosure_position), ...
     'Tag', 'mprage_only_processing_subtitle');
-historical_subtitle = uicontrol('Parent', content_panel, 'Style', 'text', ...
-    'String', ['Previous software version ' char(183) ...
-    ' MATLAB R2010b host required ' char(183) ...
-    ' Historical compatibility'], ...
-    'HorizontalAlignment', 'left', 'FontSize', 8, ...
-    'Position', disclosure_subtitle_position( ...
-    layout.historical_disclosure_position), ...
-    'Tag', 'legacy_processing_subtitle');
 update_disclosure_labels();
 
 uicontrol('Parent', dialog, 'Style', 'pushbutton', 'String', 'Cancel', ...
@@ -226,11 +193,6 @@ end
         apply_disclosure_state();
     end
 
-    function toggle_historical(~, ~)
-        historical_expanded = ~historical_expanded;
-        apply_disclosure_state();
-    end
-
     function apply_disclosure_state()
         previous_scroll = NaN;
         if ishghandle(slider_handle) && ...
@@ -255,17 +217,10 @@ end
         set(custom_panel, 'Position', safe_panel_position( ...
             layout.custom_panel_position, layout.custom_panel_height), ...
             'Visible', on_off(custom_expanded));
-        set(historical_panel, 'Position', safe_panel_position( ...
-            layout.historical_panel_position, layout.historical_panel_height), ...
-            'Visible', on_off(historical_expanded));
         set(custom_disclosure, 'Position', ...
             disclosure_title_position(layout.custom_disclosure_position));
-        set(historical_disclosure, 'Position', ...
-            disclosure_title_position(layout.historical_disclosure_position));
         set(custom_subtitle, 'Position', ...
             disclosure_subtitle_position(layout.custom_disclosure_position));
-        set(historical_subtitle, 'Position', ...
-            disclosure_subtitle_position(layout.historical_disclosure_position));
         configure_profile_rows(layout);
         if layout.scroll_needed
             step = min(1, layout.row_height / layout.maximum_scroll);
@@ -322,8 +277,6 @@ end
     function update_disclosure_labels()
         set(custom_disclosure, 'String', disclosure_label( ...
             'MPRAGE-only Processing', 2, custom_expanded));
-        set(historical_disclosure, 'String', disclosure_label( ...
-            'Legacy Processing', 3, historical_expanded));
     end
 
     function label = disclosure_label(section_name, section, is_expanded)
@@ -353,9 +306,8 @@ end
             selected_row = section_rows(selected_index);
         end
         layout = pseudo_CT_profile_selector_layout(standard_count, ...
-            custom_count, historical_count, custom_expanded, ...
-            historical_expanded, screen_height, selected_section, ...
-            selected_row, previous_scroll);
+            custom_count, custom_expanded, screen_height, ...
+            selected_section, selected_row, previous_scroll);
     end
 
     function y = initial_content_y(current_layout)

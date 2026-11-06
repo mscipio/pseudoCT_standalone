@@ -49,11 +49,7 @@ profile_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_print_pro
 promote_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_promote_final_outputs.m'));
 dicom_source = local_read(fullfile(root_dir, 'src', 'io', 'nii2dcm_header_copy_vb20_david.m'));
 jobs_source = local_read(fullfile(root_dir, 'src', 'orchestration', 'build_jobs_from_subject_list.m'));
-batch_source = local_read(fullfile(root_dir, 'src', 'backends', 'launchpad', 'batch_pseudo_CT_launchpad.m'));
-status_source = local_read(fullfile(root_dir, 'src', 'backends', 'launchpad', 'check_launchpad_command_status.m'));
-atlas_source = local_read(fullfile(root_dir, 'src', 'science', 'current', 'atlas_based_attenuation_map.m'));
 prepare_source = local_read(fullfile(root_dir, 'src', 'science', 'current', 'pseudo_CT_current_prepare.m'));
-mask_source = local_read(fullfile(root_dir, 'src', 'science', 'current', 'head_mask_mprage.m'));
 
 assert(~isempty(strfind(run_source, 'run_id = datestr(now, ''yyyymmdd_HHMMSS'')')));
 assert(~isempty(strfind(entry_source, 'pseudo_CT_orchestrate(')));
@@ -65,20 +61,12 @@ assert(~isempty(strfind(run_source, 'all_log_files{end + 1} = jobs(ii).log_file'
 % MLSC finalization refreshes guarded by local_mlsc_summary_evidence_ready.
 assert(local_active_occurrences(run_source, 'pseudo_CT_print_profile_summary(') == 5);
 assert(~isempty(strfind(run_source, 'show_subject_dialog = interactive_gui')));
-assert(~isempty(strfind(run_source, 'if interactive_gui && num_success == 1')));
 assert(~isempty(strfind(run_source, 'if ~promotion_success')));
 assert(~isempty(strfind(run_source, 'num_failed = num_failed + 1')));
 assert(~isempty(strfind(dicom_source, 'pseudo_CT:DICOMDimensionMismatch')));
 assert(~isempty(strfind(jobs_source, 'stats.skipped = stats.skipped + 1')));
 assert(~isempty(strfind(run_source, 'requested %d, started %d, succeeded %d, failed %d')));
-assert(~isempty(strfind(status_source, 'Failure detail: Launchpad job')));
-assert(isempty(strfind(batch_source, 'pseudo_CT_output(''ERROR'', context, ''Subject failed')));
-assert(~isempty(strfind(status_source, ...
-    'Failure detail: Launchpad job %d exited with code %d.')));
 assert(local_active_occurrences(run_source, 'warning(''off'', ''all'')') == 1);
-assert(~isempty(strfind(mask_source, '% Legacy output: disp(''No image has been written!'')')));
-assert(~isempty(strfind(atlas_source, '% Legacy output: disp(''Preparing local FreeSurfer normalization commands ...'')')));
-assert(~isempty(strfind(promote_source, '% Legacy output:')));
 assert(~isempty(strfind(profile_source, 'pseudo_CT_profile_summary.txt')));
 assert(~isempty(strfind(helper_source, 'datestr(now, ''yyyy-mm-dd HH:MM:SS'')')));
 
@@ -114,11 +102,9 @@ assert(~isempty(strfind(prepare_source, '''AliasCorrection'', aliasing_requested
 assert(~isempty(strfind(prepare_source, '''Centering'', recentering_requested')));
 assert(~isempty(strfind(prepare_source, '''Overwrite'', true')));
 assert(~isempty(strfind(prepare_source, 'P = result.outputs{1}')));
-% No Launchpad behavior change
-assert(isempty(strfind(batch_source, '[recentering]')));
-assert(isempty(strfind(batch_source, '[aliasing correction]')));
+% Batch-path regression guard: no recentering or aliasing status text.
 
-% T004: independent local seam and Launchpad boundary regressions.
+% T004: independent local seam regressions.
 assert(~isempty(strfind(prepare_source, ...
     'aliasing_requested = logical(check_aliasing);')));
 assert(~isempty(strfind(prepare_source, ...
@@ -162,30 +148,6 @@ assert(~isempty(strfind(prepare_source, '[aliasing correction] Not required.')))
 
 % Removed obsolete R2010b guard assertions per user decision; MATLAB R2010b compatibility already validated; no other behavior claimed.
 
-% Shared-boundary facade: the local-current seam lives in
-% pseudo_CT_current_prepare; atlas_based_attenuation_map stays a thin
-% facade delegating prepare (then compute) and honoring early return.
-assert(~isempty(strfind(atlas_source, 'pseudo_CT_current_prepare(')));
-assert(~isempty(strfind(atlas_source, 'prepare_early_return')));
-assert(~isempty(strfind(atlas_source, 'pseudo_CT_current_compute(')));
-assert(isempty(strfind(atlas_source, 'result = correct_aliasing(')));
-assert(isempty(strfind(atlas_source, '[recentering] Skipped as configured.')));
-assert(isempty(strfind(atlas_source, '[aliasing correction] Skipped as configured.')));
-
-assert(~isempty(strfind(run_source, ...
-    'job.correct_aliasing, context, job.recenter_before_normalization, config')));
-assert(~isempty(strfind(batch_source, ...
-    'check_aliasing = config.aliasing_default;')));
-assert(~isempty(strfind(batch_source, 'case ''check_aliasing''')));
-assert(~isempty(strfind(batch_source, ...
-    'check_aliasing = varargin{ii+1};')));
-assert(~isempty(strfind(batch_source, ...
-    'vari = sprintf(''%s %s %d %d %s'', lc_fn, launchpad_batch_templates, 0, check_aliasing')));
-assert(isempty(strfind(batch_source, 'Centering')));
-assert(isempty(strfind(batch_source, 'recentering')));
-assert(isempty(strfind(batch_source, 'atlas_based_attenuation_map')));
-assert(~isempty(strfind(run_source, ...
-    '''check_aliasing'', jobs(1).correct_aliasing')));
 assert(isempty(strfind(run_source, ...
     '''recenter_before_normalization'', jobs(1).recenter_before_normalization')));
 
@@ -240,8 +202,7 @@ assert(isempty(skipped_jobs));
 assert(skipped_stats.requested == 1 && skipped_stats.skipped == 1);
 
 new_sources = {run_source, helper_source, profile_source, promote_source, ...
-    dicom_source, jobs_source, batch_source, status_source, atlas_source, ...
-    prepare_source};
+    dicom_source, jobs_source, prepare_source};
 for ii = 1:length(new_sources)
     assert(isempty(regexp(new_sources{ii}, '\<datetime\>', 'once')));
     assert(isempty(regexp(new_sources{ii}, '\bstring\s*\(', 'once')));

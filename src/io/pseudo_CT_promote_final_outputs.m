@@ -7,7 +7,6 @@ if ~isempty(varargin) && isstruct(varargin{1})
 end
 
 if exist(temp_dir, 'dir') ~= 7
-    % Legacy output: disp(sprintf('Temporary folder not found:\n%s\n', temp_dir));
     pseudo_CT_output('ERROR', context, 'Temporary folder was not found.');
     pseudo_CT_output('INFO', context, '    %s', temp_dir);
     return;
@@ -16,7 +15,6 @@ end
 if exist(processing_dir, 'dir') ~= 7
     [mkdir_success, msg] = mkdir(processing_dir);
     if mkdir_success == 0
-        % Legacy output: disp(sprintf('There was an error creating the directory %s\n%s', processing_dir, msg));
         pseudo_CT_output('ERROR', context, 'Could not create output directory: %s', msg);
         return;
     end
@@ -50,7 +48,6 @@ for ii=1:size(copy_specs, 1)
 
     if exist(source_file, 'file') ~= 2
         if is_required
-            % Legacy output: disp(sprintf('Required output file not found:\n%s\n', source_file));
             pseudo_CT_output('ERROR', context, 'Required output file was not found.');
             pseudo_CT_output('INFO', context, '    %s', source_file);
             return;
@@ -64,7 +61,6 @@ for ii=1:size(copy_specs, 1)
     end
     [copy_success, msg] = copyfile(source_file, stage_file);
     if copy_success == 0
-        % Legacy output: disp(sprintf('There was an error copying the output file\n%s\nto\n%s\n%s', source_file, destination_file, msg));
         pseudo_CT_output('ERROR', context, 'Could not promote output file: %s', msg);
         pseudo_CT_output('INFO', context, '    %s', source_file);
         pseudo_CT_output('INFO', context, '    %s', destination_file);
@@ -110,7 +106,6 @@ if move_success == 0
 end
 
 if exist(required_att_map, 'file') ~= 2
-    % Legacy output: disp(sprintf('Required output file not found:\n%s\n', required_att_map));
     pseudo_CT_output('ERROR', context, 'Promoted attenuation map was not found.');
     pseudo_CT_output('INFO', context, '    %s', required_att_map);
     local_cleanup_stages(stage_specs);

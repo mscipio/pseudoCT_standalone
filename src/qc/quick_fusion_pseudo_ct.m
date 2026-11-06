@@ -5,15 +5,15 @@
 
 function composite = quick_fusion_pseudo_ct(pat_folder, colormap_mat)
 %QUICK_FUSION_PSEUDO_CT Fused MR/pseudo-CT validation composite (T003 headless seam).
-%   COMPOSITE = QUICK_FUSION_PSEUDO_CT(PAT_FOLDER) preserves the legacy
-%   default exactly: the QC colormap is the bundled
+%   COMPOSITE = QUICK_FUSION_PSEUDO_CT(PAT_FOLDER) uses the default
+%   colormap exactly: the QC colormap is the bundled
 %   hot_map_mpitool_1024.mat beside this source, and the rendered composite
 %   is unchanged.
 %   COMPOSITE = QUICK_FUSION_PSEUDO_CT(PAT_FOLDER, COLORMAP_MAT) uses an
 %   explicit headless resource location instead of assuming a loose MAT
 %   beside source. COLORMAP_MAT must be an existing .mat file containing a
 %   non-empty numeric my_hot_map_1024; anything else fails closed.
-%   Empty/missing COLORMAP_MAT selects the legacy default.
+%   Empty/missing COLORMAP_MAT selects the default colormap.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -46,7 +46,6 @@ composite = 0;
 cd(pat_folder);
 listi = cellstr(ls('*normalized.nii'));
 if length(listi) == 0
-    % Legacy output: disp('Unable to find a *normalized.nii file');
     return;
 end
 % Get the first one:
@@ -57,13 +56,11 @@ try
     mr_im = spm_read_vols(spm_vol(mr_image));
     ct_im = spm_read_vols(spm_vol(ct_image));
 catch
-    % Legacy output: disp('Unable to open the nifti files');
     return
 end
 
 % Reslice if needed:
 if (size(mr_im, 1) ~= size(ct_im, 1)) | (size(mr_im, 2) ~= size(ct_im, 2)) | (size(mr_im, 3) ~= size(ct_im, 3))
-    % Legacy output: disp('Reslicing ...');
     P(1, :) = mr_image;
     P(2, 1:length(ct_image)) = ct_image;
     flg.mean  = 0; % Don't create a mean image;

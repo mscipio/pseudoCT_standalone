@@ -3,10 +3,9 @@ function config = local_mprage_only()
 
 dependency_paths = pseudo_CT_dependency_paths();
 
-% Select the local processing path or the remote Launchpad path.
+% Execution mode: 'local' runs the pipeline on this computer.
 config.mode = 'local';
-% Implementation lineage: 'current' selects the compiled current payload;
-% 'legacy-v2' selects the historical compiled Aether backend.
+% Implementation: 'current' selects the compiled current payload (only value).
 config.implementation = 'current';
 % SPM installation used by this profile.
 config.spm_root = dependency_paths.spm_root;
@@ -63,20 +62,6 @@ config.normalization.cluster = 'No';
 % Remote normalization scratch root; empty for localhost.
 config.normalization.host_folder = '';
 
-% Launchpad SSH host; empty for local use.
-config.launchpad.host = '';
-% Compiled Launchpad runner; empty for local use.
-config.launchpad.runner = '';
-% MATLAB Compiler Runtime root; empty for local use.
-config.launchpad.mcr_root = '';
-% Compiled backend defaults MAT file; empty for local use.
-config.launchpad.defaults_mat = '';
-% Remote batch-template directory; empty for local use.
-config.launchpad.batch_templates = '';
-% PBS queue override; empty for local use.
-config.launchpad.queue = '';
-% Remote scratch root; empty for local use.
-config.launchpad.scratch = '';
 
 % Current compiled prepare/compute artifacts shared with local-current and
 % MLSC-current. Resolve every artifact from this installation's current root.

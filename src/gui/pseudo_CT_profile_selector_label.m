@@ -17,12 +17,6 @@ switch profile_name
         label = ['MPRAGE-only ' dash ' Local'];
     case 'mlsc-mprage-only'
         label = ['MPRAGE-only ' dash ' MLSC'];
-    case 'local-legacy'
-        label = ['PseudoCT v2 (Aether) ' dash ' Local'];
-    case 'mlsc-legacy'
-        label = ['PseudoCT v2 (Aether) ' dash ' MLSC'];
-    case 'launchpad-legacy'
-        label = ['PseudoCT v2 (Aether) ' dash ' Launchpad'];
     otherwise
         label = fallback_label;
 end

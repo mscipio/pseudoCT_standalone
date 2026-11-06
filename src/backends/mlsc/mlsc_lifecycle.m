@@ -43,7 +43,7 @@ function result = mlsc_lifecycle(subject, config, runtime, transport)
 %   incremental cursor during each existing scheduler poll and once at
 %   terminal without adding queries or sleeps and without directory
 %   scanning or latest-file inference.  Only that file is ever read; a
-%   stale legacy or prior-submission file that remains present or
+%   stale prior-submission file that remains present or
 %   undeletable is never emitted.  A missing, late, partial, or unreadable
 %   file never fails the job; only complete enumerated records are emitted
 %   once, invalid input stays silent and secret-free.  A bounded
@@ -578,7 +578,7 @@ end
 
 function contract = local_contract_from_artifact(artifact)
 %LOCAL_CONTRACT_FROM_ARTIFACT Node-local/copy-back contract from script.
-%   T004 current seam (T014 authoritative): legacy checks unchanged. When
+%   T014 authoritative current-artifact checks. When
 %   the artifact selects current (is_current), additionally require the
 %   pinned launcher invocation, prepare BEFORE external normalization
 %   BEFORE compute, staged job/resource manifests, PREPARE-derived dynamic
@@ -777,7 +777,7 @@ end
 
 function copy_back = local_verify_copyback(result, subject)
 %LOCAL_VERIFY_COPYBACK Exit-0 plus missing output is failure.
-%   Legacy requires non-empty att_map.nii. Current requires the complete
+%   Requires non-empty att_map.nii. Current requires the complete
 %   three-output set (att_map.nii plus validation TIFF plus version TXT)
 %   plus mandatory durable evidence (handoff, prepare evidence, output
 %   verification); exit 0 with any required output or evidence missing or
@@ -1103,45 +1103,6 @@ catch %#ok<CTCH>
 end
 end
 
-function expected = local_expected_output_bytes(verification_path)
-%LOCAL_EXPECTED_OUTPUT_BYTES Legacy wrapper (explicit basenames only).
-%   Retained for compatibility; new code uses local_expected_output_entries
-%   with exact basenames (no underscore/dot inference). Returns a struct
-%   keyed by explicit safe keys for the declared basenames. R2010b only.
-expected = struct();
-try
-    entries = local_expected_output_entries(verification_path);
-    if isempty(entries)
-        expected = struct();
-        return;
-    end
-    output_map = local_current_output_filename_map();
-    for ii = 1:length(entries)
-        basename = entries{ii}.basename;
-        if strcmp(basename, output_map.att_map)
-            expected.att_map_nii = entries{ii}.bytes;
-        elseif strcmp(basename, output_map.validation_fusion)
-            expected.Fusion_MR_Pseudo_CT_validation_tiff = entries{ii}.bytes;
-        elseif strcmp(basename, output_map.validation_composite)
-            expected.Composite_Fusion_MR_Pseudo_CT_validation_tiff = entries{ii}.bytes;
-        elseif strcmp(basename, output_map.version)
-            expected.Pseudo_CT_AC_Version_txt = entries{ii}.bytes;
-        else
-            % Any other declared required output: explicit basename key
-            % sanitized without inference collisions (fail closed on clash).
-            safe = local_safe_key(basename);
-            if isfield(expected, safe)
-                expected = struct();
-                return;
-            end
-            expected.(safe) = entries{ii}.bytes;
-        end
-    end
-catch %#ok<CTCH>
-    expected = struct();
-end
-end
-
 function ok = local_att_map_content_ok(att_map_path, verification_path)
 %LOCAL_ATT_MAP_CONTENT_OK Structured semantic verification for att_map.nii.
 %   No string/size fallback. Requires the narrow structured contract tied
@@ -1438,18 +1399,6 @@ try
     end
 catch %#ok<CTCH>
     lines = {};
-end
-end
-
-function safe = local_safe_key(basename)
-safe = '';
-try
-    safe = regexprep(basename, '[^A-Za-z0-9]', '_');
-    if isempty(safe) || ~isletter(safe(1))
-        safe = ['k_' safe];
-    end
-catch %#ok<CTCH>
-    safe = 'k_unknown';
 end
 end
 
@@ -2259,8 +2208,7 @@ try
             try
                 value = source.console_profile;
                 if ischar(value) && any(strcmp(value, ...
-                        {'mlsc-current'; 'mlsc-legacy'; ...
-                         'mlsc-mprage-only'}))
+                        {'mlsc-current'; 'mlsc-mprage-only'}))
                     context.console_profile = value;
                 end
             catch %#ok<CTCH>
@@ -2557,7 +2505,7 @@ function [progress_path, progress_cursor, progress_milestones] = ...
         local_progress_init(backend, shared_temp)
 %LOCAL_PROGRESS_INIT Select the exact current-submission progress artifact.
 %   Reads only the backend-selected unique file; never scans a directory
-%   and never infers a latest file.  A stale legacy or prior-submission
+%   and never infers a latest file.  A stale prior-submission
 %   file is therefore never consumed.  R2010b only.
 progress_path = '';
 try
@@ -2727,21 +2675,19 @@ end
 end
 
 function version = local_scientific_stream_version(config)
-%LOCAL_SCIENTIFIC_STREAM_VERSION Map MLSC implementation lineage to a parser.
-%   Keys only on CONFIG.IMPLEMENTATION: 'legacy-v2' selects v2 and 'current'
-%   selects v3. Runtime profile names, log text, and the generator's
-%   is_current boolean are never used. Any other value fails closed.
+%LOCAL_SCIENTIFIC_STREAM_VERSION Return the MLSC scientific stream parser.
+%   Keys only on CONFIG.IMPLEMENTATION: 'current' selects v3. Runtime profile
+%   names, log text, and the generator's is_current boolean are never used.
+%   Any other value fails closed.
 implementation = '';
 if isfield(config, 'implementation') && ischar(config.implementation)
     implementation = config.implementation;
 end
-if strcmp(implementation, 'legacy-v2')
-    version = 'v2';
-elseif strcmp(implementation, 'current')
+if strcmp(implementation, 'current')
     version = 'v3';
 else
     error('pseudo_CT:MLSCStreamVersion', ...
-        'MLSC scientific stream requires implementation legacy-v2 or current.');
+        'MLSC scientific stream requires implementation current.');
 end
 end
 
@@ -3595,7 +3541,7 @@ function archive_name = local_archive_progress_name(source_path)
 %LOCAL_ARCHIVE_PROGRESS_NAME Deterministic correlation-preserving name.
 %   Uses the source basename (already .mlsc_progress_<id> for current
 %   submissions) so the correlation identity is preserved in the archive.
-%   Falls back to the legacy name only for a legacy source.  R2010b only.
+%   Falls back to the fixed name only for a source without the suffix. R2010b only.
 archive_name = '.mlsc_progress';
 try
     if ~ischar(source_path) || size(source_path, 1) ~= 1 || ...

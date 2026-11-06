@@ -1,7 +1,7 @@
 function snapshot = mlsc_evidence(event, previous, values)
 %MLSC_EVIDENCE Capture bounded, credential-free MLSC lifecycle evidence.
 %   SNAPSHOT = MLSC_EVIDENCE(EVENT, PREVIOUS, VALUES) mirrors the existing
-%   launchpad_evidence state seam without submitting, polling, or transporting
+%   evidence state seam without submitting, polling, or transporting
 %   anything.  The only persisted artifact is mlsc_evidence.mat when EVENT is
 %   write.  Runtime account selection is allowed; credentials and SSH details
 %   are rejected, not serialized.

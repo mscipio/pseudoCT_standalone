@@ -15,12 +15,9 @@ if strcmp(config.mode, 'local')
     catch
         pca_backend = 'unavailable';
     end
-elseif isfield(config, 'implementation') && ischar(config.implementation) && ...
-        strcmp(config.implementation, 'current') && ...
-        isfield(config, 'pca_order') && iscell(config.pca_order) && ...
+elseif isfield(config, 'pca_order') && iscell(config.pca_order) && ...
         ~isempty(config.pca_order)
-    % MLSC current owns its payload PCA order (callable-first); the
-    % 'remote' label below describes the legacy compiled backend only.
+    % MLSC owns its payload PCA order (callable-first).
     pca_backend = local_join_names(config.pca_order);
 end
 
@@ -41,9 +38,7 @@ lines{end+1} = '';
 lines{end+1} = '--- Configured Paths ---';
 lines{end+1} = sprintf('SPM root:           %s', config.spm_root);
 lines{end+1} = sprintf('Batch atlas:        %s', config.atlas_root);
-if ~strcmp(config.mode, 'launchpad')
 lines{end+1} = sprintf('Configured aliasing root: %s', config.aliasing_root);
-end
 lines{end+1} = '';
 lines{end+1} = '--- Pipeline Parameters ---';
 lines{end+1} = sprintf('Configured recentering default: %s', config.recenter_before_normalization);
@@ -62,38 +57,7 @@ if ~isempty(config.required_matlab_release)
     lines{end+1} = sprintf('Configured required MATLAB: R%s', config.required_matlab_release);
 end
 
-if strcmp(config.mode, 'launchpad')
-    lines{end+1} = '';
-    lines{end+1} = '--- Configured Launchpad Settings ---';
-    lines{end+1} = sprintf('Configured host:    %s', config.launchpad.host);
-    lines{end+1} = sprintf('Configured runner:  %s', config.launchpad.runner);
-    lines{end+1} = sprintf('Configured MCR root: %s', config.launchpad.mcr_root);
-    lines{end+1} = sprintf('Configured queue:   %s', config.launchpad.queue);
-    lines{end+1} = sprintf('Configured scratch: %s', config.launchpad.scratch);
-    lines{end+1} = sprintf('Configured templates: %s', config.launchpad.batch_templates);
-end
-
-if isfield(config, 'legacy') && isstruct(config.legacy)
-    lines{end+1} = '';
-    lines{end+1} = '--- Configured Legacy Runtime/Artifact (not execution evidence) ---';
-    if isfield(config.legacy, 'runner')
-        lines{end+1} = sprintf('Configured runner:  %s', config.legacy.runner);
-    end
-    if isfield(config.legacy, 'mcr_root')
-        lines{end+1} = sprintf('Configured MCR root: %s', config.legacy.mcr_root);
-    end
-    if isfield(config.legacy, 'defaults_mat')
-        lines{end+1} = sprintf('Configured defaults MAT: %s', config.legacy.defaults_mat);
-    end
-    if isfield(config.legacy, 'batch_templates')
-        lines{end+1} = sprintf('Configured batch templates: %s', config.legacy.batch_templates);
-    end
-    lines{end+1} = 'Configured build ID: Not confirmed (no build ID recorded in profile).';
-end
-
-if isfield(config, 'implementation') && ischar(config.implementation) && ...
-        strcmp(config.implementation, 'current') && ...
-        strcmp(config.mode, 'mlsc') && isfield(config, 'current')
+if strcmp(config.mode, 'mlsc') && isfield(config, 'current')
     lines{end+1} = '';
     lines{end+1} = '--- MLSC Current Artifact (configured; not execution evidence) ---';
     lines{end+1} = sprintf('Configured runner:  %s', config.current.runner);
@@ -114,11 +78,9 @@ if strcmp(config.mode, 'mlsc') && isfield(config, 'mlsc') && ...
         isstruct(config.mlsc)
     lines{end+1} = '';
     lines{end+1} = '--- Configured MLSC Submission Settings (not observed executor facts) ---';
-    fields = {'host', 'runner', 'mcr_root', 'defaults_mat', ...
-        'batch_templates', 'shell', 'partition', 'cpus_per_task', ...
+    fields = {'host', 'shell', 'partition', 'cpus_per_task', ...
         'memory', 'time'};
-    labels = {'host', 'runner', 'MCR root', 'defaults MAT', ...
-        'batch templates', 'shell', 'partition', 'CPUs/task', ...
+    labels = {'host', 'shell', 'partition', 'CPUs/task', ...
         'memory', 'time'};
     for ii = 1:numel(fields)
         if isfield(config.mlsc, fields{ii})
@@ -229,11 +191,6 @@ if isfield(config, 'normalization') && isstruct(config.normalization)
 end
 lines{end+1} = '=== End Summary ===';
 
-% Legacy output:
-% for ii = 1:length(lines)
-%     disp(lines{ii});
-% end
-
 if nargin >= 3 && ~isempty(processing_dirs)
     if ischar(processing_dirs)
         processing_dirs = {processing_dirs};
@@ -242,8 +199,6 @@ if nargin >= 3 && ~isempty(processing_dirs)
     summary_path = fullfile(processing_dirs{jj}, 'pseudo_CT_profile_summary.txt');
     fid = fopen(summary_path, 'w');
     if fid == -1
-        % Legacy output: warning('pseudoCT:SummaryWrite', ...
-        %     'Could not save profile summary to %s', summary_path);
         if nargin >= 4 && isstruct(output_context)
             pseudo_CT_output('WARN', output_context, ...
                 'Detailed profile summary could not be saved.');
@@ -256,7 +211,6 @@ if nargin >= 3 && ~isempty(processing_dirs)
     end
     fclose(fid);
     end
-    % Legacy output: disp(sprintf('pseudo-CT: Profile summary saved to %s', summary_path));
     if nargin >= 4 && isstruct(output_context)
         pseudo_CT_output('INFO', output_context, ...
             'Detailed profile summary saved as pseudo_CT_profile_summary.txt.');

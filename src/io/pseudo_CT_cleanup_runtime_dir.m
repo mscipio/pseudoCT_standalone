@@ -11,15 +11,13 @@ try
     fid = fopen(pid_file, 'r');
     if fid ~= -1
         pid = fscanf(fid, '%d', 1); fclose(fid);
-        done = exist(fullfile(path, 'runner.exit'), 'file') == 2 || ...
-            exist(fullfile(path, 'legacy_backend.exit'), 'file') == 2;
+        done = exist(fullfile(path, 'runner.exit'), 'file') == 2;
         if ~done && ~isempty(pid) && pid > 0
             [alive, ~] = system(sprintf('kill -0 %d 2>/dev/null', pid));
             if alive == 0
                 fid = fopen(fullfile(path, 'monitor.closed'), 'w');
                 if fid ~= -1, fclose(fid); end
-                done = exist(fullfile(path, 'runner.exit'), 'file') == 2 || ...
-                    exist(fullfile(path, 'legacy_backend.exit'), 'file') == 2;
+                done = exist(fullfile(path, 'runner.exit'), 'file') == 2;
                 if ~done, return; end
             end
         end

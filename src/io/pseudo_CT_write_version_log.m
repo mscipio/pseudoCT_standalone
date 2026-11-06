@@ -13,7 +13,7 @@ function status = pseudo_CT_write_version_log(code_version, dest_dir, varargin)
 %Uses only R2010b-safe I/O: fopen/fread/fwrite/fclose.
 %
 %Path resolution: fileparts(fileparts(fileparts(mfilename('fullpath'))))
-%matches the pattern used in atlas_based_attenuation_map.m.
+%matches the pattern used across the pseudoCT sources.
 
     output_context = struct();
     if ~isempty(varargin) && isstruct(varargin{1})
@@ -49,8 +49,6 @@ function status = pseudo_CT_write_version_log(code_version, dest_dir, varargin)
 
     catch ME  %#ok<CTCH>
         %% Graceful fallback — write version + date, never error
-        % Legacy output: disp(['WARNING: pseudo_CT_write_version_log fallback — CHANGELOG.md ' ...
-        %       'copy failed: ' ME.message]);
         pseudo_CT_output('WARN', output_context, ...
             'Version log fallback used: %s', ME.message);
         try
@@ -61,14 +59,10 @@ function status = pseudo_CT_write_version_log(code_version, dest_dir, varargin)
                 fclose(fid);
             else
                 status = -1;  % complete failure
-                % Legacy output: disp(['ERROR: pseudo_CT_write_version_log cannot write ' ...
-                %       'Pseudo_CT_AC_Version.txt to ' dest_file]);
                 pseudo_CT_output('ERROR', output_context, 'Version log could not be written.');
             end
         catch  %#ok<CTCH>
             status = -1;  % complete failure
-            % Legacy output: disp(['ERROR: pseudo_CT_write_version_log cannot write ' ...
-            %       'Pseudo_CT_AC_Version.txt to ' dest_file]);
             pseudo_CT_output('ERROR', output_context, 'Version log could not be written.');
         end
     end

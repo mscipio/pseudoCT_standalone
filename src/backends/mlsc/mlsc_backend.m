@@ -21,7 +21,7 @@ function result = mlsc_backend(subject, config, runtime, transport)
 %   Each submission owns one exact per-submission progress artifact
 %   fullfile(SHARED_TEMP, '.mlsc_progress_<correlation-id>') selected from
 %   the non-secret submission correlation identity and passed explicitly
-%   through the generated artifact.  A stale legacy shared file left by a
+%   through the generated artifact.  A stale shared file left by a
 %   preserved-temp prior run is best-effort removed as harmless cleanup
 %   only; correctness never depends on that deletion because the current
 %   run writes and reads only its own unique file.
@@ -29,7 +29,7 @@ function result = mlsc_backend(subject, config, runtime, transport)
 %   Minimum supported MATLAB: R2010b.
 %
 %   Current artifacts receive execution-time integrity/runtime validation
-%   before submission. No catalog/resolver, legacy untouched.
+%   before submission. No catalog/resolver.
 
 if nargin < 4 || ~isstruct(transport) || numel(transport) ~= 1
     error('pseudo_CT:MLSCTransportRequired', ...
@@ -88,8 +88,8 @@ if ~islogical(secure) || ~isscalar(secure) || ~secure
         'Secure MLSC transport verification was not accepted; submission was not attempted.');
 end
 
-% Harmless legacy cleanup only: correctness comes from the unique
-% per-submission artifact above, so a stale legacy file that cannot be
+% Harmless cleanup only: correctness comes from the unique
+% per-submission artifact above, so a stale file that cannot be
 % removed never affects the current run.
 local_reset_progress(subject);
 
@@ -358,8 +358,8 @@ receipt.completed_at = '';
 end
 
 function local_reset_progress(subject)
-%LOCAL_RESET_PROGRESS Harmless legacy progress cleanup.
-%   Best-effort removes a stale legacy .mlsc_progress file left by a
+%LOCAL_RESET_PROGRESS Harmless progress cleanup.
+%   Best-effort removes a stale .mlsc_progress file left by a
 %   preserved-temp prior run.  Correctness never depends on this deletion:
 %   the current submission writes and reads only its own unique
 %   .mlsc_progress_<correlation-id> artifact.  Never throws and never

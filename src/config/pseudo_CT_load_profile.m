@@ -9,14 +9,9 @@ if nargin < 2 || isempty(config_root)
 end
 
 % Single canonical-resolution authority: accept only exact hyphenated
-% canonical keys discovered from src/config/profiles plus the deprecated
-% alias mlsc -> mlsc-legacy. Underscore spellings, display labels,
-% Launchpad and near-parity names are rejected. Discovery
-% stays non-recursive so the alias creates no row.
+% canonical keys discovered from src/config/profiles. Underscore spellings
+% and display labels are rejected. Discovery stays non-recursive.
 trimmed = strtrim(profile_name);
-if strcmp(trimmed, 'mlsc')
-    trimmed = 'mlsc-legacy';
-end
 profiles = pseudo_CT_list_profiles(config_root, false);
 profile = struct();
 for ii = 1:length(profiles)
@@ -62,73 +57,35 @@ require_fields(config.normalization, ...
     {'source_command'; 'child_lib_path'; 'host'; 'cluster'; 'host_folder'}, ...
     'config.normalization');
 
-if ~ismember(config.mode, {'local', 'launchpad', 'mlsc'})
+if ~ismember(config.mode, {'local', 'mlsc'})
     error('pseudo_CT:InvalidProfile', ...
-        ['config.mode must be ''local'', ''launchpad'', or ''mlsc'' ', ...
-         'in profile %s.'], profile.name);
+        'config.mode must be ''local'' or ''mlsc'' in profile %s.', profile.name);
 end
-if ~ischar(config.implementation) || ...
-        ~ismember(config.implementation, {'current', 'legacy-v2'})
+if ~ischar(config.implementation) || ~strcmp(config.implementation, 'current')
     error('pseudo_CT:InvalidProfile', ...
-        ['config.implementation must be ''current'' or ''legacy-v2'' ', ...
-         'in profile %s.'], profile.name);
+        'config.implementation must be ''current'' in profile %s.', profile.name);
 end
-if strcmp(config.mode, 'launchpad')
-    require_fields(config.launchpad, ...
-        {'host'; 'runner'; 'mcr_root'; 'defaults_mat'; ...
-         'batch_templates'; 'queue'; 'scratch'}, 'config.launchpad');
-elseif strcmp(config.mode, 'mlsc')
-    is_current_profile = isfield(config, 'implementation') && ...
-        ischar(config.implementation) && ...
-        strcmp(config.implementation, 'current');
-    if is_current_profile
-        require_fields(config.mlsc, ...
-            {'host'; 'shell'; 'freesurfer_env'; 'partition'; ...
-             'nodes'; 'ntasks'; 'cpus_per_task'; 'memory'; 'time'}, ...
-            'config.mlsc');
-        validate_mlsc_scheduler(config.mlsc, profile.name);
-    else
-        require_fields(config.mlsc, ...
-            {'host'; 'runner'; 'mcr_root'; 'defaults_mat'; ...
-             'batch_templates'; 'shell'; 'freesurfer_env'; 'partition'; ...
-             'nodes'; 'ntasks'; 'cpus_per_task'; 'memory'; 'time'}, ...
-            'config.mlsc');
-        validate_mlsc(config.mlsc, profile.name);
-    end
+if strcmp(config.mode, 'mlsc')
+    require_fields(config.mlsc, ...
+        {'host'; 'shell'; 'freesurfer_env'; 'partition'; ...
+         'nodes'; 'ntasks'; 'cpus_per_task'; 'memory'; 'time'}, ...
+        'config.mlsc');
+    validate_mlsc_scheduler(config.mlsc, profile.name);
 end
-if strcmp(config.implementation, 'legacy-v2')
-    require_fields(config.legacy, ...
-        {'runner'; 'mcr_root'; 'defaults_mat'; 'batch_templates'; ...
-         'att_map'}, 'config.legacy');
-    validate_legacy(config.legacy, profile.name);
-    if isfield(config, 'current')
-        error('pseudo_CT:InvalidProfile', ...
-            'config.current must not appear in legacy profile %s.', ...
-            profile.name);
-    end
-else
-    % Current implementation: namespaces stay separate (no legacy leak).
-    if isfield(config, 'legacy')
-        error('pseudo_CT:InvalidProfile', ...
-            'config.legacy must not appear in current profile %s.', ...
-            profile.name);
-    end
-    if strcmp(config.mode, 'mlsc')
-        require_fields(config.current, ...
-            {'runner'; 'mcr_root'; 'build_manifest'; ...
-             'resource_manifest'; 'required_outputs'}, 'config.current');
-        validate_current(config.current, config.mlsc, profile.name);
-    elseif any(strcmp(profile.name, ...
-            {'local-current'; 'local-mprage-only'}))
-        require_fields(config.current, ...
-            {'runner'; 'mcr_root'; 'build_manifest'; ...
-             'resource_manifest'; 'required_outputs'}, 'config.current');
-        validate_current(config.current, struct(), profile.name);
-    elseif isfield(config, 'current')
-        error('pseudo_CT:InvalidProfile', ...
-            'config.current is unsupported in local profile %s.', ...
-            profile.name);
-    end
+if strcmp(config.mode, 'mlsc')
+    require_fields(config.current, ...
+        {'runner'; 'mcr_root'; 'build_manifest'; ...
+         'resource_manifest'; 'required_outputs'}, 'config.current');
+    validate_current(config.current, profile.name);
+elseif any(strcmp(profile.name, {'local-current'; 'local-mprage-only'}))
+    require_fields(config.current, ...
+        {'runner'; 'mcr_root'; 'build_manifest'; ...
+         'resource_manifest'; 'required_outputs'}, 'config.current');
+    validate_current(config.current, profile.name);
+elseif isfield(config, 'current')
+    error('pseudo_CT:InvalidProfile', ...
+        'config.current is unsupported in local profile %s.', ...
+        profile.name);
 end
 if ~ischar(config.aliasing_root) || isempty(strtrim(config.aliasing_root))
     error('pseudo_CT:InvalidProfile', ...
@@ -201,15 +158,15 @@ if ~ischar(config.io_policy.reference) || ...
         'io_policy values must be strings in profile %s.', profile_name);
 end
 
-legacy = strcmp(config.io_policy.reference, 'umap-required') && ...
+standard = strcmp(config.io_policy.reference, 'umap-required') && ...
     strcmp(config.io_policy.output, 'nifti-and-dicom') && ...
     strcmp(config.io_policy.gui, 'mMR') && isempty(config.compatibility_profile);
 mprage_only = strcmp(config.io_policy.reference, 'none') && ...
     strcmp(config.io_policy.output, 'nifti-only') && ...
     strcmp(config.io_policy.gui, 'mprage-only') && ...
     ismember(config.compatibility_profile, ...
-             {'local-current'; 'launchpad'; 'mlsc'; 'mlsc-current'});
-if ~(legacy || mprage_only)
+             {'local-current'; 'mlsc-current'});
+if ~(standard || mprage_only)
     error('pseudo_CT:InvalidProfile', ...
         'Unsupported or inconsistent io_policy tuple in profile %s.', profile_name);
 end
@@ -217,8 +174,7 @@ end
 
 function validate_mlsc_scheduler(mlsc, profile_name)
 %VALIDATE_MLSC_SCHEDULER Scheduler-only MLSC block for current (T005).
-%   Requires host/shell/FreeSurfer/partition/resources only and rejects
-%   legacy payload fields so no fake legacy contract satisfies current.
+%   Requires host/shell/FreeSurfer/partition/resources only.
 string_fields = {'host'; 'shell'; 'freesurfer_env'; 'partition'; ...
     'memory'; 'time'};
 for ii = 1:length(string_fields)
@@ -249,15 +205,6 @@ if isempty(regexp(mlsc.memory, '^[1-9][0-9]*[KMGTP]$', 'once')) || ...
         profile_name);
 end
 
-legacy_fields = {'runner'; 'mcr_root'; 'defaults_mat'; 'batch_templates'};
-for ii = 1:length(legacy_fields)
-    if isfield(mlsc, legacy_fields{ii})
-        error('pseudo_CT:InvalidProfile', ...
-            'config.mlsc must not carry legacy field %s in profile %s.', ...
-            legacy_fields{ii}, profile_name);
-    end
-end
-
 forbidden_fields = {'account'; 'username'; 'password'; 'passphrase'; ...
     'credentials'};
 for ii = 1:length(forbidden_fields)
@@ -269,57 +216,12 @@ for ii = 1:length(forbidden_fields)
 end
 end
 
-function validate_mlsc(mlsc, profile_name)
-string_fields = {'host'; 'runner'; 'mcr_root'; 'defaults_mat'; ...
-    'batch_templates'; 'shell'; 'freesurfer_env'; 'partition'; ...
-    'memory'; 'time'};
-for ii = 1:length(string_fields)
-    field_name = string_fields{ii};
-    if ~ischar(mlsc.(field_name)) || isempty(strtrim(mlsc.(field_name)))
-        error('pseudo_CT:InvalidProfile', ...
-            'config.mlsc.%s must be a non-empty string in profile %s.', ...
-            field_name, profile_name);
-    end
-end
-
-integer_fields = {'nodes'; 'ntasks'; 'cpus_per_task'};
-for ii = 1:length(integer_fields)
-    field_name = integer_fields{ii};
-    value = mlsc.(field_name);
-    if ~isnumeric(value) || ~isscalar(value) || ~isfinite(value) || ...
-            value < 1 || value ~= floor(value)
-        error('pseudo_CT:InvalidProfile', ...
-            'config.mlsc.%s must be a positive integer in profile %s.', ...
-            field_name, profile_name);
-    end
-end
-
-if isempty(regexp(mlsc.memory, '^[1-9][0-9]*[KMGTP]$', 'once')) || ...
-        isempty(regexp(mlsc.time, '^[0-9][0-9]:[0-5][0-9]:[0-5][0-9]$', 'once'))
-    error('pseudo_CT:InvalidProfile', ...
-        'config.mlsc memory/time must use Slurm formats in profile %s.', ...
-        profile_name);
-end
-
-forbidden_fields = {'account'; 'username'; 'password'; 'passphrase'; ...
-    'credentials'};
-for ii = 1:length(forbidden_fields)
-    if isfield(mlsc, forbidden_fields{ii})
-        error('pseudo_CT:InvalidProfile', ...
-            'config.mlsc must not persist credentials or a Slurm account in profile %s.', ...
-            profile_name);
-    end
-end
-end
-
-function validate_current(current, mlsc, profile_name)
+function validate_current(current, profile_name)
 %VALIDATE_CURRENT Fail-closed neutral current artifact contract (T005/T014).
 %   Requires the current-specific fields runner/mcr_root/build_manifest/
 %   resource_manifest/required_outputs, the exact pinned version-specific
     %   MATLAB R2010b installation root containing MCR 7.14 (never the
-    %   current symlink), and scheduler-only config.mlsc
-%   (legacy payload fields runner/mcr_root/defaults_mat/batch_templates
-%   are rejected so no fake legacy contract satisfies current validation).
+    %   current symlink), and scheduler-only config.mlsc.
 %   The current artifact structure is strict. Existence of referenced files
 %   is checked by preflight and again by execution validation. R2010b only.
 allowed_fields = {'runner'; 'mcr_root'; 'build_manifest'; ...
@@ -377,47 +279,12 @@ for ii = 1:length(expected_outputs)
             expected_outputs{ii}, profile_name);
     end
 end
-legacy_fields = {'runner'; 'mcr_root'; 'defaults_mat'; 'batch_templates'};
-for ii = 1:length(legacy_fields)
-    if isfield(mlsc, legacy_fields{ii})
-        error('pseudo_CT:InvalidProfile', ...
-            'config.mlsc must not carry legacy field %s in current profile %s.', ...
-            legacy_fields{ii}, profile_name);
-    end
-end
 end
 
 function value = strip_sep(value)
 value = strtrim(value);
 while length(value) > 1 && (value(end) == '/' || value(end) == char(92))
     value(end) = '';
-end
-end
-
-function validate_legacy(legacy, profile_name)
-string_fields = {'runner'; 'mcr_root'; 'defaults_mat'; ...
-    'batch_templates'; 'att_map'};
-for ii = 1:length(string_fields)
-    field_name = string_fields{ii};
-    if ~ischar(legacy.(field_name)) || isempty(strtrim(legacy.(field_name)))
-        error('pseudo_CT:InvalidProfile', ...
-            'config.legacy.%s must be a non-empty string in profile %s.', ...
-            field_name, profile_name);
-    end
-end
-if ~strcmp(legacy.att_map, 'att_map.nii')
-    error('pseudo_CT:InvalidProfile', ...
-        'config.legacy.att_map must be ''att_map.nii'' in profile %s.', ...
-        profile_name);
-end
-orchestration_fields = {'host'; 'shell'; 'freesurfer_env'; 'partition'; ...
-    'nodes'; 'ntasks'; 'cpus_per_task'; 'memory'; 'time'};
-for ii = 1:length(orchestration_fields)
-    if isfield(legacy, orchestration_fields{ii})
-        error('pseudo_CT:InvalidProfile', ...
-            'config.legacy must not carry orchestration field %s in profile %s.', ...
-            orchestration_fields{ii}, profile_name);
-    end
 end
 end
 

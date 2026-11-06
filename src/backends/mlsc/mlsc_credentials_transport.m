@@ -19,7 +19,7 @@ function transport = mlsc_credentials_transport(config, username, password, ...
 %   Credentials remain in this runtime closure only.  The optional
 %   HOST_KEY_PROVIDER selects the host-key trust model.  When it is empty
 %   (the normal MLSC workflow), VERIFY uses the bundled Ganymed password
-%   authentication path with an empty verifier, exactly like the Launchpad
+%   authentication path with an empty verifier, exactly like the standard password
 %   login model: no known_hosts/fingerprint input and no authentication
 %   block, after which account discovery and the Slurm lifecycle proceed
 %   normally.  When an explicitly supplied, independently trusted MLSC
@@ -88,7 +88,7 @@ transport = struct('verify', @local_verify, ...
         end
         % Provider-free: host_key_verifier stays empty and ssh2_main uses its
         % existing password-authentication connect branch, matching the
-        % Launchpad operational model without any host-key input.
+        % standard password operational model without any host-key input.
         % Open the connection: ssh2_main runs Connection.connect (strictly
         % through the verifier when one was resolved) before
         % authenticateWithPassword, so a rejected host key aborts the
@@ -163,7 +163,7 @@ transport = struct('verify', @local_verify, ...
     function verified_connection = local_open_verified_connection()
         % Build a connection struct that carries the verifier selected for
         % this runtime: the non-null strict verifier when a host-key provider
-        % was supplied, or empty for the provider-free Launchpad-style
+        % was supplied, or empty for the provider-free
         % password-authentication workflow, whose empty verifier routes
         % ssh2_main to its existing connect()/authenticateWithPassword
         % branch.  A supplied provider must never reach the empty-verifier

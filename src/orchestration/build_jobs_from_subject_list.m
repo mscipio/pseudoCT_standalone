@@ -23,9 +23,7 @@ function [jobs, stats] = build_jobs_from_subject_list(subject_list, correct_alia
 %   recenter_before_normalization.
 %   Returns empty when no valid subjects are found.
 %
-%   This function consolidates subject-list job construction formerly
-%   duplicated by the legacy entrypoint implementations. Those legacy
-%   entrypoint files are not part of this tree.
+%   This function is the single subject-list job construction path.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -115,7 +113,6 @@ for ii = 1:length(subject_list)
             [~, umap_fn] = pseudo_CT_discover_ute_umap(mprage_fn);
         end
         if ~ischar(umap_fn) || exist(umap_fn, 'file') ~= 2
-            % Legacy output: disp(sprintf('Skipping subject because no UMAP reference was found:\n%s\n', mprage_fn));
             stats.skipped = stats.skipped + 1;
             stats.skipped_subjects{end + 1} = mprage_fn;
             continue;

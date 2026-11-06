@@ -95,8 +95,8 @@ end
 
 function subject = local_new_subject(idx)
 subject = struct('index', idx, 'stage_state', zeros(1, 10), ...
-    'label_shown', false(1, 10), 'seen', {{}}, 'delegated', false, ...
-    'remote_notice', false, 'has_held', false, 'held', struct(), 'notices', {{}}, ...
+    'label_shown', false(1, 10), 'seen', {{}}, ...
+    'has_held', false, 'held', struct(), ...
     'terminal', false, 'last_ts', '');
 end
 
@@ -119,7 +119,7 @@ S.subject_slot = slot;
 end
 
 function S = local_source_context(S, context)
-% Identify this line's source: pipeline log, scheduler (PBS) stdout, or
+% Identify this line's source: pipeline log, scheduler stdout, or
 % compiled backend stdout. Replay files carry source_file; live calls do not.
 S.kind = 'pipeline';
 S.src = 'orchestrator';
@@ -139,14 +139,12 @@ S.file = context.source_file;
 is_pipeline = strncmp(name, 'pseudoct-run-', 13) && strcmp(ext, '.log');
 is_pipeline = is_pipeline || local_flag(context, 'workflow_event') || ...
     (isfield(context, 'source') && strcmp(context.source, 'orchestrator'));
-is_scheduler = ~is_pipeline && (strncmp(name, 'pbsjob_', 7) || ...
-    (isfield(context, 'source') && ischar(context.source) && ...
-    strcmp(context.source, 'scheduler')));
+is_scheduler = ~is_pipeline && (isfield(context, 'source') && ...
+    ischar(context.source) && strcmp(context.source, 'scheduler'));
 if is_pipeline
     S.kind = 'pipeline';
 elseif is_scheduler
     S.kind = 'scheduler';
-    S.src = 'launchpad_pbs_stdout';
 else
     S.kind = 'backend';
     S.src = local_backend_source(S.profile);
@@ -156,7 +154,7 @@ if isfield(context, 'source') && ischar(context.source) && ~isempty(context.sour
     S.src = context.source;
     if strcmp(context.source, 'scheduler')
         S.kind = 'scheduler';
-    elseif any(strcmp(context.source, {'backend'; 'local_backend'; 'mlsc_stdout'; 'launchpad_pbs_stdout'}))
+    elseif any(strcmp(context.source, {'backend'; 'local_backend'; 'mlsc_stdout'}))
         S.kind = 'backend';
     end
 end
@@ -167,9 +165,7 @@ end
 end
 
 function src = local_backend_source(profile)
-if ~isempty(strfind(profile, 'launchpad'))
-    src = 'launchpad_pbs_stdout';
-elseif ~isempty(strfind(profile, 'mlsc'))
+if ~isempty(strfind(profile, 'mlsc'))
     src = 'mlsc_stdout';
 else
     src = 'local_backend';
@@ -185,9 +181,7 @@ function S = local_flush(S)
 slot = S.subject_slot;
 for si = 1:length(S.subjects)
     S.subject_slot = si;
-    [pre, S] = local_release_notices(S);
     [out, S] = local_release_held(S, false);
-    out = [pre out];
     [visible, console_line, ~, S] = local_output(S, out);
     if visible && ~strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
         fprintf(1, '%s\n', console_line);
@@ -245,11 +239,8 @@ function title = local_profile_title(profile)
 switch profile
     case 'local-current', title = 'Local v3';
     case 'local-mprage-only', title = 'Local v3 MPRAGE-only';
-    case 'local-legacy', title = 'Local v2';
     case 'mlsc-current', title = 'MLSC v3';
     case 'mlsc-mprage-only', title = 'MLSC v3 MPRAGE-only';
-    case 'mlsc-legacy', title = 'MLSC v2';
-    case 'launchpad-legacy', title = 'Launchpad v2';
     otherwise, title = profile;
 end
 end
@@ -304,9 +295,6 @@ else
 end
 end
 
-function yes = local_is_legacy(profile)
-yes = length(profile) >= 6 && strcmp(profile(end - 5:end), 'legacy');
-end
 
 function yes = local_is_mprage_only(profile)
 yes = ~isempty(strfind(profile, 'mprage-only'));
@@ -346,8 +334,7 @@ while ~isempty(rem) && rem(1) == '['
         row.job = token(5:end);
     elseif strcmp(token, 'dcm2nii')
         row.dcm2nii = true;
-    elseif any(strcmp(token, {'run'; 'mlsc'; 'mlsc-current'; 'mlsc-legacy'; ...
-            'launchpad-legacy'}))
+    elseif any(strcmp(token, {'run'; 'mlsc'; 'mlsc-current'}))
         % scope tags are consumed
     else
         break;  % e.g. [recentering] is message text
@@ -463,15 +450,11 @@ end
 function c = local_parent(S, row, n, status, skip_text)
 % Parent stage transition: ACTIVE / DONE / SKIPPED, numbered 1..10.
 ids = local_stage_ids();
-legacy = local_is_legacy(S.profile);
 if strcmp(status, 'ACTIVE')
     text = local_stage_text(n, 'ACTIVE');
     kind = 'stage_started';
 elseif strcmp(status, 'DONE')
     text = local_stage_text(n, 'DONE');
-    if legacy && n == 8
-        text = [text ' (QC not separately reported)'];
-    end
     kind = 'stage_completed';
 else
     text = skip_text;
@@ -554,16 +537,8 @@ if (isfield(context, 'event_kind') && strcmp(context.event_kind, 'output_verifie
 end
 % Applied is an explicit outcome, not an observed start (compiled PREPARE).
 q = local_recenter_match(row.message);
-if ~isempty(q) && ~local_is_legacy(S.profile)
+if ~isempty(q)
     cands = {local_recenter_cand(S, row, q)};
-    return;
-end
-if isfield(context, 'event_kind') && strcmp(context.event_kind, 'delegation') && ...
-        isfield(context, 'operation_id') && strcmp(context.operation_id, 'prepare.compiled_preprocess')
-    S.subjects(S.subject_slot).delegated = true;
-    [t2, t3] = local_delegation_text(S.profile);
-    cands = {local_cand(S, row, 'INFO', 2, 'prepare.recenter', 'delegation', t2, 'preparation'), ...
-        local_cand(S, row, 'INFO', 3, 'prepare.alias_correct', 'delegation', t3, 'preparation')};
     return;
 end
 canon = '';
@@ -678,74 +653,18 @@ switch canon
 end
 end
 
-function mk = local_marker(s, profile)
-% Allowlisted compiled-backend markers, legacy profiles only ([] otherwise).
-mk = [];
-if ~local_is_legacy(profile)
-    return;
-end
-if strcmp(s, 'Running ''New Segment''')
-    mk = local_mk(6, 'ACTIVE', 'SPM New Segment started', 'workflow.segment');
-elseif strcmp(s, 'Done    ''New Segment''')
-    mk = local_mk(6, 'DONE', 'SPM New Segment finished', 'workflow.segment');
-elseif strcmp(s, 'Running ''Run DARTEL (existing Templates)''')
-    mk = local_mk(7, 'ACTIVE', 'DARTEL registration started', 'workflow.dartel');
-elseif strcmp(s, 'Done    ''Run DARTEL (existing Templates)''')
-    mk = local_mk(0, 'DONE', 'DARTEL registration finished', 'scientific.dartel_registration');
-elseif strcmp(s, 'Running ''Create Inverse Warped''')
-    mk = local_mk(0, 'ACTIVE', 'Inverse atlas warping started', 'scientific.inverse_warp');
-elseif strcmp(s, 'Done    ''Create Inverse Warped''')
-    mk = local_mk(0, 'DONE', 'Inverse atlas warping finished', 'scientific.inverse_warp');
-elseif ~isempty(strfind(s, 'Opening file:')) && ~isempty(strfind(s, 'calculating the mask'))
-    mk = local_mk(5, 'ACTIVE', 'Calculating subject mask', 'workflow.align_mask');
-elseif strcmp(profile, 'launchpad-legacy') && ~isempty(regexpi(s, '3D bias adjustment took|normalization pass 2 of 2', 'once'))
-    if ~isempty(strfind(s, 'bias adjustment took'))
-        mk = local_mk(4, 'DONE', 'FreeSurfer normalization completed (backend report)', 'workflow.normalize');
-    else
-        mk = local_mk(4, 'ACTIVE', 'FreeSurfer normalization in progress', 'workflow.normalize');
-    end
-elseif ~isempty(strfind(s, 'Starting the final reslicing of the atlas'))
-    mk = local_mk(0, 'ACTIVE', 'Atlas reslicing started', 'scientific.atlas_reslice');
-elseif ~isempty(strfind(s, 'Coregistration and reslicing finished'))
-    mk = local_mk(7, 'DONE', 'DARTEL/warping/atlas-reslicing phase finished', 'workflow.dartel');
-elseif ~isempty(regexpi(s, 'Creating att_map file', 'once'))
-    mk = local_mk(8, 'ACTIVE', 'Creating attenuation map', 'workflow.attenuation_qc');
-elseif strncmp(s, 'Attenuation map file created', 28)
-    mk = local_mk(8, 'DONE', 'Attenuation map created (QC not independently confirmed)', 'workflow.attenuation_qc');
-elseif strncmp(s, 'Whole process finished', 22)
-    mk = local_mk(0, 'INFO', 'Compiled backend reports processing finished; output verification pending', 'backend.completed_report');
-end
-end
 
-function mk = local_mk(n, status, text, op)
-mk = struct('n', n, 'status', status, 'text', text, 'op', op);
-end
 
-function c = local_marker_cand(S, row, mk)
-ids = local_stage_ids();
-if mk.n > 0 && any(strcmp(mk.status, {'ACTIVE'; 'DONE'})) && strcmp(mk.op, ids{mk.n})
-    c = local_parent(S, row, mk.n, mk.status, '');
-elseif any(strcmp(mk.status, {'ACTIVE'; 'DONE'}))
-    c = local_child(S, row, mk.op, mk.status, mk.text);
-else
-    c = local_milestone(S, row, mk.op, mk.text, 'remote_processing');
-    if strcmp(mk.op, 'backend.completed_report')
-        c.dedupe = [mk.op '|'];
-    end
-end
-end
 
 % ------------------------------------------------------------ raw lines ----
 
 function [cands, S] = local_raw(S, row)
-% Classification of raw pipeline / backend / scheduler lines (v2 + v4 rules).
+% Classification of raw pipeline / backend / scheduler lines.
 cands = {};
 m = row.message;
 if isempty(m)
     return;
 end
-profile = S.profile;
-legacy = local_is_legacy(profile);
 lev = row.level;
 is_warn = any(strcmp(lev, {'WARN'; 'WARNING'}));
 pm = local_public(m);
@@ -785,13 +704,6 @@ if is_warn
     return;
 end
 if ~strcmp(S.kind, 'pipeline')
-    if legacy
-        mk = local_marker(m, profile);
-        if ~isempty(mk)
-            cands{end + 1} = local_marker_cand(S, row, mk);
-        end
-        return;
-    end
     q = local_recenter_match(m);
     if ~isempty(q)
         cands{end + 1} = local_recenter_cand(S, row, q);
@@ -831,17 +743,7 @@ if strncmp(m, 'Preparing input MPRAGE', 22)
     cands{end + 1} = local_parent(S, row, 1, 'ACTIVE', '');
 elseif strncmp(m, 'Input prepared', 14)
     cands{end + 1} = local_parent(S, row, 1, 'DONE', '');
-    if legacy && ~S.subjects(S.subject_slot).delegated
-        S.subjects(S.subject_slot).delegated = true;
-        [t2, t3] = local_delegation_text(profile);
-        c2 = local_cand(S, row, 'INFO', 2, 'prepare.recenter', 'delegation', t2, 'preparation');
-        c3 = local_cand(S, row, 'INFO', 3, 'prepare.alias_correct', 'delegation', t3, 'preparation');
-        c2.dedupe = 'prepare.legacy_alias_recenter|2';
-        c3.dedupe = 'prepare.legacy_alias_recenter|3';
-        cands{end + 1} = c2;
-        cands{end + 1} = c3;
-    end
-elseif ~legacy && ~isempty(local_recenter_match(m))
+elseif ~isempty(local_recenter_match(m))
     cands{end + 1} = local_recenter_cand(S, row, local_recenter_match(m));
 elseif strncmp(m, 'Normalizing MPRAGE with FreeSurfer', 34) || strncmp(m, 'MLSC normalization started', 26)
     cands{end + 1} = local_parent(S, row, 4, 'ACTIVE', '');
@@ -867,43 +769,18 @@ elseif strncmp(m, 'Building attenuation map and QC image', 37)
     cands{end + 1} = local_parent(S, row, 8, 'ACTIVE', '');
 elseif strncmp(m, 'Attenuation map and QC completed', 32)
     cands{end + 1} = local_parent(S, row, 8, 'DONE', '');
-elseif legacy && (strncmp(m, 'Legacy pseudo-CT started', 24) || strncmp(m, 'MLSC pseudo-CT started', 22))
-    if local_flag(S.context, 'direct_scientific_stream')
-        % Direct collection owns scientific evidence. A wrapper launch cannot
-        % claim alignment started before any compiled marker has arrived.
-        cands{end + 1} = local_milestone(S, row, 'backend.started', ...
-            'Compiled v2 backend started; scientific milestones pending', 'remote_processing');
-    else
-        % Preserve historical archive/remote presentation outside direct mode.
-        cands{end + 1} = local_parent(S, row, 5, 'ACTIVE', '');
-    end
-elseif legacy && ~isempty(regexp(m, '^Legacy pseudo-CT still running \(elapsed \d+:\d+:\d+\)', 'once'))
-    % Backend heartbeat (about every 60 s): normalized, no stage claim.
-    if ~S.subjects(S.subject_slot).terminal && ~S.terminal
-        tk = regexp(m, 'elapsed (\d+):(\d+):(\d+)', 'tokens', 'once');
-        total_min = str2double(tk{1}) * 60 + str2double(tk{2});
-        cands{end + 1} = local_milestone(S, row, 'backend.heartbeat', ...
-            sprintf('Compiled v2 processing still running (elapsed %02d:%s)', total_min, tk{3}), ...
-            'scientific');
-        cands{end}.kind = 'heartbeat';
-    end
 elseif strncmp(m, 'MLSC alias-recenter completed', 29)
     if ~all(S.subjects(S.subject_slot).stage_state(2:3) ~= 0)
-        if legacy
-            cands{end + 1} = local_milestone(S, row, 'prepare.combined_backend_phase', ...
-                'Combined recenter/alias preparation phase reported finished', 'preparation');
-        else
-            % MLSC Current reports the combined compiled PREPARE phase only;
-            % the per-step outcome stays remote, so say exactly that.
-            c2 = local_cand(S, row, 'INFO', 2, 'prepare.recenter', 'delegation', ...
-                'MPRAGE recentering handled in compiled phase; outcome not separately reported', 'preparation');
-            c3 = local_cand(S, row, 'INFO', 3, 'prepare.alias_correct', 'delegation', ...
-                'Aliasing correction handled in compiled phase; outcome not separately reported', 'preparation');
-            c2.dedupe = 'prepare.combined_alias_recenter|2';
-            c3.dedupe = 'prepare.combined_alias_recenter|3';
-            cands{end + 1} = c2;
-            cands{end + 1} = c3;
-        end
+        % MLSC reports the combined compiled PREPARE phase only; the per-step
+        % outcome stays remote, so say exactly that.
+        c2 = local_cand(S, row, 'INFO', 2, 'prepare.recenter', 'delegation', ...
+            'MPRAGE recentering handled in compiled phase; outcome not separately reported', 'preparation');
+        c3 = local_cand(S, row, 'INFO', 3, 'prepare.alias_correct', 'delegation', ...
+            'Aliasing correction handled in compiled phase; outcome not separately reported', 'preparation');
+        c2.dedupe = 'prepare.combined_alias_recenter|2';
+        c3.dedupe = 'prepare.combined_alias_recenter|3';
+        cands{end + 1} = c2;
+        cands{end + 1} = c3;
     end
 elseif strncmp(m, 'MLSC stage-in completed', 23)
     cands{end + 1} = local_child(S, row, 'transport.stage_in', 'DONE', pm);
@@ -920,8 +797,7 @@ elseif strncmp(m, 'MLSC verification completed', 27)
     cands{end + 1} = local_child(S, row, 'transport.remote_verify', 'DONE', '');
 elseif strncmp(m, 'MLSC copy-back started', 22)
     cands{end + 1} = local_child(S, row, 'transport.copyback', 'ACTIVE', '');
-elseif strncmp(m, 'MLSC verified return to shared temp completed', 45) || ...
-        strncmp(m, 'Remote outputs retrieved', 24)
+elseif strncmp(m, 'MLSC verified return to shared temp completed', 45)
     cands{end + 1} = local_child(S, row, 'transport.copyback', 'DONE', '');
 elseif strncmp(m, 'MLSC connection and authentication succeeded', 44)
     cands{end + 1} = local_milestone(S, row, 'scheduler.auth', 'MLSC authentication succeeded', 'scheduler');
@@ -930,20 +806,6 @@ elseif ~isempty(regexp(m, '^MLSC job \d+ (accepted|state running|state pending|s
     [cands, S] = local_last_job(S, m, cands);
 elseif strncmp(m, 'Submitting MLSC job', 19)
     cands{end + 1} = local_milestone(S, row, 'scheduler.submit', 'Submitting MLSC job', 'scheduler');
-elseif strncmp(m, 'Uploading input and submitting Launchpad job', 43) || ...
-        strncmp(m, 'Launchpad job submitted', 23)
-    cands{end + 1} = local_milestone(S, row, 'scheduler.launchpad', pm, 'scheduler');
-elseif strncmp(m, 'Waiting for remote Launchpad processing', 39) || ...
-        strncmp(m, 'Waiting 60 seconds before the first status check', 48)
-    cands{end + 1} = local_milestone(S, row, 'scheduler.launchpad_wait', pm, 'scheduler');
-elseif ~isempty(strfind(m, 'Launchpad job ')) && (~isempty(strfind(m, 'still active')) || ...
-        ~isempty(strfind(m, 'still pending')))
-    [cands, S] = local_heartbeat(S, row, m, cands, 'launchpad|pbs', 'scheduler.heartbeat.launchpad');
-elseif strncmp(m, 'All Launchpad jobs completed successfully', 41) || ...
-        strncmp(m, 'Remote processing wait completed', 32)
-    cands{end + 1} = local_milestone(S, row, 'scheduler.launchpad_remote_report', pm, 'scheduler');
-elseif strncmp(m, 'Retrieving remote outputs', 25)
-    cands{end + 1} = local_child(S, row, 'transport.copyback', 'ACTIVE', '');
 elseif strncmp(m, 'Verifying attenuation map', 25)
     c = local_cand(S, row, 'ACTIVE', 0, 'output.verify', 'milestone', pm, 'verified_completion');
     c.dedupe = 'output.verify|ACTIVE';
@@ -967,13 +829,13 @@ elseif strncmp(m, 'Skipping DICOM output by profile policy', 39)
     cands{end + 1} = c;
 elseif strncmp(m, 'Promoting final outputs', 23) || strncmp(m, 'Promoting outputs and cleaning up', 33)
     c = local_parent(S, row, 10, 'ACTIVE', '');
-    if local_is_mprage_only(profile)
+    if local_is_mprage_only(S.profile)
         c.text = 'Promoting NIfTI output';   % the NIfTI promotion is the stage-10 operation
     end
     cands{end + 1} = c;
 elseif strncmp(m, 'Outputs promoted', 16)
     c = local_parent(S, row, 10, 'DONE', '');
-    if local_is_mprage_only(profile)
+    if local_is_mprage_only(S.profile)
         c.text = 'NIfTI output promoted';
     end
     cands{end + 1} = c;
@@ -983,11 +845,6 @@ elseif strncmp(m, 'Cleanup completed', 17) || strncmp(m, 'Temporary files remove
     cands{end + 1} = local_child(S, row, 'output.cleanup', 'DONE', '');
 elseif strncmp(m, 'Run failed', 10) || strncmp(m, 'Subject failed', 14)
     cands{end + 1} = local_cand(S, row, 'ERROR', 0, 'run.failure', 'run_failed', pm, 'verified_completion');
-else
-    mk = local_marker(m, profile);
-    if ~isempty(mk)
-        cands{end + 1} = local_marker_cand(S, row, mk);
-    end
 end
 end
 
@@ -1029,19 +886,6 @@ else
 end
 end
 
-function [cands, S] = local_heartbeat(S, row, m, cands, key, op)
-% Scheduler heartbeat lines are shown when the reported elapsed time has
-% advanced at least 60 s since the last shown one (per job).
-minutes = local_elapsed_seconds(m);
-[previous, found] = local_lookup(S, key);
-if S.terminal || S.subjects(S.subject_slot).terminal || ...
-        (found && (isempty(minutes) || minutes - previous < 60))
-    return;
-end
-S = local_store(S, key, sum([minutes 0]));
-cands{end + 1} = local_milestone(S, row, op, local_public(m), 'scheduler');
-cands{end}.kind = 'heartbeat';
-end
 
 function cands = local_scheduler_job(S, row, m, cands)
 % Scheduler state lines for a MLSC job (INFO only).
@@ -1116,72 +960,10 @@ end
 
 % -------------------------------------------------------------- admission --
 
-function [t2, t3] = local_delegation_text(profile)
-if local_is_legacy(profile)
-    t2 = 'Recentring handled by compiled v2 backend';
-    t3 = 'Aliasing correction handled by compiled v2 backend';
-else
-    t2 = 'MPRAGE recentering delegated to compiled v2 backend; outcome not reported';
-    t3 = 'Aliasing correction delegated to compiled v2 backend; outcome not reported';
-end
-end
 
-function [out, S] = local_release_notices(S)
-% Legacy stage 2/3 delegation notices are held per subject and shown just
-% before stage 4 (or before a terminal row / at FLUSH, never dropped). Live
-% rows carry the display time; replay rows keep a null time.
-out = {};
-slot = S.subject_slot;
-notices = S.subjects(slot).notices;
-S.subjects(slot).notices = {};
-for ni = 1:length(notices)
-    n = notices{ni};
-    n.orig = n.ts;
-    if S.live
-        n.ts = datestr(now, 'yyyy-mm-dd HH:MM:SS');
-        n.observed = isempty(n.orig);
-    else
-        n.ts = '';
-    end
-    out{end + 1} = n; %#ok<AGROW>
-end
-end
 
 function [out, S] = local_admit(S, c)
-% Hold legacy stage 2/3 notices; release them before stage 4 / terminal rows.
-out = {};
-slot = S.subject_slot;
-if strcmp(c.kind, 'delegation') && any(c.stage == [2 3]) && local_is_legacy(S.profile)
-    if ~S.terminal && ~S.subjects(slot).terminal && ...
-            ~any(cellfun(@(h) h.stage == c.stage, S.subjects(slot).notices))
-        S.subjects(slot).notices{end + 1} = c;
-    end
-    return;
-end
-if ~local_flag(c.context, 'direct_scientific_stream') && ...
-        local_is_legacy(S.profile) && ~S.subjects(slot).delegated && c.stage >= 4 && ...
-        any(strcmp(c.status, {'ACTIVE'; 'DONE'; 'SKIPPED'})) && ...
-        ~S.terminal && ~S.subjects(slot).terminal
-    % Stages 2/3 notices are held in the process that prepared the input. MLSC
-    % and Launchpad run later phases in a new process (new presenter state), so
-    % the held notices never arrive: generate them here, once, before stage 4.
-    S.subjects(slot).delegated = true;
-    [t2, t3] = local_delegation_text(S.profile);
-    nrow = struct('structured', false, 'date', '', 'time', '', 'level', 'INFO', ...
-        'job', '', 'dcm2nii', false, 'message', '');
-    n2 = local_cand(S, nrow, 'INFO', 2, 'prepare.recenter', 'delegation', t2, 'preparation');
-    n3 = local_cand(S, nrow, 'INFO', 3, 'prepare.alias_correct', 'delegation', t3, 'preparation');
-    n2.ts = '';  n2.observed = false;  n2.context = local_strip_context(c.context);
-    n3.ts = '';  n3.observed = false;  n3.context = local_strip_context(c.context);
-    S.subjects(slot).notices = {n2, n3};
-end
-pre = {};
-if ~isempty(S.subjects(slot).notices) && (any(strcmp(c.status, {'CANCELLED'; 'ERROR'})) || ...
-        (c.stage >= 4 && any(strcmp(c.status, {'ACTIVE'; 'DONE'; 'SKIPPED'}))))
-    [pre, S] = local_release_notices(S);
-end
 [out, S] = local_admit_core(S, c);
-out = [pre out];
 end
 
 function [out, S] = local_admit_core(S, c)
@@ -1220,7 +1002,7 @@ if S.subjects(S.subject_slot).has_held && c.stage > 0 && any(strcmp(c.status, {'
     if c.stage == 4 && strcmp(c.status, 'DONE')
         [o1, S] = local_transition(S, c);
         [o2, S] = local_release_held(S, true);
-        [out, S] = local_with_notice(S, [o1 o2]);
+        out = [o1 o2];
         return;
     end
     [o0, S] = local_release_held(S, false);
@@ -1231,59 +1013,11 @@ if c.stage == 5 && strcmp(c.status, 'ACTIVE') && S.subjects(S.subject_slot).stag
     S.subjects(S.subject_slot).held = c;
     return;
 end
-if ~local_flag(c.context, 'direct_scientific_stream') && ...
-        local_is_legacy(S.profile) && c.stage == 6 && strcmp(c.status, 'ACTIVE') && ...
-        S.subjects(S.subject_slot).stage_state(5) == 1 && ...
-        S.subjects(S.subject_slot).stage_state(6) == 0
-    % The legacy compiled backend never marks alignment/masking completion;
-    % the start of stage 6 is the only observed boundary. Inferred, not
-    % independently verified; shown immediately before ACTIVE 6.
-    ids = local_stage_ids();
-    d = c;
-    d.status = 'DONE';
-    d.stage = 5;
-    d.op = ids{5};
-    d.kind = 'inferred_stage_completion';
-    d.text = local_stage_text(5, 'DONE');
-    d.category = local_stage_category(5);
-    d.reason = 'inferred_from_next_stage_boundary';
-    d.dedupe = '';
-    d.context = local_strip_context(d.context);
-    if strcmp(S.kind, 'scheduler')
-        d.ts = '';   % recovered scheduler history: no live time exists
-        d.live = false;
-        d.observed = false;
-    end
-    [od, S] = local_transition(S, d);
-    out = [out od];
-end
 [o1, S] = local_transition(S, c);
-[out, S] = local_with_notice(S, [out o1]);
+out = [out o1];
 end
 
-function context = local_strip_context(context)
-% A synthesized row must not inherit another event's metadata.
-names = {'operation_id', 'event_kind', 'reason', 'stage_id', 'stage_status'};
-for ni = 1:length(names)
-    if isfield(context, names{ni})
-        context = rmfield(context, names{ni});
-    end
-end
-end
 
-function [out, S] = local_with_notice(S, out)
-% Launchpad recovered PBS stdout is labelled as history before its first row.
-if isempty(out) || ~strcmp(out{1}.src, 'launchpad_pbs_stdout') || S.subjects(S.subject_slot).remote_notice
-    return;
-end
-note = local_cand(S, struct('structured', false, 'date', '', 'time', '', 'job', ''), ...
-    'INFO', 0, 'remote.history_notice', 'milestone', ...
-    ['REMOTE SCIENTIFIC HISTORY ' '—' ' recovered after execution; ' ...
-    'original per-line times unavailable, NOT live progress'], 'remote_processing');
-note.src = 'launchpad_pbs_stdout';
-S.subjects(S.subject_slot).remote_notice = true;
-out = [{note} out];
-end
 
 function [out, S] = local_transition(S, c)
 % Parent stages move forward only. An orphan DONE has neither an admitted
@@ -1623,8 +1357,6 @@ if strncmp(profile_name, 'local-', 6)
     backend = 'local';
 elseif strncmp(profile_name, 'mlsc-', 5)
     backend = 'mlsc';
-elseif strncmp(profile_name, 'launchpad-', 10)
-    backend = 'launchpad';
 end
 end
 

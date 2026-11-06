@@ -311,11 +311,8 @@ if isfield(resolved, 'current_artifact_root') && ...
 end
 report = pseudo_CT_run_lifecycle(args{:});
 backend = 'local';
-if any(strcmp(resolved.profile, ...
-        {'mlsc-current'; 'mlsc-legacy'; 'mlsc-mprage-only'}))
+if any(strcmp(resolved.profile, {'mlsc-current'; 'mlsc-mprage-only'}))
     backend = 'mlsc';
-elseif strcmp(resolved.profile, 'launchpad-legacy')
-    backend = 'launchpad';
 end
 selected_group = '';
 if isfield(report, 'selected_account')

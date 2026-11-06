@@ -17,7 +17,6 @@ assert(strcmp(mlsc_mprage_only.io_policy.reference, 'none'));
 assert(strcmp(mlsc_mprage_only.io_policy.output, 'nifti-only'));
 assert(strcmp(mlsc_mprage_only.io_policy.gui, 'mprage-only'));
 assert(isequal(mlsc_mprage_only.current, mlsc_current.current));
-assert(~isfield(mlsc_mprage_only, 'legacy'));
 
 scratch_root = fullfile(root_dir, 'scratch');
 if exist(scratch_root, 'dir') ~= 7
@@ -93,9 +92,9 @@ assert(override_jobs(1).recenter_before_normalization == false);
 
 % The two-argument API remains UMAP-required and must not silently adopt the
 % new policy.
-[legacy_jobs, legacy_stats] = build_jobs_from_subject_list(nifti_input, 1);
-assert(isempty(legacy_jobs));
-assert(legacy_stats.requested == 1 && legacy_stats.skipped == 1);
+[skipped_jobs, skipped_stats] = build_jobs_from_subject_list(nifti_input, 1);
+assert(isempty(skipped_jobs));
+assert(skipped_stats.requested == 1 && skipped_stats.skipped == 1);
 
 run_source = local_read(fullfile(root_dir, 'run_pseudo_CT.m'));
 collect_source = local_read(fullfile(root_dir, 'src', 'orchestration', 'collect_jobs.m'));
@@ -104,8 +103,6 @@ builder_source = local_read(fullfile(root_dir, 'src', 'orchestration', ...
 gui_source = local_read(fullfile(root_dir, 'src', 'gui', 'load_mr_4_AC.m'));
 promote_source = local_read(fullfile(root_dir, 'src', 'io', ...
     'pseudo_CT_promote_final_outputs.m'));
-launchpad_source = local_read(fullfile(root_dir, 'src', 'backends', 'launchpad', ...
-    'batch_pseudo_CT_launchpad.m'));
 
 assert(~isempty(strfind(collect_source, ...
     'load_mr_4_AC(config.io_policy.gui, config)')));
@@ -155,9 +152,6 @@ assert(length(save_creation) == 1 && save_policy(1) < save_creation(1));
 assert(isempty(strfind(run_source, 'rmdir(save_dir')));
 assert(isempty(strfind(run_source, 'delete(save_dir')));
 assert(~isempty(strfind(run_source, 'Skipping DICOM output by profile policy.')));
-assert(~isempty(strfind(launchpad_source, 'att_map.nii missing')));
-assert(~isempty(strfind(launchpad_source, 'config.io_policy')) || ...
-    ~isempty(strfind(run_source, 'config.io_policy.output')));
 assert(~isempty(strfind(promote_source, 'stage_file = [destination_file ''.stage''];')));
 assert(~isempty(strfind(promote_source, 'movefile(stage_specs{required_index, 1}')));
 
