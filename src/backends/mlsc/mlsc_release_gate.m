@@ -1,8 +1,11 @@
 function varargout = mlsc_release_gate(action, varargin)
 %MLSC_RELEASE_GATE Shared exact-source release gate (MLSC CURRENT only).
-%   Implements the fail-closed exact-source checks shared by the
-%   opt-in release-candidate build path (scripts/build_mlsc_current.m)
-%   and the publication validator (scripts/validate_mlsc_release.m).
+%   Historical exact-source release-gate actions. The superseded release-
+%   candidate builder and publication validator scripts (scripts/
+%   build_mlsc_current.m, assemble_mlsc_release.m, validate_mlsc_release.m)
+%   still exist; their deletion is pending approval. scripts/
+%   build_application.m does not call these actions. Runtime orchestration
+%   still calls SHA256_FILE.
 %   Read-only git operations only, except ENSURE_WORKTREE which creates
 %   an isolated clean checkout under scratch/release_gate/ (build host
 %   only; never called by tests or by the validator).

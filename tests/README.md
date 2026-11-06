@@ -21,7 +21,8 @@ The MATLAB runner covers four-profile/entrypoint and input/output policies,
 missing-input rejection before dispatch on the CLI and headless paths with
 Local/MLSC backend selection by profile,
 installation dependency paths, the headless result contract, progress output,
-semantic comparison capability, and current MLSC submission/monitoring with
+semantic comparison capability, build preflight and package integrity (dry run
+only; never calls mcc), and current MLSC submission/monitoring with
 verified success, missing-output failure, scheduler failure, cancellation, and
 transport rejection. Its MLSC fixtures use the installed artifact and tiny
 synthetic outputs only. Python checks cover the dependency-lock integrity and

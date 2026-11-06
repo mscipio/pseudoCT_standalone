@@ -75,3 +75,45 @@ image and final attenuation map before use.
 For the scientific method, historical comparisons, and evidence limitations,
 see [Scientific notes](scientific-notes.md). No new scientific validation or
 deployment is implied by these installation instructions.
+
+## Build and packaging
+
+`scripts/build_application.m` is the single build entry point. The MATLAB
+release is an explicit argument with no default, and the procedure contains no
+supported-release table. The executing MATLAB must report that same release.
+Run it from MATLAB with `<release>` set to the release you intend to build,
+for example `R2010b` for MATLAB 7.11:
+
+```matlab
+cd('<repo-root>')
+addpath('scripts')
+
+% Dry run (default). Checks the MATLAB release and Compiler, the source
+% revision, the dependency roots and lock file, and lists the application
+% file set. It never calls mcc and writes nothing.
+build_application('<release>', 'OutputRoot', '<output-root>')
+
+% Build (explicit only). Requires a clean git tree and the MATLAB Runtime root.
+build_application('<release>', 'Mode', 'build', ...
+    'OutputRoot', '<output-root>', 'McrRoot', '<mcr-root>')
+
+% Recompute SHA-256 and check the manifest against the inventory.
+verify_application_package('<output-root>/<release>')
+```
+
+`<output-root>` must be outside `src/`, `external/` and `compiled/`. A package
+is written to `<output-root>/<release>/` and is never overwritten. The package
+mirrors an install root so the launchers resolve their siblings by relative
+path: `bin/` (`pseudoct`, `pseudoct-headless`, `run_mlsc_current_payload.sh`),
+`src/` (interpreted runtime source that the CLI and headless bootstrap need),
+`app/` (the `run_pseudo_CT` GUI/CLI build), `payload/` (`mlsc_current_payload`),
+`resources/` (atlas and template files), `application_manifest.txt` (release,
+MATLAB and Compiler identity, source commit, lock hash, and inputs) and
+`SHA256SUMS`. An independent check is
+`cd <output-root>/<release> && sha256sum -c SHA256SUMS`.
+
+Compile support is unverified. The procedure has not been run as a real build
+for any release, and the compiled application, runtime behavior, launchers and
+deployment are unverified until a real build is run and tested. Dependency
+tree digests are checked by `tests/test_dependency_lock.py`, not by the build
+preflight.

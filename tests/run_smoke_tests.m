@@ -7,7 +7,7 @@ addpath(tests_dir, '-begin');
 cleanup = onCleanup(@() path(old_path)); %#ok<NASGU>
 tests = {'test_profile_authority'; 'test_dependency_paths'; ...
     'test_headless_result_validator'; 'test_cli_progress_output'; ...
-    'test_exact_comparators'; 'test_mlsc_slurm_lifecycle'};
+    'test_exact_comparators'; 'test_mlsc_slurm_lifecycle'; 'test_build_application'};
 failures = {};
 for ii = 1:length(tests)
     try
