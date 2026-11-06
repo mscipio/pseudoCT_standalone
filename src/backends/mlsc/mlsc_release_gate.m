@@ -3,9 +3,8 @@ function varargout = mlsc_release_gate(action, varargin)
 %   Historical exact-source release-gate actions. The superseded release-
 %   candidate builder and publication validator scripts (scripts/
 %   build_mlsc_current.m, assemble_mlsc_release.m, validate_mlsc_release.m)
-%   still exist; their deletion is pending approval. scripts/
-%   build_application.m does not call these actions. Runtime orchestration
-%   still calls SHA256_FILE.
+%   were removed; scripts/build_application.m does not call these actions.
+%   The sha256_file helper is still used by runtime orchestration.
 %   Read-only git operations only, except ENSURE_WORKTREE which creates
 %   an isolated clean checkout under scratch/release_gate/ (build host
 %   only; never called by tests or by the validator).
