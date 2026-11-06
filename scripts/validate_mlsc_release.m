@@ -1,5 +1,7 @@
 function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %VALIDATE_MLSC_RELEASE Fail-closed MLSC CURRENT release-publication validator.
+%   The mlsc-current schema prefixes below identify compiled artifact
+%   contracts, not selectable profile IDs.
 %   OK = VALIDATE_MLSC_RELEASE('prepublication', 'Name', VALUE, ...)
 %   verifies a staged release-candidate package BEFORE publication, and
 %   OK = VALIDATE_MLSC_RELEASE('postinstall', 'Name', VALUE, ...)
@@ -37,7 +39,7 @@ function [ok, provenance_exception] = validate_mlsc_release(action, varargin)
 %                     must carry (wrong hash blocks).
 %     'DeployRoot'    Exact production runtime root of the deployment
 %                     copy (postinstall only; prepublication rejects it).
-%                     The layout is pinned by the mlsc-current profile:
+%                     The layout is pinned by the mlsc profile:
 %                     the launcher sits directly at
 %                     <DeployRoot>/run_mlsc_current_payload.sh (never
 %                     nested under payload_build/), the compiled
@@ -748,7 +750,7 @@ end
 
 function local_check_deploy(deploy_root, build, build_manifest_arg, resource_manifest_arg, provenance_exception)
 %LOCAL_CHECK_DEPLOY Verify the deployment copy at its exact runtime path.
-%   The production layout is pinned by the mlsc-current profile: the
+%   The production layout is pinned by the mlsc profile: the
 %   launcher sits directly at <DeployRoot>/run_mlsc_current_payload.sh
 %   (never nested under payload_build/), the compiled executable sits
 %   beside it, and the build/resource manifests sit alongside. The

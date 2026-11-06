@@ -8,7 +8,7 @@ EXIT_AUTH=66
 EXIT_SUBMISSION=67
 EXIT_SCIENCE=68
 EXIT_RUNTIME=69
-profiles='local-current local-mprage-only mlsc-current mlsc-mprage-only'
+profiles='local local-mprage-only mlsc mlsc-mprage-only'
 operation_phase=not_started
 
 usage() {
@@ -24,7 +24,7 @@ Options:
   --correct-aliasing yes|no       Override profile default
   --recenter-before-normalization yes|no
   --cleanup-on-success yes|no
-  --current-artifact-root PATH    Current-profile validation override
+  --current-artifact-root PATH    Pinned compiled-artifact validation override
   --group-account ACCOUNT        MLSC account selection for run
   --host-key-file FILE            Optional MLSC strict host-key input
   --credential-handoff FILE       Existing authorized single-use handoff
@@ -171,15 +171,15 @@ for flag_value in "$correct_aliasing" "$recenter" "$cleanup_success"; do
     case "$flag_value" in ''|yes|no) ;; *) error_record "$EXIT_USAGE" 'Processing options accept only yes or no.' ;; esac
 done
 case "$profile" in
-    local-current|local-mprage-only) backend=local ;;
-    mlsc-current|mlsc-mprage-only) backend=mlsc ;;
+    local|local-mprage-only) backend=local ;;
+    mlsc|mlsc-mprage-only) backend=mlsc ;;
 esac
 case "$profile" in *mprage-only*) mprage_only=1 ;; *) mprage_only=0 ;; esac
 if [ "$mprage_only" -eq 1 ] && [ "$seen_umap" -eq 1 ]; then
     error_record "$EXIT_USAGE" 'MPRAGE-only profiles do not accept --umap.'
 fi
 if [ -n "$artifact_root" ]; then
-    case "$profile" in mlsc-current|mlsc-mprage-only|local-current|local-mprage-only) ;; *) error_record "$EXIT_USAGE" '--current-artifact-root requires a current profile.' ;; esac
+    case "$profile" in mlsc|mlsc-mprage-only|local|local-mprage-only) ;; *) error_record "$EXIT_USAGE" '--current-artifact-root requires a supported profile.' ;; esac
 fi
 if [ -n "$group_account" ] && [ "$backend" != mlsc ]; then
     error_record "$EXIT_USAGE" '--group-account is available only for MLSC profiles.'

@@ -2,7 +2,7 @@ function Pf = pseudo_CT_run_local_current_subject(input_path, work_dir, ...
         config, check_aliasing, recenter_before_normalization, output_context)
 %PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT Run the shared compiled current phases.
 %   Uses the same pinned runner and job/resource manifest contract as
-%   mlsc-current: prepare, the existing external local FreeSurfer
+%   mlsc: prepare, the existing external local FreeSurfer
 %   normalization, then compute. Scientific processing stays in the
 %   compiled payload; this function only coordinates those phases.
 %   Minimum supported MATLAB: R2010b.
@@ -20,11 +20,9 @@ if nargin ~= 6 || ~isstruct(config) || numel(config) ~= 1 || ...
     error('pseudo_CT:LocalCurrentRequest', ...
         'A local current input, work directory, profile, and output context are required.');
 end
-if ~isfield(config, 'mode') || ~strcmp(config.mode, 'local') || ...
-        ~isfield(config, 'implementation') || ...
-        ~strcmp(config.implementation, 'current')
+if ~isfield(config, 'mode') || ~strcmp(config.mode, 'local')
     error('pseudo_CT:LocalCurrentRequest', ...
-        'The selected profile does not use the local current implementation.');
+        'The selected profile is not local.');
 end
 if ~isfield(config, 'normalization') || ...
         ~isstruct(config.normalization) || ...
@@ -64,13 +62,13 @@ if ~local_yes_no_or_flag(recenter_before_normalization) || ...
 end
 
 % Project only the pinned artifact contract into the validator; local mode
-% must not be mistaken for the MLSC scheduler profile.
+% is not an MLSC scheduler profile.
 artifact_config = struct();
-artifact_config.implementation = 'current';
 artifact_config.current = config.current;
 mlsc_current_validate('validate_for_execution', artifact_config);
 
 job = struct();
+% This schema ID is the shared compiled artifact contract, not a profile key.
 job.schema = 'pseudo-CT.mlsc-current-job/v1';
 job.manifest_version = 1;
 job.input_mprage = strtrim(input_path);
@@ -238,7 +236,6 @@ if ~local_runner_argument_safe(runner) || ...
         'A current runner argument contains unsupported shell syntax.');
 end
 artifact_config = struct();
-artifact_config.implementation = 'current';
 artifact_config.current = current;
 mlsc_current_validate('validate_for_execution', artifact_config);
 command = ['env -u LD_LIBRARY_PATH ' local_shell_quote(runner) ' ' ...
@@ -904,7 +901,7 @@ function yes = local_is_public_profile(output_context)
 yes = isfield(output_context, 'console_profile') && ...
     ischar(output_context.console_profile) && ...
     any(strcmp(output_context.console_profile, ...
-    {'local-current'; 'local-mprage-only'}));
+    {'local'; 'local-mprage-only'}));
 end
 
 function name = local_public_name(stage_number, output_context)

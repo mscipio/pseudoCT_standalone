@@ -51,22 +51,14 @@ end
 % Run the side-effect-free preflight first so the receipt identity is only
 % created for a submission that can reach the existing script generator.
 mlsc_preflight(subject, config, runtime);
-is_current = false;
 try
-    is_current = mlsc_current_validate('is_current', config);
-catch %#ok<CTCH>
-    is_current = false;
-end
-if is_current
-    try
-        mlsc_current_validate('validate_for_execution', config);
-    catch ME
-        if strncmp(ME.identifier, 'pseudo_CT:MLSC', length('pseudo_CT:MLSC'))
-            rethrow(ME);
-        end
-        error('pseudo_CT:MLSCCurrentValidation', ...
-            'Current artifact/runtime validation failed; submission blocked.');
+    mlsc_current_validate('validate_for_execution', config);
+catch ME
+    if strncmp(ME.identifier, 'pseudo_CT:MLSC', length('pseudo_CT:MLSC'))
+        rethrow(ME);
     end
+    error('pseudo_CT:MLSCCurrentValidation', ...
+        'Current artifact/runtime validation failed; submission blocked.');
 end
 [receipt_path, correlation_id] = local_submission_identity(subject, runtime);
 runtime.job_name = local_job_name(correlation_id);

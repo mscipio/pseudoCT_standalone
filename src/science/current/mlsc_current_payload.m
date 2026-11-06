@@ -1,5 +1,7 @@
 function mlsc_current_payload(phase, job_manifest_path, resource_manifest_path)
 %MLSC_CURRENT_PAYLOAD Compiled-current prepare/compute payload (T002/T003).
+%   "mlsc-current" in manifest/evidence schemas is the compiled artifact
+%   namespace, not a selectable profile key.
 %   MLSC_CURRENT_PAYLOAD(PHASE, JOB_MANIFEST_PATH, RESOURCE_MANIFEST_PATH)
 %   runs one explicitly selected phase using scalar validated versioned
 %   manifests. PHASE is 'prepare' or 'compute' (case-insensitive, fixed
@@ -140,10 +142,9 @@ local_validate_atlas_resources(atlas_dir, resources);
 
 % Effective science config assembled from validated manifests only. No
 % profile file is loaded here so the deployed payload never depends on
-% loose MATLAB code. pca_order matches local-current callable-first order.
+% loose MATLAB code. pca_order matches local callable-first order.
 config = struct();
 config.mode = 'mlsc';
-config.implementation = 'current';
 config.atlas_root = atlas_dir;
 config.spm_root = '';
 config.recenter_before_normalization = local_to_yes_no(job.recenter_before_normalization);
@@ -152,6 +153,7 @@ config.bone_enabled = logical(job.bone_enabled);
 config.pca_order = {'callable_pca'; 'repo_legacy'};
 config.headless = true;
 
+% Output scope identifies this shared compiled artifact namespace, not a profile.
 output_context = struct('scope', 'mlsc-current');
 output_context.headless = true;
 

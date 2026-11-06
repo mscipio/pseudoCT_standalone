@@ -107,61 +107,18 @@ def main():
     dependencies = {item["id"]: item for item in lock["dependencies"]}
     local_roots = {
         "spm8-r6313": dependencies["spm8-r6313"]["artifact"],
-        "spm8-dan": dependencies["spm8-dan"]["artifact"],
         "Batch_atlas": dependencies["batch-atlas-shared"]["artifact"],
     }
     for name, expected in local_roots.items():
         verify_tree(repo / expected["path"], expected, expected["path"])
-        license_record = dependencies[
+        dependency = dependencies[
             "batch-atlas-shared" if name == "Batch_atlas" else name
-        ]["license"]
+        ]
+        license_record = dependency["license"]
         if "blocked" not in license_record["publicRedistribution"].lower():
             raise AssertionError(f"Public redistribution unexpectedly cleared for {name}.")
 
-    legacy = lock["artifacts"]["legacyV2Candidate"]["localStaging"]
-    actual_legacy = verify_tree(repo / legacy["path"], legacy, legacy["path"])
-    legacy_license = lock["artifacts"]["legacyV2Candidate"]["license"]
-    if "blocked" not in legacy_license["publicRedistribution"].lower():
-        raise AssertionError("Legacy package public redistribution unexpectedly cleared.")
-    expected_files = legacy["files"]
-    actual_files = [
-        {
-            "path": f'{legacy["path"]}{item["path"]}',
-            "sizeBytes": item["sizeBytes"],
-            "sha256": item["sha256"],
-        }
-        for item in actual_legacy["files"]
-    ]
-    actual_files.sort(key=lambda item: item["path"])
-    if actual_files != expected_files:
-        raise ChecksumMismatch("legacy staged path/size/SHA-256 inventory mismatch")
-
-    # The legacy-specific atlas is distinct from the shared atlas; derive its
-    # tree digest from the already-verified complete legacy inventory.
-    legacy_atlas = dependencies["batch-atlas-legacy-deployment"]["artifact"]
-    atlas_files = [
-        item for item in actual_legacy["files"] if item["path"].startswith("Batch_atlas/")
-    ]
-    atlas_records = []
-    for item in atlas_files:
-        relative = item["path"][len("Batch_atlas/"):]
-        atlas_records.append(
-            f'F\0{relative}\0{item["mode"]}\0{item["sha256"]}\n'.encode("utf-8")
-        )
-    atlas_records.sort()
-    require_equal(
-        "legacy Batch_atlas tree SHA-256",
-        hashlib.sha256(b"".join(atlas_records)).hexdigest(),
-        legacy_atlas["treeSha256"],
-    )
-    require_equal("legacy Batch_atlas file count", len(atlas_files), legacy_atlas["files"])
-    require_equal(
-        "legacy Batch_atlas bytes",
-        sum(item["sizeBytes"] for item in atlas_files),
-        legacy_atlas["bytes"],
-    )
-
-    # The existing current payload is immutable in this task and stays pinned.
+    # The supported compiled payload remains pinned by its tree digest.
     current = lock["observedLayout"]["current"]
     actual_current = tree_inventory(repo / current["availableArtifactPath"])
     require_equal(
@@ -179,8 +136,8 @@ def main():
         raise AssertionError("Checksum mismatch did not fail closed.")
 
     print(
-        "Dependency lock integrity passed: local SPM8/atlas trees and all "
-        f"{len(expected_files)} legacy staged files matched; public redistribution remains blocked."
+        "Current dependency integrity passed: SPM8/atlas trees and compiled/current "
+        "matched; public redistribution remains blocked."
     )
 
 

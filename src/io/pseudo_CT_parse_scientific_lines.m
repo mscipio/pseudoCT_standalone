@@ -37,7 +37,7 @@ for ii = 1:length(lines)
     event = template;
     event.stage.index = n;
     if n > 0
-        policy = struct('mode', 'local', 'implementation', 'current', ...
+        policy = struct('mode', 'local', ...
             'output_policy', 'nifti-and-dicom', 'reference_policy', 'umap-required');
         [~, ~, ~, event.stage.title] = pseudo_CT_stage_map(policy, n, 10);
     end

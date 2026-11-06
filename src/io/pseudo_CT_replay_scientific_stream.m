@@ -9,7 +9,7 @@ end
 [events, state] = pseudo_CT_scientific_stream(path, version, subject, [], true);
 if print_events
     pseudo_CT_output_console_visible('RESET');
-    context = struct('live', false, 'console_profile', 'local-current');
+    context = struct('live', false, 'console_profile', 'local');
     pseudo_CT_present_scientific_events(events, context);
 end
 end

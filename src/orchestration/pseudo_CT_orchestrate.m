@@ -85,21 +85,12 @@ end
 % contacts a remote service, creates output directories, or runs science.
 setup_pseudo_CT_paths(root_dir, config, 'validate', ...
     ~isempty(subjects), needs_dicom);
-is_current_mlsc = false;
-try
-    is_current_mlsc = mlsc_current_validate('is_current', config);
-catch %#ok<CTCH>
-    is_current_mlsc = false;
-end
-if is_current_mlsc
+if strcmp(config.mode, 'mlsc')
     mlsc_current_validate('validate_for_execution', config);
-elseif isfield(config, 'mode') && strcmp(config.mode, 'local') && ...
-        isfield(config, 'implementation') && ...
-        strcmp(config.implementation, 'current')
-    % Local current-lineage profiles use the same immutable compiled artifact
-    % contract as MLSC current, validated before input preparation or normalization.
+else
+    % Local profiles use the same immutable compiled artifact contract as
+    % MLSC, validated before input preparation or normalization.
     artifact_config = struct();
-    artifact_config.implementation = 'current';
     artifact_config.current = config.current;
     mlsc_current_validate('validate_for_execution', artifact_config);
 end
@@ -311,7 +302,7 @@ if isfield(resolved, 'current_artifact_root') && ...
 end
 report = pseudo_CT_run_lifecycle(args{:});
 backend = 'local';
-if any(strcmp(resolved.profile, {'mlsc-current'; 'mlsc-mprage-only'}))
+if any(strcmp(resolved.profile, {'mlsc'; 'mlsc-mprage-only'}))
     backend = 'mlsc';
 end
 selected_group = '';

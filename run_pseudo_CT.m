@@ -1,8 +1,8 @@
 function report = run_pseudo_CT(varargin)
 %RUN_PSEUDO_CT Public pseudoCT entrypoint; GUI, script and CLI share orchestration.
 %   RUN_PSEUDO_CT(...) dispatches the existing workflow through
-%   pseudo_CT_orchestrate. Current preparation and computation remain in the
-%   shared compiled/current payload for local-current and MLSC-current.
+%   pseudo_CT_orchestrate. Preparation and computation remain in the shared
+%   compiled/current payload for the local and MLSC profiles.
 %   Minimum supported MATLAB: R2010b.
 
 entry_root = fileparts(mfilename('fullpath'));

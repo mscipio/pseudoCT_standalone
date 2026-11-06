@@ -11,8 +11,8 @@ function transport = mlsc_credentials_transport(config, username, password, ...
 %
 %   This is the shared helper extracted verbatim from RUN_PSEUDO_CT's former
 %   private LOCAL_CREATE_MLSC_TRANSPORT (behavior identical).  It is used by
-%   RUN_PSEUDO_CT's MLSC path and by the sixth comparison command
-%   (mlsc-current-r2010b), so both reach authentication, account discovery,
+%   RUN_PSEUDO_CT's MLSC path and by the historical sixth comparison command,
+%   so both reach authentication, account discovery,
 %   and the Slurm lifecycle through the same transport.  No private
 %   transport is duplicated.
 %

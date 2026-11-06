@@ -1,8 +1,7 @@
-function config = mlsc_current()
-%MLSC_CURRENT MLSC profile for the current-lineage R2010b compiled payload.
+function config = mlsc()
+%MLSC MLSC profile using the R2010b compiled payload.
 %   T005 canonical cell (T014 authoritative): mode='mlsc',
-%   implementation='current', selecting the compiled/current payload.
-%   Current science settings match local_current
+%   Science settings match local
 %   (alias=1, recenter='Yes', zero_background='No', bone=true, fwhm=0,
 %   PCA callable_pca then repo_legacy, standard mMR/UMAP/NIfTI-and-DICOM
 %   policy). config.current carries the neutral pinned artifact contract
@@ -23,8 +22,6 @@ dependency_paths = pseudo_CT_dependency_paths();
 
 % Select the local processing path or the remote MLSC path.
 config.mode = 'mlsc';
-% Implementation: 'current' selects the compiled current payload (only value).
-config.implementation = 'current';
 % SPM installation used by local finalization support code.
 config.spm_root = dependency_paths.spm_root;
 % Atlas images and SPM batch templates used by local finalization.
@@ -39,7 +36,7 @@ config.recenter_before_normalization = 'Yes';
 config.zero_background = 'No';
 % Remove temporary files after successful output promotion.
 config.cleanup_on_success = true;
-% Current PCA implementations to try in order (matches local-current).
+% PCA implementations to try in order (matches local).
 config.pca_order = {'callable_pca'; 'repo_legacy'};
 % Required local MATLAB release; empty accepts any release.
 config.required_matlab_release = '';
@@ -58,9 +55,9 @@ config.io_policy.gui = 'mMR';
 % Compatibility baseline: empty identifies the standard MLSC profile.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'MLSC - Current (R2010b compiled)';
+config.presentation.display_name = 'MLSC';
 config.presentation.description = ...
-    'Run the pseudoCT pipeline on MLSC using a compiled MATLAB R2010b backend.';
+    'Run the pseudoCT pipeline on MLSC using the compiled MATLAB R2010b backend.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = true;
 config.presentation.order = 15;

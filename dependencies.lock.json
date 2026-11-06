@@ -15,7 +15,6 @@
   },
   "canonicalLayout": {
     "external": "external/",
-    "legacyV2": "compiled/legacy-v2.0.0/",
     "current": "compiled/current/"
   },
   "distributionLayout": {
@@ -23,7 +22,6 @@
     "topLevelEntries": [
       "bin/",
       "orchestration/",
-      "compiled/legacy-v2.0.0/",
       "compiled/current/",
       "external/",
       "manifests/",
@@ -31,8 +29,7 @@
     ],
     "architecture": {
       "interpretedLayer": "One MATLAB orchestration layer shared by GUI and headless CLI; it owns request/result, profile, transport, and workflow coordination.",
-      "currentScience": "compiled/current/ is the shared current preparation/computation implementation for local-current and MLSC-current; do not package a second interpreted scientific implementation as part of this architecture.",
-      "legacyScience": "compiled/legacy-v2.0.0/ remains the immutable historical payload, isolated from current science.",
+      "currentScience": "compiled/current/ is the shared preparation/computation implementation for the supported local and MLSC profiles; do not package a second interpreted scientific implementation as part of this architecture.",
       "manifests": "Package-level provenance/dependency manifests belong under manifests/; build/resource manifests required by the existing current runtime contract remain paired with compiled/current/ until an explicitly approved runtime change.",
       "developmentSource": "The development checkout remains organized under src/, scripts/, and src/science/overrides/; this target layout is a package projection, not authorization to reorganize development source."
     },
@@ -40,7 +37,7 @@
       {
         "id": "dicom2nifti-1.2.5",
         "kind": "MATLAB conversion library, not a separately verified system executable",
-        "invocation": "src/orchestration/pseudo_CT_run_lifecycle.m and legacy source orchestration call dcm2nii for MPRAGE input preparation before profile-specific scientific processing; dcm2nii.m delegates to dicom2nifti.api.run, whose DICOM route reaches dicom2nifti.core.fromDicom and calls spm_dicom_headers/spm_dicom_convert in the MATLAB interpreter. The DICOM API identifies the selected SPM root from spm_dicom_headers and adds that root at path begin, so configured SPM8 spm_dicom_convert is effective even though setup initially adds src/science/overrides/spm_dicom_convert first. correct_aliasing separately routes DICOM/.ima, .nii.gz, and folder inputs to dicom2nifti.api.run(inputPath, stagedOutput, 'Compression', 'none', 'Overwrite', true); DICOM output conversion calls dcm2nii(mu_ref, fullfile(temp_dir, 'ref_file.nii'), 'Overwrite', true).",
+        "invocation": "src/orchestration/pseudo_CT_run_lifecycle.m calls dcm2nii for MPRAGE input preparation before profile-specific scientific processing; dcm2nii.m delegates to dicom2nifti.api.run, whose DICOM route reaches dicom2nifti.core.fromDicom and calls spm_dicom_headers/spm_dicom_convert in the MATLAB interpreter. The DICOM API identifies the selected SPM root from spm_dicom_headers and adds that root at path begin, so configured SPM8 spm_dicom_convert is effective even though setup initially adds src/science/overrides/spm_dicom_convert first. correct_aliasing separately routes DICOM/.ima, .nii.gz, and folder inputs to dicom2nifti.api.run(inputPath, stagedOutput, 'Compression', 'none', 'Overwrite', true); DICOM output conversion calls dcm2nii(mu_ref, fullfile(temp_dir, 'ref_file.nii'), 'Overwrite', true).",
         "packagePath": "external/dicom2nifti-1.2.5/",
         "runtimeGate": "MATLAB 7.11.0.584 (R2010b, GLNXA64) is available. A synthetic 3-slice MR DICOM was converted through the actual pinned dcm2nii/dicom2nifti 1.2.5 entrypoint, producing one NIfTI; source-faithful setup initially selected src/science/overrides/spm_dicom_convert, while the converter DICOM API path mutation selected the profile-configured SPM8 copy, and caller path/CWD and staging cleanup were restored. This does not establish clinical workflow compatibility or exercise the conditional MATLAB dicominfo fallback."
       },
@@ -57,7 +54,6 @@
       "rootPresence": {
         "bin/": true,
         "orchestration/": false,
-        "compiled/legacy-v2.0.0/": true,
         "compiled/current/": true,
         "external/": true,
         "manifests/": false,
@@ -66,7 +62,6 @@
       "binTreeSha256": "f99b0a603cc0db6cde981a69cf8e54a2a475eee26592f850d3dee986f8047d04",
       "readmeSha256": "b8e975ddc08788c20270009b46e83e251f5b0047e1b87c8d8074be2632757ad3",
       "compiledCurrentTreeSha256": "f55d47937c1c93e4e7f087b5a2d6939bdd23461b87a8204b99830ae8d6cefe68",
-      "compiledLegacyV2TreeSha256": "286004dfec77fdff4547b4a635d1c82bc5ec8ccd25b6c0ef1b5013ebe665b19b",
       "preservedDevelopmentArtifacts": {
         "external/ssh2_v2_m1_r5/": {
           "treeSha256": "e80803629b8dc9ef7f0bcbad655f9b5fa36dc1d62e569402eeb9e84ac3b021ee",
@@ -88,24 +83,14 @@
       "external/correct_aliasing-0.4.0/",
       "external/dicom2nifti-1.2.5/",
       "external/spm8-r6313/",
-      "external/spm8-dan/",
       "external/Batch_atlas/",
       "external/ssh2_v2_m1_r5/"
     ],
-    "legacyV2": {
-      "canonicalPathPresent": true,
-      "canonicalPath": "compiled/legacy-v2.0.0/",
-      "canonicalTreeSha256": "286004dfec77fdff4547b4a635d1c82bc5ec8ccd25b6c0ef1b5013ebe665b19b",
-      "files": 217,
-      "bytes": 886819251,
-      "symlinks": 0,
-      "identityBasis": "User identifies the historical installed server Aether executable as legacy-v2.0.0; the candidate was copied only after exact configured-path and pre-copy-hash matches."
-    },
     "current": {
       "canonicalPathPresent": true,
       "availableArtifactPath": "compiled/current/",
       "canonicalTreeSha256": "f55d47937c1c93e4e7f087b5a2d6939bdd23461b87a8204b99830ae8d6cefe68",
-      "note": "The current payload was rebuilt after the T030 architecture changes with MATLAB R2010b / Compiler 4.14, using the install-root-pinned external/correct_aliasing-0.4.0 source. The refreshed payload and build/resource manifest pairs are at compiled/current/; compiled/legacy-v2.0.0/ was preserved byte-identically."
+      "note": "The current payload was rebuilt after the T030 architecture changes with MATLAB R2010b / Compiler 4.14, using the install-root-pinned external/correct_aliasing-0.4.0 source. The refreshed payload and build/resource manifest pairs are at compiled/current/."
     }
   },
   "dependencies": [
@@ -152,7 +137,7 @@
         "src/science/current/pseudo_CT_current_prepare.m: current preparation compile source invokes correct_aliasing",
         "scripts/build_mlsc_current.m: validates and includes correct_aliasing 0.4.0 as a compile input"
       ],
-      "distributionDisposition": "The staged external/correct_aliasing-0.4.0/ tree is a pinned development/build input for compiled/current/. Current local-current and MLSC-current execution share compiled/current/ and do not add this tree as an interpreted runtime path or distribute a second interpreted scientific implementation. Keep it available in the build environment; unresolved rights continue to block public packaging.",
+      "distributionDisposition": "The staged external/correct_aliasing-0.4.0/ tree is a pinned development/build input for compiled/current/. Supported local and MLSC profile execution share compiled/current/ and do not add this tree as an interpreted runtime path or distribute a second interpreted scientific implementation. Keep it available in the build environment; unresolved rights continue to block public packaging.",
       "matlabCompatibility": {
         "claim": "README and release metadata say MATLAB R2010b (7.11) documented workflows were validated; parser uses inputParser.addParamValue.",
         "observedBuild": "MATLAB 7.11.0.584, R2010b, GLNXA64",
@@ -194,7 +179,6 @@
       "api": "dcm2nii compatibility entrypoint and dicom2nifti.api.run structured API",
       "sourceReferences": [
         "src/orchestration/pseudo_CT_run_lifecycle.m: calls dcm2nii to prepare MPRAGE input before profile-specific processing",
-        "src/backends/local/pseudo_CT_run_local_legacy_subject.m: directly calls dcm2nii for local legacy input preparation",
         "src/config/pseudo_CT_dependency_paths.m and setup_pseudo_CT_paths.m: resolve the pinned external/dicom2nifti-1.2.5 root, verify entrypoints, and add it to the MATLAB path",
         "external/dicom2nifti-1.2.5/dcm2nii.m: compatibility facade dispatches explicit inputs to dicom2nifti.api.run",
         "external/dicom2nifti-1.2.5/+dicom2nifti/+api/run.m: routes DICOM input to dicom2nifti.core.fromDicom",
@@ -256,36 +240,10 @@
       "bundleStatus": "The existing current build metadata shows SPM as a compiler input; its exact coverage remains unasserted. The local external copy is not public redistribution clearance."
     },
     {
-      "id": "spm8-dan",
-      "version": "SPM8 v4667 (Contents.m identifies 27-Feb-2012)",
-      "role": [
-        "runtime for deprecated local-near-parity profile only"
-      ],
-      "origin": {
-        "kind": "local shared installation; no source repository/archive provenance verified",
-        "sourceUrl": null,
-        "localAbsoluteOrigin": "/usr/pubsw/packages/mrpet/standalone_apps/shared_libraries_2026/spm8-dan"
-      },
-      "artifact": {
-        "path": "external/spm8-dan/",
-        "treeSha256": "1b5fe01bf95cec5c114e59b782f60a8a8ec1d9261d3608dc21a2ba6c3e507b84",
-        "files": 5662,
-        "bytes": 1152303032,
-        "symlinks": 0,
-        "verification": "The complete installed source tree was verified before and after local copy using sha256-tree-v1; no symlinks were present."
-      },
-      "license": {
-        "state": "SPM README declares GPL version 2 or later; nested third-party component terms/notices remain to be reviewed",
-        "localUse": "staged locally for the existing deprecated profile only",
-        "publicRedistribution": "blocked pending complete transitive notice and packaging review"
-      }
-    },
-    {
       "id": "batch-atlas-shared",
       "version": null,
       "role": [
-        "compiled/current scientific runtime resources consumed through the current resource/job manifest",
-        "current and local/legacy support data"
+        "compiled/current scientific runtime resources consumed through the current resource/job manifest"
       ],
       "origin": {
         "kind": "local shared installation; no release/source provenance found",
@@ -312,33 +270,10 @@
       "localUse": "Exact installed tree copied to external/Batch_atlas/ for local use only; provenance and redistribution rights remain unresolved."
     },
     {
-      "id": "batch-atlas-legacy-deployment",
-      "version": null,
-      "role": ["runtime resources for the site-installed legacy compiled package"],
-      "origin": {
-        "kind": "site-installed legacy deployment directory",
-        "sourceUrl": null,
-        "localAbsoluteOrigin": "/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/Batch_atlas"
-      },
-      "artifact": {
-        "path": "compiled/legacy-v2.0.0/Batch_atlas/",
-        "treeSha256": "889d6fec39e204351ecba4cb95251098a7cb281e0a52f979557102f4dfa55b25",
-        "files": 214,
-        "bytes": 880570135,
-        "symlinks": 0,
-        "verification": "The staged legacy Batch_atlas tree matches the recorded installed pre-copy tree hash byte-for-byte and mode-for-mode."
-      },
-      "license": {
-        "state": "atlas/resource rights unresolved; includes a separately identified Ganymed build250 JAR and LICENSE.txt",
-        "publicRedistribution": "blocked"
-      },
-      "compatibility": "This installed tree is not the same artifact as batch-atlas-shared; keep their identities separate."
-    },
-    {
       "id": "ssh2-v2-m1-r5",
       "version": "MATLAB wrappers identify themselves as version 2.0; embedded Ganymed source headers identify version 2.50",
       "role": [
-        "interpreted orchestration runtime SSH2 transport for Launchpad and MLSC, including current MLSC",
+        "interpreted orchestration runtime SSH2 transport for MLSC",
         "not part of compiled/current scientific payload"
       ],
       "origin": {
@@ -369,21 +304,6 @@
       "compatibility": "The source tree is present locally; supported Java/MATLAB and remote SSH endpoint compatibility were not exercised."
     },
     {
-      "id": "ganymed-ssh2-build250",
-      "version": "build250 (installed directory identity; release provenance not independently established)",
-      "role": ["transitive runtime transport dependency in the site-installed legacy package"],
-      "origin": {
-        "kind": "legacy deployment resource tree",
-        "path": "/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad/Batch_atlas/ganymed-ssh2-build250"
-      },
-      "artifact": {
-        "jarSha256": "fc848490c8d968dc957d2e9e048bb1754b8efeae56318b188f97ae16e11d71d2",
-        "licenseFile": "LICENSE.txt"
-      },
-      "license": "Bundled LICENSE.txt identifies BSD-style source/binary redistribution terms, notice retention, and non-endorsement conditions; package-level compliance still requires preserving this notice.",
-      "compatibility": "JAR is present as a legacy deployment asset; no SSH connection or Java compatibility test was run."
-    },
-    {
       "id": "vers-spm-overrides",
       "version": null,
       "role": [
@@ -409,7 +329,7 @@
         "external/dicom2nifti-1.2.5/+dicom2nifti/+core/fromDicom.m calls spm_dicom_convert; +dicom2nifti/+config/load.m and +dicom2nifti/+api/run.m select/add the profile SPM root at path begin for the DICOM route, shadowing the setup-added src/science/overrides/ copy",
         "src/science/current/pseudo_CT_current_prepare.m and src/science/current/pseudo_CT_current_compute.m: invoke SPM operations on the interpreted source path"
       ],
-      "distributionDisposition": "These are scientific source overrides, not an independent SPM runtime package. The orchestration setup validates and adds all three before SPM, but the DICOM API path mutation adds the selected profile SPM root at path begin, so configured SPM8 spm_dicom_convert is effective during the converter route. The inspected spm8-dan implementation is byte-identical to src/science/overrides/spm_dicom_convert.m; spm8-r6313 differs only in write_volume's helper signature/comment while retaining the same Temp_spm.nii standard-volume output and out.files contract consumed by dicom2nifti 1.2.5. Full conversion remains unverified, so no runtime selection change is justified. The converter call chain does not establish that spm_vol_nifti.m or spm_preproc_write8.m are needed for that conversion; retain all three where the existing setup/source workflow requires them and as builder inputs. These runtime roles are separate from the shared compiled-current payload; do not duplicate interpreted science outside compiled/current/.",
+      "distributionDisposition": "These are scientific source overrides, not an independent SPM runtime package. The orchestration setup validates and adds all three before SPM, but the DICOM API path mutation adds the selected profile SPM root at path begin, so configured SPM8 spm_dicom_convert is effective during the converter route. The inspected alternate spm_dicom_convert implementation was byte-identical to src/science/overrides/spm_dicom_convert.m; spm8-r6313 differs only in write_volume's helper signature/comment while retaining the same Temp_spm.nii standard-volume output and out.files contract consumed by dicom2nifti 1.2.5. Full conversion remains unverified, so no runtime selection change is justified. The converter call chain does not establish that spm_vol_nifti.m or spm_preproc_write8.m are needed for that conversion; retain all three where the existing setup/source workflow requires them and as builder inputs. These runtime roles are separate from the shared compiled-current payload; do not duplicate interpreted science outside compiled/current/.",
       "license": {
         "state": "Override-source provenance and applicable SPM/third-party license and notice terms are not independently established",
         "publicRedistribution": "blocked until the full package provenance/license review is cleared"
@@ -417,279 +337,6 @@
     }
   ],
   "artifacts": {
-    "legacyV2Candidate": {
-      "semanticVersion": "legacy-v2.0.0",
-      "profileLineageClaim": "Historical installed server Aether binary identified by the user as legacy-v2.0.0.",
-      "versionEvidence": "The semantic label comes from the user's identification, not an inferred filename or an artifact-specific build manifest. The configured installed candidate was tied to legacy profile references by the pre-copy path/hash evidence.",
-      "origin": "/autofs/cluster/pubsw/2/pubsw/Linux2-2.3-x86_64/packages/mrpet/standalone_apps/Pseudo_CT_launchpad",
-      "files": {
-        "executable": {
-          "path": "Pseudo_CT_launchpad",
-          "sha256": "f471300bccea5e95e46182a9b359bb1b1b4c5e214c2977d665137af7b68e2705",
-          "sizeBytes": 6247418
-        },
-        "runner": {
-          "path": "run_Pseudo_CT_launchpad.sh",
-          "sizeBytes": 1208,
-          "sha256": "1e8987db6c1f66f64be3ef61493a5a1fb410abd07a0907ccc88f5cdaf43aa167"
-        },
-        "defaultsMat": {
-          "path": "default_pseudo_CT_package_deployed.mat",
-          "sizeBytes": 490,
-          "sha256": "d18e980b33a439142cf7b255a2b2423dbe29a398e7c49142ce1f7f6f8d853cc7"
-        },
-        "deploymentZip": {
-          "path": "Pseudo_CT_launchpad_pkg.zip",
-          "sha256": "3d386600916f08100c611700bfbbdb73f2e2647131c02b539cc8673e2bea587a",
-          "sizeBytes": 843288532
-        },
-        "bundledSpmLauncher": {
-          "path": "spm8",
-          "sha256": "6cafd9c838950faf4a1a3723cf0e0fe32801ec8404e2b6302b1498fade44afb8"
-        },
-        "bundledSpmCtf": {
-          "path": "spm8.ctf",
-          "sha256": "411936c34e30c217989da68e82a7bd336e0cf91570eb5cec457a74c9d69ee211"
-        },
-        "batchAtlasTreeSha256": "889d6fec39e204351ecba4cb95251098a7cb281e0a52f979557102f4dfa55b25",
-        "ganymedBuild250JarSha256": "fc848490c8d968dc957d2e9e048bb1754b8efeae56318b188f97ae16e11d71d2"
-      },
-      "localStaging": {
-        "path": "compiled/legacy-v2.0.0/",
-        "treeSha256": "286004dfec77fdff4547b4a635d1c82bc5ec8ccd25b6c0ef1b5013ebe665b19b",
-        "filesCount": 217,
-        "bytes": 886819251,
-        "symlinks": 0,
-        "files": [
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Atlas_cp_iso_mprage_normalized_repos_15subj.nii","sizeBytes":9172522,"sha256":"3922c9e6394e214b01393493856a52170b2f34923f361b06d14ec83d10e0c2df"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Atlas_head_mask.nii","sizeBytes":4586437,"sha256":"4a583f9f6ee7cb0705930d6bf6a66a1db0c8b06299af0ec0ef5fa95640f0a107"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Atlas_rCT_flipLR_repos_15subj.nii","sizeBytes":9172522,"sha256":"9b30206faac2bedbb551e0fe70b37653199c495605c73ee833dd570879947db9"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Atlas_rcp_ute1_normalized_repos_15subj.nii","sizeBytes":9172522,"sha256":"38bf6797034753efbf18970058962aa00ad65f58f8a56c67863bd8e058342053"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Atlas_rcp_ute2_normalized_repos_15subj.nii","sizeBytes":9172522,"sha256":"19f9560caea4ac570feac931cc7bf1028bb6e86edfb5683c44117b07f351d133"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/CT_masked.nii","sizeBytes":9172522,"sha256":"9c68b9659007ae669798be8ed1d0ba93745420f83786089e370939e3fcce356c"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/TPM.nii","sizeBytes":50951032,"sha256":"e344289e93539bdf7a7574f45ef595dc2c2ed8df8df533a1f1d442be77c9898f"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Template_0.nii","sizeBytes":110066392,"sha256":"34139fae99b1f67359196bca96c433611046eaef13de25031c36282036750fb6"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Template_1.nii","sizeBytes":110066392,"sha256":"f6460f9c0da28c91e0572556122e3e656b05640f2c1cf48f5517cef5244addd7"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Template_2.nii","sizeBytes":110066392,"sha256":"78e7d268fb5188d3e8c0247c1367a9728574dc752741365ac14e437d415f0e3d"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Template_3.nii","sizeBytes":110066392,"sha256":"18020a348f6ea63c9e9b662f61a91ad4f86b953b37417e3c80a8fef9614a22da"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Template_4.nii","sizeBytes":110066392,"sha256":"62ed6b8b1c781a82029863c3ddeb306b4b29257eb818c70daee24398b3274fe9"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Template_5.nii","sizeBytes":110066392,"sha256":"6f7c6217b7c7348e75b5a6fd1af0025e56daad2fe0f5a74e37032543b46b7fed"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/Template_6.nii","sizeBytes":110066392,"sha256":"f22cbfbcfc6e89acc00d7431a0dd29a0a33fa4b294628e18b93898390502c814"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ch2.nii","sizeBytes":7109489,"sha256":"d2836f322b3de47aa13f949e3beef84528f979ab489d4d8f3ccceb1d5f225152"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/create_inverse_warped_batch.mat","sizeBytes":1168,"sha256":"0a0b29b3e0574fe46580cf99fefd9d27a21ff8fb659103031417ed988f9c5cb4"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/dartel_existing_template_batch.mat","sizeBytes":4872,"sha256":"b0af8e75342d6b1fe6262ec534821bf6936ac543508598221b77862b5a600d0d"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/HISTORY.txt","sizeBytes":14490,"sha256":"fb2134c16b44de73da2be2d4cda80b704bab442a12f7c888ff300859b08c8890"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/LICENSE.txt","sizeBytes":4545,"sha256":"e4bd585704b927c00080d9398d1e857efa94074232b106aec91fb89d004a4f47"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/README.txt","sizeBytes":1157,"sha256":"ed4710f2cf8931122cca6fec6c13f42623f41fc4d91015f226f13d5bdf0f0eeb"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/Basic.java","sizeBytes":1774,"sha256":"74617e4f01fcbfd52bd8a74198f00b6c441f2217f906e4425b458bed89195de6"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/BasicWithHTTPProxy.java","sizeBytes":2201,"sha256":"41acf1ffb29a0217ed651a3cc7135877392e667e8024b30e09a327897658016e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/PortForwarding.java","sizeBytes":3299,"sha256":"f131d1f09834883e95d8682fe99424c39f1546e8c2fe69a7504584b12e8b3839"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/PublicKeyAuthentication.java","sizeBytes":1515,"sha256":"d474bfc4c6de61e225054d21599873802e8a97c8cae9b9865e309b4be5b83912"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/SimpleVerifier.java","sizeBytes":1348,"sha256":"0ade73583965aec64fd1b1d2083f879eced3c96ecb04cca43687f43cb1703742"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/SingleThreadStdoutStderr.java","sizeBytes":3895,"sha256":"d6bc08765e3da652f628762dcfeac3e1cfd5307aa911cf64e7169794edab3ca9"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/StdoutAndStderr.java","sizeBytes":1745,"sha256":"6bfbece2d93e61ac5cc2634352e86d738a4eb82fd911b4cfaae38af350a65e08"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/SwingShell.java","sizeBytes":17843,"sha256":"0197c50de1758569f548f5dfa19533b39c4f08d67553cfb3ad6054d77001cda1"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/examples/UsingKnownHosts.java","sizeBytes":1717,"sha256":"e9e0781a0e0f390c3715af5c442ebf68c4ef4776bd587feac028ef55a87c8872"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/faq/FAQ.html","sizeBytes":16664,"sha256":"b36ead638f45f2dcb1ffda723bc9ef4159c073b4cb5f283bc1926195dca3ad6e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/ganymed-ssh2-build250.jar","sizeBytes":248915,"sha256":"fc848490c8d968dc957d2e9e048bb1754b8efeae56318b188f97ae16e11d71d2"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/allclasses-frame.html","sizeBytes":3143,"sha256":"d8e92de7ec156f4c119b93b8d0a9903522875e22a4dbab58573987332c8d0447"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/allclasses-noframe.html","sizeBytes":2723,"sha256":"f331f25e76de5927a4e9c87a78104f794e48ca0ab5b8a38dc64966d8327b6b95"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/ChannelCondition.html","sizeBytes":13429,"sha256":"6b8660a723a415f1f00e12748128d7edf375e75eec6eaed08b3fc3fe3026a123"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/Connection.html","sizeBytes":78756,"sha256":"1a4d9ca377dc5bea0f904a63e141b1848fb3debd14df52756fc9d15f666be7bb"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/ConnectionInfo.html","sizeBytes":15221,"sha256":"c9228bf04b6ffe5587ca28b7838737df5e4d7cafb267b10a930b930600470f86"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/ConnectionMonitor.html","sizeBytes":9416,"sha256":"6d5b23446afba884d70d2df7b09d112a546c7c846fc70bcd1c2635575ed5562a"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/DHGexParameters.html","sizeBytes":14251,"sha256":"41959b20de5f7ec45ec483d52f5ae0a95f6af622a2924a82e4aab68d1eca357e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/HTTPProxyData.html","sizeBytes":17187,"sha256":"0eef5608b84d5c1cbecaa7cb50859c2a7eac48568482dc912a723ebdb6fab490"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/HTTPProxyException.html","sizeBytes":12243,"sha256":"2b30383d61dcfa08d1752669d6fa08c303af8a60eb289874186dfa38b8936e60"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/InteractiveCallback.html","sizeBytes":11088,"sha256":"1ae3dc0ef8a3e19c9bf7388a55e402250839e8680cf3d8d7488cd56566bc49bd"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/KnownHosts.html","sizeBytes":26193,"sha256":"7f500dbec6aec5f7b18c2bd99ed55c76a9e36dac29e10c8c4cae71d752e8da3b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/LocalPortForwarder.html","sizeBytes":9221,"sha256":"274a5dd66cb605b26c09a55d5d894982e2cbede6d1f734d2b19d437cb79db0d9"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/LocalStreamForwarder.html","sizeBytes":11132,"sha256":"74f92d52066f41beb38ed79a2ab9b1ea946f794b8a7a6102f7d1cfbd6a0475fe"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/ProxyData.html","sizeBytes":7150,"sha256":"3b70331b1b9692484765f5d1b9fa55455b4eda38854eeb242df7ad06ea8c5e15"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/SCPClient.html","sizeBytes":24011,"sha256":"1a554690c9ddc8913a1c4de6ffd6a2b54a4db47b59c1e0459bb647717d9a602f"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/SFTPException.html","sizeBytes":12110,"sha256":"84818212ab03021d9f583b34d6902b5f49391b192e30dc40e59e9b257beecbfb"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/SFTPv3Client.html","sizeBytes":47575,"sha256":"f086774bad0398928b7cec0b0b24dbb359384fefe78ee91501968a51d13b2573"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/SFTPv3DirectoryEntry.html","sizeBytes":12498,"sha256":"e8af33539b1632e20897a8b1f0ad67512725d2a5ab585ae28f9a2f8539484f71"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/SFTPv3FileAttributes.html","sizeBytes":17543,"sha256":"7e1eb09f3381003ac9133867a612742e12f220b55bc18117618c241e37dd78c0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/SFTPv3FileHandle.html","sizeBytes":10059,"sha256":"2aa834d88bc3e77774b7b95504e02ac6dab8cc3e86a8cf8ee125d57daf0c37d8"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/ServerHostKeyVerifier.html","sizeBytes":9815,"sha256":"85c95b1841bc9b842dbc69035c1a3cb0d22a269fbd87794559acce71d63b723a"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/Session.html","sizeBytes":25089,"sha256":"5e848e1b1335c77fdd49c0ae4dbdc4e29e08f21664e73b53613f492fe111fb8a"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/StreamGobbler.html","sizeBytes":14621,"sha256":"d9f57dae7c002289d11481cc582ee3b67134c418dd1eb7463e28f53b06c67297"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/ChannelCondition.html","sizeBytes":5871,"sha256":"caf248b67673e17c45636540bed0fa634120ec2943121a3a8a22c76b92ed08db"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/Connection.html","sizeBytes":8011,"sha256":"43e6e811f0492fa86e99ad29c80227ce1a584ca73519a05c5ea6d2214eb624f1"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/ConnectionInfo.html","sizeBytes":9606,"sha256":"b4670dfc6c6677b6d25313c71df8cc88977879dc6e35f50c3b432d53b58a9508"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/ConnectionMonitor.html","sizeBytes":7357,"sha256":"90b55e78667f787e82038f6bbf0b0e61c4dd135006c2dcd9556f68f7b1e8d42d"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/DHGexParameters.html","sizeBytes":7194,"sha256":"933090f53c3954e07fa26fd2e540c5c4d7350cb5d2716541d98d3346fa2d2be2"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/HTTPProxyData.html","sizeBytes":5821,"sha256":"76c316ca3b4952f60123417d10802253290d69af22d56db5f0ab5ca49c034d79"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/HTTPProxyException.html","sizeBytes":5871,"sha256":"13aee9477cda6ec1ddb6a9b092f471f8b4d85d495b019bf1204d678f333e4f1d"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/InteractiveCallback.html","sizeBytes":8405,"sha256":"b1a913d468eb1796f883bdb2dda3fb359d76f2ee832813ab39065e27f49eb983"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/KnownHosts.html","sizeBytes":5791,"sha256":"53ed1162c36cd5fa40e3ed5d2a8aed11db39e5991c9cb99b3040f9a7939ef972"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/LocalPortForwarder.html","sizeBytes":8252,"sha256":"f0cf198d140089130256f0b3e0ae493e4595b6acf15d3e518048e6617a0ce615"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/LocalStreamForwarder.html","sizeBytes":7428,"sha256":"83d543ceb58face6371d6cbe5aa6f49e5116adb9b53dbbad299c5d4e705348f0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/ProxyData.html","sizeBytes":8005,"sha256":"2592829f0c0c14b59a963d64d936bb4627b9a7ef9a8e73ebcd44ef6c4719577a"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/SCPClient.html","sizeBytes":7171,"sha256":"55b3d5917edb2c8d8221f0e44b5afaad0a579df437f12cab2d19296ff1f18664"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/SFTPException.html","sizeBytes":5821,"sha256":"b428d1cf2f49b1a185d91bb0a263041b9478f871fe7072410d03dbc6502345c4"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/SFTPv3Client.html","sizeBytes":7088,"sha256":"82a241d7c5ff824b42582b71a0c546b74812a0e43bab2f824be66e304d0e650a"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/SFTPv3DirectoryEntry.html","sizeBytes":5891,"sha256":"7a67b6327b4ae4e5eb59352da9ac1f0bc62cc201d9d03e7d911820aa0d161527"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/SFTPv3FileAttributes.html","sizeBytes":12456,"sha256":"a600a346139033d309a2f8fdaf9d9c1f4517f0fe1887a84b8d967f783bb33cb2"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/SFTPv3FileHandle.html","sizeBytes":13783,"sha256":"b3b0423a59755be4fc613434f8c968c8bb2d9753d32ba73369ab2fe8af6cd603"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/ServerHostKeyVerifier.html","sizeBytes":8527,"sha256":"21847b21715c8e20bc61c1d8049ab6a2ca80770b71487cf83c62f430af37c9dc"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/Session.html","sizeBytes":7082,"sha256":"dcda8076410564d54f92e422cb5780d8996e75c0030fb4e8ae9fc25dfef50025"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/class-use/StreamGobbler.html","sizeBytes":5821,"sha256":"31a4a71dfe19ced339a7632da3a569df5f8481ff4f40964fa299a3066a1a4c6e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/package-frame.html","sizeBytes":3373,"sha256":"2d916daf7896b6dd14583d5d9a72da69da6315b1e8bd20e4fb025c60913bd8bc"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/package-summary.html","sizeBytes":12584,"sha256":"eb3ef06fb2d611dd5d7e62cdf00d310a2df09fb0dad1402d8cfbbd4e382b16fb"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/package-tree.html","sizeBytes":8846,"sha256":"920431fe8cca2b056fc0070aee788db48f0408f92b05b2adf2a243f069396667"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/ch/ethz/ssh2/package-use.html","sizeBytes":10627,"sha256":"a53d042c76c30d4edee47ee5fc00cefb322df586c10169565a09bdeaa6b5c1f7"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/constant-values.html","sizeBytes":10391,"sha256":"1aa775623778d6e9ad8066f50240f502573bb2dd5c91a10187a72759754b1435"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/deprecated-list.html","sizeBytes":7419,"sha256":"34e4e40cff61ccc17e04a7c916bb6924af528aa781987ccf1c240dcef17e12f5"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/help-doc.html","sizeBytes":9882,"sha256":"1033e2a55dac7b55c304e8f13d5c9a5e4417edc2907da54768e43b2a1a09a0b1"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/index-all.html","sizeBytes":69611,"sha256":"b701ba41482e4a1466457d368924aadad6d2e3088387c978bff7b3a9d17a7419"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/index.html","sizeBytes":1263,"sha256":"8be47c25d986f3440a97c5540afc7b6531a8266e011cc2cec5bd44e5ade06937"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/overview-summary.html","sizeBytes":6575,"sha256":"d2f9591744845ce798e99e498c04b29cf5ae8868e2c8cf944553c24d77ef0c65"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/overview-tree.html","sizeBytes":8546,"sha256":"45202a9c54f669848125cd6ef1e1bbd93ed7adb888a01c3d83bcf9695f4dd9c6"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/package-list","sizeBytes":13,"sha256":"6b7ace6f3297ca0d37ab7abe6609862fad0c612c74a580feb1cdec287cf65d17"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/resources/inherit.gif","sizeBytes":57,"sha256":"0213f3dca0cb17d6dfc4449c62833d8ba7153dfed5532002b9690fdfba7d75e0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/serialized-form.html","sizeBytes":7378,"sha256":"a73659d4a40af07504afbd3f3b2bed3885e376e75d2985a5d87ca4dc2fb4b41b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/javadoc/stylesheet.css","sizeBytes":1391,"sha256":"ae6a227968324b5f8ef6e0aaa284dd53088714dddc91d0d874b81aa92e557134"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/ChannelCondition.java","sizeBytes":1865,"sha256":"97897e3257c6eccb6dbf8c90a694dbc27a1ec488fd2f3c2d7dc86f0d178dc461"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/Connection.java","sizeBytes":47514,"sha256":"ba0994d35925f79c03cf718bfcd632dd05e940fe7f22258c2b8083883dca3cfa"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/ConnectionInfo.java","sizeBytes":1248,"sha256":"96b2c4b65db4d06e0f6439cf03c51bce909668594899aa6bb1660d70fc4ed087"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/ConnectionMonitor.java","sizeBytes":1120,"sha256":"a0e5ef70772395f3652ece9354c68b96b5ab2f06dc97fe1e10da898d6eaa9a98"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/DHGexParameters.java","sizeBytes":3509,"sha256":"9af7e7071916b74c61a0c8fd19954dfbf1e3b07c31266af38793880edb8d5071"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/HTTPProxyData.java","sizeBytes":3030,"sha256":"5622ba632b26f880d62e92577e0976d5a98b4e50b982bd917b2913e321d5ef8f"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/HTTPProxyException.java","sizeBytes":677,"sha256":"3d77645ef281cee3767c12090f311b3ec9d5d60d1592ce25d412408cdc629701"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/InteractiveCallback.java","sizeBytes":2323,"sha256":"54794ddcd2773693f171875f8f70f65d5a5eeb65c07daf4ad81be871aa8bf439"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/KnownHosts.java","sizeBytes":21200,"sha256":"0aa70ba10744d0a7af00518f5c029090efc933a9209afc0efc1563c00ce9f744"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/LocalPortForwarder.java","sizeBytes":1529,"sha256":"b2c19f70601a9d2d896235faee1480c02bdb924752a4ae4ccfd53bcbaa4b1a05"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/LocalStreamForwarder.java","sizeBytes":2177,"sha256":"5abbdf898ceab05b4834d046f7200ae57c82c23994509ed92bce72b326613042"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/ProxyData.java","sizeBytes":239,"sha256":"739d68da06cd33c6dcb87fb2949cd23d44bc049384e63225dae1b1fe5b32a4db"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/SCPClient.java","sizeBytes":18088,"sha256":"de9e74d169c64a97518a386ac304e23841daf8af37d61a1e9a076baf8e8ab6ac"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/SFTPException.java","sizeBytes":1981,"sha256":"5558a691de872a83c1baccc1e9969285eb4f45143fbab9d3d1fcf498262d5f11"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/SFTPv3Client.java","sizeBytes":37607,"sha256":"e597787778715db38b93abbc1c2375260f25f1af1b30f26c81af27a604c31546"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/SFTPv3DirectoryEntry.java","sizeBytes":1109,"sha256":"a08f0cd6ed0a838250ba880ea15928e20034f24fd98f61c8108dca675ef9dc14"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/SFTPv3FileAttributes.java","sizeBytes":3714,"sha256":"f1ad80db8c37b0145dcb2f839630bb51e189acc77228bd7dbaf3c00559b48b69"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/SFTPv3FileHandle.java","sizeBytes":835,"sha256":"5f881594a4bc7df361de08991ea487ffe08f4d30fa1b68e3dc2255c774f18b9c"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/ServerHostKeyVerifier.java","sizeBytes":1133,"sha256":"5b99a3ed1600af7ed747b0f67f3cdbad1647812d8388d6758f4d707babafdddd"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/Session.java","sizeBytes":14198,"sha256":"445181108b323be9f17789ee4c850d1d6567319509b3728b12f5210c2ba63f0f"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/StreamGobbler.java","sizeBytes":5189,"sha256":"b068d8dc8af624210903397170639292a04f5130945592dd8e4a1173f9fc51e9"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/auth/AuthenticationManager.java","sizeBytes":10637,"sha256":"4de66e88a9800799ddb8ee893bbd21251551c797c7872aad2d71461663591dd0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/Channel.java","sizeBytes":5928,"sha256":"5a0a9b96bee74593ade7125806ca9001c4a31c2150a6939e1e92054d29217698"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/ChannelInputStream.java","sizeBytes":1479,"sha256":"35c3cf4f85f19577a5b477f803a89a155f611d16b4861bbcff9835a41de1ec44"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/ChannelManager.java","sizeBytes":40724,"sha256":"d0d4270f21d955ddad6190d1325dd6cc3c8703c3f9e0bf80982ddfaabd5e6cdd"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/ChannelOutputStream.java","sizeBytes":1260,"sha256":"517ececeea483de5f468e9749ae46fbb3d2aa42c041c7c29843226407b27701e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/IChannelWorkerThread.java","sizeBytes":189,"sha256":"3e3448b03d612151ace6eab58dad1b3bf6413fe79be6e16e58401ece3b93c16b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/LocalAcceptThread.java","sizeBytes":2598,"sha256":"e81815c460fefc3b3549722c1ba53beb226c60bd310e374f01b20c31a8abe315"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/RemoteAcceptThread.java","sizeBytes":2348,"sha256":"fef96fa130be962c1bf792da0277688a9fe5b4b19605c50f3d3d6bcd89433f94"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/RemoteForwardingData.java","sizeBytes":297,"sha256":"4fc4f80f846ee974590420c59d92769cbc08f8550d179a7d948c4c64e58777e3"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/RemoteX11AcceptThread.java","sizeBytes":7098,"sha256":"4a81193df8447c79bd51a0562f2543155e5c07e82144692a45d41b1decc4e4ec"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/StreamForwarder.java","sizeBytes":1919,"sha256":"08c2ab608a0fc86ca7b47e12ec8898d4c4abeea6467b396f8993b4302cfbbd8a"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/channel/X11ServerData.java","sizeBytes":324,"sha256":"f3cfa6052d62ce43d6990ae52d33589db439b582d9c39809e4dd31ef901e8518"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/Base64.java","sizeBytes":2932,"sha256":"9dc098570c99a3df74a14901b8ac6295de055f633adad6ef9ae025b282fb5481"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/CryptoWishList.java","sizeBytes":709,"sha256":"91651cac2eab09af26adfc21ab93b5aed5152aa252a5cd6b5b56484744149792"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/KeyMaterial.java","sizeBytes":2396,"sha256":"54861f8faefde593e15c20e1d222637c96bde61088e9d25d01373fd727d2e08f"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/PEMDecoder.java","sizeBytes":9213,"sha256":"81a1030534768bf88b31215c0d18e579ec4d8dd7f131b737a5abbe068bab8624"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/PEMStructure.java","sizeBytes":222,"sha256":"743468121b6d650a52fab095c0712c853bd3e1ab3ae58bb6922bbe3514ed1a2a"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/SimpleDERReader.java","sizeBytes":2767,"sha256":"1a7b7566de183ea7b4f68b152b500c8b2830ce4cf796d0bf86fdefb3bbbe9e3c"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/AES.java","sizeBytes":44821,"sha256":"2d7857ed6a711fd568431db307c87ebb2dc4d4ccf88e040d6b1858e8e4571152"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/BlockCipher.java","sizeBytes":316,"sha256":"8e3ede30213792a7829513ab3a56b10b9fd9d7d47409e363b3c1c1ed981baae2"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/BlockCipherFactory.java","sizeBytes":3086,"sha256":"7db6ae3e01db049afea33e93e984d569316dc11f723e8e1306e9bd142a20533b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/BlowFish.java","sizeBytes":20364,"sha256":"7a8c31dede488caa7bfcf4d1924bf56271541bf0ac415ee344ae2e6ef3c2e078"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/CBCMode.java","sizeBytes":1767,"sha256":"79f7ff8fb020e8d70c5adec8506c285bd138adb7425fd87d3ab4789f54929724"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/CTRMode.java","sizeBytes":1173,"sha256":"fc7e27a0d392efcc3b4712e3974ae233dcaf2ff6a824d0b56bf403c9ba427d44"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/CipherInputStream.java","sizeBytes":2843,"sha256":"72c3425aa04d9dc2400eda72a02fd8a01447e0d3e169514b0a29ea611287ebff"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/CipherOutputStream.java","sizeBytes":2857,"sha256":"67e4ead3a7f5ac64e4f1be284cfe01139db28fbad83f285befbbc878ba5e93d9"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/DES.java","sizeBytes":14501,"sha256":"f75f480ad221b7fe7bbefdd4b132e97972845eda1ec6eabadec0a759d3a845eb"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/DESede.java","sizeBytes":2748,"sha256":"76b707d23f96b9544752fefb55c902cfc2e7777da187e4df30981eb5fcbd395e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/cipher/NullCipher.java","sizeBytes":555,"sha256":"917e46ef06a9fe3eebb084e7b9ec18159259fae2cbab452201f21fc0a9a440d3"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/dh/DhExchange.java","sizeBytes":3536,"sha256":"d9ae67d86527d41f386cd51a22c964f632f3ca81a3cffd9159e2330e51c55283"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/dh/DhGroupExchange.java","sizeBytes":2277,"sha256":"44d7d9484e195dda4ce7af2dc50d1d9ac7d766f5158122ac07ed74240861edd6"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/digest/Digest.java","sizeBytes":389,"sha256":"79832217e67e2a6c1c657e1d95d2ab56c5a30826d329f9596cac753e7bf4263b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/digest/HMAC.java","sizeBytes":1416,"sha256":"bc56d81f85e7f13a1134ef6ae3c0cc445a78d60c81530de0750864a34cbf90b5"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/digest/HashForSSH2Types.java","sizeBytes":1381,"sha256":"b0a9df84b8f985225b036d62649557c805682d8c238021a1834b236e71589ef5"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/digest/MAC.java","sizeBytes":1668,"sha256":"8dd842daefce8683ab3b1670b6187818e8477de9e237fa099311476a984424ef"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/digest/MD5.java","sizeBytes":7861,"sha256":"1734a93511806afb4ce54e7e9439d090927234e938c7fc38e47d10d8b37a38b0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/crypto/digest/SHA1.java","sizeBytes":17986,"sha256":"2415b776d75600e93f09791b380943235b07a75e994408ff9f50b770fd3ee86b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/log/Logger.java","sizeBytes":927,"sha256":"125e849a4c1d39409f6bdb256ef733a1feb41dd32dd51ea4ab4d1d6bf0ad1252"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketChannelOpenConfirmation.java","sizeBytes":1731,"sha256":"8659c933c76cf2e0256902eedd11595b9a67980ae458a49d9d710de36cbf2e45"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketChannelOpenFailure.java","sizeBytes":1625,"sha256":"3194a4f1a2dbfd5bff5fb38eddcc1d6c3ee25a7b5514d936ef10fc04ccb69c05"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketChannelWindowAdjust.java","sizeBytes":1348,"sha256":"51acb91694e4be2d441ba0d740cb96acdfb7f16bebd82b2ce24ed9d77028e3d4"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketDisconnect.java","sizeBytes":1135,"sha256":"bbd1cbef9bde75e185d24ee749458566b1eae460f24541346405000d4af3ae37"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketGlobalCancelForwardRequest.java","sizeBytes":816,"sha256":"8c632ba54c48ed9d10e5aed4a8f29dc5723cbc9ee3885bc6df45f2fa7723cce0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketGlobalForwardRequest.java","sizeBytes":791,"sha256":"48cbb6e5c7d48091dfe908e79e793ab4f83e268eb8d79ebe3dd5e9d62f667834"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketIgnore.java","sizeBytes":1035,"sha256":"ee8577a6dd2d11276431f32c88dd905dbbba422bfc7bd13a4c29b7166dbab32e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketKexDHInit.java","sizeBytes":492,"sha256":"ede750db111bbf8925d7cc52b8ebdf45dea66a7e55702f2f006afc03e04f18a7"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketKexDHReply.java","sizeBytes":1021,"sha256":"51fea380da003ab903ff9d0d9a308fa7d969a22e1237afeb51b0b50ec79c8cf0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketKexDhGexGroup.java","sizeBytes":935,"sha256":"e83c6c9316524dabc0084c44367181744679ce7c0b440f9c4cc283a68a182c24"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketKexDhGexInit.java","sizeBytes":506,"sha256":"a0b7805e4878e6585a41649de3a2f9cf44d354b7052542996edccd3f5c530825"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketKexDhGexReply.java","sizeBytes":1042,"sha256":"ca28f93c5de6047607c2b540f5072a96f62b1c85fd953f9c6269d17a19fc6996"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketKexDhGexRequest.java","sizeBytes":695,"sha256":"f8e9dec75003a054e4c78ca6afd80aac2d2e806418b06680d0a0449a2e55aa94"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketKexDhGexRequestOld.java","sizeBytes":565,"sha256":"a6dab35884b4a57ad0f61b08e8124312915e9ec6a09724918321ca262e66184b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketKexInit.java","sizeBytes":4532,"sha256":"d4b94b2da6f37346421777bf00b787a175e36db73f132002f5bea053ad823e90"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketNewKeys.java","sizeBytes":905,"sha256":"305e54687dc50a9151d32e70183af00d4f89e2b03229b2ec7486ca1451f51a08"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketOpenDirectTCPIPChannel.java","sizeBytes":1343,"sha256":"cec5ff5e580aebef8317d63fc8dca580c3c48813b9efc6bb8979793ceb4d4121"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketOpenSessionChannel.java","sizeBytes":1429,"sha256":"04d289f014ceeff013a498eb904cb8cf6c198189ea30da364dc5ee12cd5f9bde"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketServiceAccept.java","sizeBytes":1058,"sha256":"7385a4070e4cf418a1e99ad7e7937d5bbe555495bf2ae9979e593cc064d75f9a"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketServiceRequest.java","sizeBytes":1104,"sha256":"29ba327ba42f5eafb758325a867226553ecaf1ee05b877232114af6bf02a1447"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketSessionExecCommand.java","sizeBytes":803,"sha256":"c660ff8e937fa6e39e99b4285e6fae8520fb334ea38c989c90db827fa42c2117"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketSessionPtyRequest.java","sizeBytes":1431,"sha256":"cd0b5346365f1bb527c0c49a8f5e56cbf6a15c9c112549ffa9e8a035b572aef3"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketSessionStartShell.java","sizeBytes":706,"sha256":"3e9bd1091835a492ab71b3636e3adaea0175d252127822be6c68559247c3a48c"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketSessionSubsystemRequest.java","sizeBytes":858,"sha256":"47dcccd312fea4337371811b5abb1afb12b128e5d6645e2fa601fa8ccca3f839"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketSessionX11Request.java","sizeBytes":1322,"sha256":"7a27956a76548538de8fcb4149525042036cc447926031b24d7a2230158cd970"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketUserauthBanner.java","sizeBytes":1258,"sha256":"719557989445c82cb3a48ccf3fdcc00f3f81a06042a0ecb6694abe8bb49b9a06"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketUserauthFailure.java","sizeBytes":1191,"sha256":"1e11336ef16141098b6c762b42c2e9fdb4252d86d2208dd7820ad2b3c18a3d1f"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketUserauthInfoRequest.java","sizeBytes":1499,"sha256":"3daefeff3899d592c1414880b5769ef09606a7a3a36c1507ce418935f18fd6a7"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketUserauthInfoResponse.java","sizeBytes":633,"sha256":"cae1e226b5916a47220a62202b3b688a1b85814216b80907db6d7f38dc00564d"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketUserauthRequestInteractive.java","sizeBytes":908,"sha256":"66bc5966c438b72a0f7311b9f8156ba6032b45ffe1ebafe5c08893e8db7b85c8"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketUserauthRequestNone.java","sizeBytes":1427,"sha256":"4adbfb1445f31b34f8284135a1b492213a68a4c901d503a60edcba9a006b727b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketUserauthRequestPassword.java","sizeBytes":1577,"sha256":"5b00f823ed79bc5ca399b3316db28a531108cf2843582a16eff6395acc0e2a72"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/PacketUserauthRequestPublicKey.java","sizeBytes":1495,"sha256":"057fdd9468493430146453250907ba181af5418aab111a4b842efe478616070b"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/Packets.java","sizeBytes":5726,"sha256":"697e2796e775e145d0423e25823ea2cad4c0bacf32cdd0901a960e1694a1ebc0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/TypesReader.java","sizeBytes":3684,"sha256":"3c8546667fd1414c82f740c4c900922fe445f7c45c73844c0c060dd8fac1a6bc"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/packets/TypesWriter.java","sizeBytes":2947,"sha256":"7d73c5b48fe8e998f4d21571480b3e132c904dc9c6204d5f940c0a5cee84e049"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/sftp/AttrTextHints.java","sizeBytes":975,"sha256":"a8f7458dee7cb059f2573e5e77bf86d7abb5b122599c5bc7a7b0062d135201be"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/sftp/AttribBits.java","sizeBytes":5031,"sha256":"c9c0c7136df8b1b81d3e4b3ab2df3aa6f95bdf2cdb7bebd9aef9c82b1af30264"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/sftp/AttribFlags.java","sizeBytes":3070,"sha256":"4a07fd4395f0da2161cec359989f25da26b7a97def02e1df4b251f3cfb9b9a49"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/sftp/AttribPermissions.java","sizeBytes":935,"sha256":"39ec38245836809190545a51d4324ded41acbab6dd0575a434fcbd648b771d16"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/sftp/AttribTypes.java","sizeBytes":974,"sha256":"2f293755502dd13a66c5446a2550b638c1287f3be1e7bbb2eaabf178bd9e0ec5"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/sftp/ErrorCodes.java","sizeBytes":5595,"sha256":"2ec4d765206a852349ab62bf8c7698f5696d6c6b51e3063cc16b2d9b6cc9bc98"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/sftp/OpenFlags.java","sizeBytes":7635,"sha256":"47960a2c5bdcc8154e84f07a7ae9e50bd3767466b0566c6663e5fb26f8c55568"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/sftp/Packet.java","sizeBytes":1393,"sha256":"0728d83549f315726e10410d3129faa6fb3e76560fbaa0b6a225fc5f519b9926"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/signature/DSAPrivateKey.java","sizeBytes":777,"sha256":"2839f96e365713f4472e37ae38a3b73ca88de9059f98ef69b8fb1d78bcc1eb5e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/signature/DSAPublicKey.java","sizeBytes":590,"sha256":"96a4f1f9b59a7a347440b0c592826d394f2dc0dcde5a2d4a5559468cd9ca3974"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/signature/DSASHA1Verify.java","sizeBytes":5147,"sha256":"95d8733e3babc29d04395257e7d8cf267ba22925d1c74348f461881c7b1204fc"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/signature/DSASignature.java","sizeBytes":399,"sha256":"0bd6ff787d8172e517e6efaff84916e1ecf3eef3d0204ba3457265ec5a7a0bc0"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/signature/RSAPrivateKey.java","sizeBytes":575,"sha256":"ec329967902b7eac37742691de35f305040801daebc4073f718fac11033211b2"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/signature/RSAPublicKey.java","sizeBytes":382,"sha256":"094d59471c954b7a66c66596cc345ecd9a96412be5b254aa9e9910bf9c16554e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/signature/RSASHA1Verify.java","sizeBytes":6780,"sha256":"8cccd33e6c83eac918d8565d87ad1ccc300b19379b37ee71ad856961f43c4d04"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/signature/RSASignature.java","sizeBytes":297,"sha256":"9ebc04982ed54ce0d7e9c5aa550eb0f06024b9c507eeee1647b2a3bed3114080"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/ClientServerHello.java","sizeBytes":2246,"sha256":"d0e52ff6fbd88db0a536e8fe62f7f1037f6467b57a01e3ff5904c0da6c02257d"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/KexManager.java","sizeBytes":17261,"sha256":"c87c2993df136054f518cabffd1c7cf83034a494d29a3fe164410dea10894937"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/KexParameters.java","sizeBytes":743,"sha256":"f462c012eb07c4b0bd9e1b7ac5adf986f98041b1f2429e8c4d6942c985aee85d"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/KexState.java","sizeBytes":626,"sha256":"9344efc70b87b8bb86fef75f16b1b59fa400d69f25f382f2e1b957bb70d047fb"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/MessageHandler.java","sizeBytes":257,"sha256":"41a14d8fe89c763277d233e613da72515f04bd20f331c9c03e29a46e5ff28592"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/NegotiateException.java","sizeBytes":247,"sha256":"ed089815e750ac6ead42792b230611b7c17bd8072cdc91bda0df7826e1fd257e"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/NegotiatedParameters.java","sizeBytes":582,"sha256":"67245428a5b5efef2e5014bedfe9ccacd64f23991aced6db6a7eccd3a8ee4c00"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/TransportConnection.java","sizeBytes":7720,"sha256":"53d7785dd71699660a2b1cf0cd4ef339ccc0c26a9c68a1c877468735c999a717"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/transport/TransportManager.java","sizeBytes":18389,"sha256":"33873ffb5f5b6bd9da7683e57336c50a93bf33bcade20333cc0e66d0c3eccb78"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/util/StringEncoder.java","sizeBytes":1081,"sha256":"059e9733d6e122a7bcef75d19fa0ec4eb7b0d10f07266efacb2cf5ac25c831c5"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/util/TimeoutService.java","sizeBytes":3255,"sha256":"399b3cb8d9976ed60fb65eb42c414c638d9fa7391642b462ab9fcf16d235a096"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/ganymed-ssh2-build250/src/ch/ethz/ssh2/util/Tokenizer.java","sizeBytes":981,"sha256":"b92a270f7181183bfc13864a87d51957e97d3f134b7a0147a2d717cd80dad460"},
-          {"path":"compiled/legacy-v2.0.0/Batch_atlas/new_segment_batch.mat","sizeBytes":3680,"sha256":"0f7f48af535a3524d8b518ab502114b8c6f45ca6e88e42278d51ec1d3bf045f1"},
-          {"path":"compiled/legacy-v2.0.0/Pseudo_CT_launchpad","sizeBytes":6247418,"sha256":"f471300bccea5e95e46182a9b359bb1b1b4c5e214c2977d665137af7b68e2705"},
-          {"path":"compiled/legacy-v2.0.0/default_pseudo_CT_package_deployed.mat","sizeBytes":490,"sha256":"d18e980b33a439142cf7b255a2b2423dbe29a398e7c49142ce1f7f6f8d853cc7"},
-          {"path":"compiled/legacy-v2.0.0/run_Pseudo_CT_launchpad.sh","sizeBytes":1208,"sha256":"1e8987db6c1f66f64be3ef61493a5a1fb410abd07a0907ccc88f5cdaf43aa167"}
-        ],
-        "verification": "The configured executable, launcher, defaults MAT, and legacy Batch_atlas paths match the recorded installed candidate and pre-copy hashes; every staged file path, size, and SHA-256 is listed above. Local staging is not public redistribution clearance."
-      },
-      "runtimeVsBuild": "Site-installed compiled MATLAB executable plus runner/resources; requires external MCR 7.14. Exact build inputs/source revision are unavailable.",
-      "license": {
-        "compiledApplication": "No license or source/build provenance notice was found in the installed application directory.",
-        "matlabCompilerAndMCR": "MathWorks proprietary runtime and deployment terms apply; MCR remains external and was not copied.",
-        "atlasResources": "Provenance and redistribution rights unresolved; the nested Ganymed build250 subtree includes its BSD-style LICENSE.txt, which is retained byte-identically.",
-        "localUse": "Exact configured legacy artifact and support files staged locally under this task's explicit instruction.",
-        "publicRedistribution": "blocked; no license or redistribution rights are inferred from local staging or user-provided identity."
-      }
-    },
     "currentBuildObserved": {
       "canonicalPath": "compiled/current/",
       "observedPath": "compiled/current/payload_build/",
@@ -711,7 +358,7 @@
       "resourceManifestTextSha256": "6c525c6a736e4d6318f7a34f1ac819b32af26052895d0121254085c0685b1084",
       "compilerArgumentsSha256": "87a498f12e964b577f535b11ec74a16f91ba3a5903f20c895819ba0ea2915aa7",
       "recordedAliasingBuildInput": "correct_aliasing 0.4.0; explicitly resolved from the install-root external/correct_aliasing-0.4.0 tree",
-      "notes": "Rebuilt only compiled/current using MATLAB 7.11.0.584 (R2010b), MATLAB Compiler 4.14, and the pinned external/correct_aliasing-0.4.0 source. The manifest records the exact dependency root/version and MCR 7.14 runtime identity. Updated executable, runner, build/resource MAT and text manifest checksums are recorded here; local-current and MLSC-current share identical runner/manifests. Safe invalid-phase runner contract smoke passed before any manifest loading or science. The full legacy-v2.0.0 tree and per-file SHA-256 inventory were identical before and after. No scientific run was performed; this does not establish successful image processing or complete dependency closure."
+      "notes": "Rebuilt only compiled/current using MATLAB 7.11.0.584 (R2010b), MATLAB Compiler 4.14, and the pinned external/correct_aliasing-0.4.0 source. The manifest records the exact dependency root/version and MCR 7.14 runtime identity. Updated executable, runner, build/resource MAT and text manifest checksums are recorded here; The local and MLSC profiles share identical runner/manifests. Safe invalid-phase runner contract smoke passed before any manifest loading or science. No scientific run was performed; this does not establish successful image processing or complete dependency closure."
     }
   },
   "externalInfrastructure": [
@@ -729,7 +376,7 @@
       "role": "conditional MATLAB Java runtime for the MATLAB SSH2/Ganymed client and Java/Swing GUI paths; not needed by the recorded -nojvm API smoke",
       "version": null,
       "availability": "Java was explicitly disabled in the smoke; installed MATLAB Java runtime version/presence and Java-enabled GUI/client behavior were not tested. The in-repository Ganymed JAR is present, but that does not establish a compatible Java runtime.",
-      "gate": "Before Launchpad/MLSC client or Java-dependent GUI use, verify the MATLAB Java runtime version/availability and compatible Ganymed operation without weakening host-key policy.",
+      "gate": "Before MLSC client or Java-dependent GUI use, verify the MATLAB Java runtime version/availability and compatible Ganymed operation without weakening host-key policy.",
       "licenseAndDistribution": "MathWorks Java runtime is external; embedded Ganymed licensing/provenance remains separately unresolved as recorded above."
     },
     {
@@ -742,7 +389,7 @@
     },
     {
       "id": "matlab-compiler",
-      "role": "compile-time only for producing compiled/current and compiled/legacy artifacts; not a source MATLAB runtime and not the MCR runtime",
+      "role": "compile-time only for the current builder; not a source MATLAB runtime or the MCR runtime",
       "identity": "MATLAB Compiler 4.14 under MATLAB 7.11.0.584 (R2010b), 64-bit glnxa64, reported by the executing build process.",
       "availability": "MATLAB Compiler license check passed and mcc successfully rebuilt compiled/current; the verified current runner also started the compiled payload and rejected a deliberately invalid phase before manifest access or scientific processing.",
       "licenseAndDistribution": "Proprietary MathWorks MATLAB Compiler product; external, not bundled. Compiler license entitlement is not independently verified.",
@@ -765,15 +412,6 @@
       "origin": "/usr/pubsw/common/matlab/7.14 (version-labelled runtime candidate present; no MCR package archive checksum recorded)",
       "availability": "The current profile's configured /usr/pubsw/common/matlab/7.11 root passed manifest identity validation; its runtime library resolves to MCR 7.14, and the compiled runner started successfully from that root for the early invalid-phase contract smoke. Scientific execution was not performed.",
       "interpreterBoundary": "MCR runs deployed compiled applications; it is not the interactive/source MATLAB interpreter, its client-side Java stack, or proof of toolbox APIs available to source workflows.",
-      "licenseAndDistribution": "proprietary runtime; external, not staged"
-    },
-    {
-      "id": "mcr-legacy",
-      "role": "runtime for site-installed legacy compiled executable",
-      "version": "7.14 (deployment README requirement)",
-      "origin": "/usr/pubsw/common/matlab/7.14 (version-labelled runtime candidate present; no MCR package archive checksum recorded)",
-      "availability": "Legacy profile separately configures /usr/pubsw/common/matlab/7.11 as mcr_root; the relationship and runtime execution from that configured root were not verified.",
-      "interpreterBoundary": "MCR runs the deployed legacy executable; it is not a MATLAB source interpreter or the MATLAB/Java client runtime.",
       "licenseAndDistribution": "proprietary runtime; external, not staged"
     },
     {
@@ -802,7 +440,7 @@
     },
     {
       "id": "shell-and-ssh-service",
-      "role": "POSIX shell and remote SSH endpoint/service for Launchpad/MLSC orchestration",
+      "role": "POSIX shell and remote SSH endpoint/service for MLSC orchestration",
       "version": null,
       "commandInterface": "MATLAB-side SSH2/Ganymed issues remote exec commands and relies on readable stdout/exit status; actual transport depends on the separate MATLAB Java runtime. MLSC additionally requires the scheduler commands recorded in the slurm entry.",
       "availability": "Local /usr/bin/ssh is present and /bin/bash is configured by the MLSC profile. Remote SSH endpoint/service was not contacted; this PATH check does not validate the MATLAB Ganymed client.",
@@ -810,41 +448,24 @@
       "licenseAndDistribution": "external system/service; not staged"
     },
     {
-      "id": "launchpad-pbs-submit-interface",
-      "role": "remote PBS submission and status interface required by the retained Launchpad client path",
-      "version": null,
-      "commandInterface": {
-        "submit": "The client sends `source /usr/local/freesurfer/nmr-stable53-env; pbsubmit <queue-options> -c <double-quoted-command>` over SSH (src/backends/launchpad/run_launchpad_cmd_return.m).",
-        "submitResponse": "The response must expose a pbsjob_<name> token and the numeric job ID expected by the helper.",
-        "status": ["cat /pbs/$USER/<jobname>.status", "jobinfo <numeric-job-id>"],
-        "notes": "This code path uses pbsubmit and status/jobinfo interfaces; qsub/qstat are not invoked directly by this helper. The remote shell must parse the configured `source` command before pbsubmit."
-      },
-      "availability": "Current-process PATH lookup found local pbsubmit, qsub, and qstat missing. These are remote-side requirements for Launchpad, not evidence that the remote commands are absent. Remote host/PBS implementation/version and response format were not contacted or verified.",
-      "gate": "Before approved Launchpad use, obtain non-submitting remote evidence of pbsubmit/PBS implementation version, shell command availability, required status file and jobinfo interfaces, and response format. Do not probe by submitting a job.",
-      "licenseAndDistribution": "site-managed external infrastructure; not staged"
-    },
-    {
       "id": "tcsh",
       "role": "shell interface for source-prefixed FreeSurfer normalization environment commands; separate from MATLAB, Compiler, and MCR",
       "version": null,
-      "commandInterface": "Local normalization constructs `tcsh -f -c \"setenv LD_LIBRARY_PATH <path>:$LD_LIBRARY_PATH; source <environment-script>; <normalization-command>\"` when source_command begins with `source` (src/backends/shared/run_normalization_cmd.m). Launchpad's SSH command also prefixes pbsubmit with `source <environment-script>;`, so its configured remote command shell must support that syntax.",
+      "commandInterface": "Local and MLSC normalization construct `tcsh -f -c \"setenv LD_LIBRARY_PATH <path>:$LD_LIBRARY_PATH; source <environment-script>; <normalization-command>\"` when source_command begins with `source` (src/backends/shared/run_normalization_cmd.m).",
       "availability": "Local executable found at /usr/local/bin/tcsh by PATH lookup only; version was not queried and no tcsh command was invoked. Remote shell/version is unknown.",
-      "gate": "Before normalization or Launchpad execution, verify local/remote tcsh or compatible `source`-capable shell version and FreeSurfer environment behavior without running a science job.",
+      "gate": "Before local normalization or MLSC execution, verify local/remote tcsh version and FreeSurfer environment behavior without running a science job.",
       "licenseAndDistribution": "external system shell; not staged"
     }
   ],
   "knownBlockers": [
     "correct_aliasing v0.4.0 and dicom2nifti v1.2.5 have no source-tree license files; user permits local staging only, public redistribution remains unresolved.",
     "The staged SPM8 r6313 and v4667 trees declare GPLv2-or-later, but nested third-party component terms/notices and a complete transitive redistribution review are outstanding.",
-    "The shared Batch_atlas and legacy-specific Batch_atlas trees are exact local copies, but version/provenance and redistribution rights for the atlas resources remain unknown; each is about 879 MB.",
-    "The legacy-v2.0.0 semantic label is user-identified; the exact configured installed executable, runner, defaults, and Batch_atlas hashes matched pre-copy evidence and are staged locally. Exact build inputs/source revision remain unavailable, and public redistribution remains blocked. The deployment ZIP was not copied.",
+    "The shared Batch_atlas tree is an exact local copy, but its version/provenance and redistribution rights remain unknown; it is about 879 MB.",
     "The rebuilt compiled/current payload records pinned correct_aliasing v0.4.0 and passed an invalid-phase runner contract smoke; successful image correction/computation and complete runtime dependency closure remain unverified.",
-    "Legacy profiles and payloads were not changed or exercised by the current-only rebuild; their runtime contract remains separate and unverified here.",
     "Full dicom2nifti conversion on MATLAB R2010b is explicitly unverified by its README; the v0.4.0 smoke proves only safe entrypoint parsing/failure handling, not successful science or conversion.",
     "The bundled current ssh2 Ganymed m1 JAR lacks independently verified license/provenance; it blocks public packaging of that transport bundle.",
     "MATLAB interpreter, Java runtime, runtime toolboxes, MATLAB Compiler, build toolboxes, and compiled MCR are separate dependencies. MATLAB R2010b / Compiler 4.14 and build-time Compiler/Image/Statistics license checks were exercised; Java and separate interpreter runtime toolbox behavior remain unverified. DICOM conversion conditionally calls Image Processing Toolbox dicominfo only when selective parsing of the representative file fails.",
-    "Launchpad requires a remote source-capable shell plus the pbsubmit/PBS response, /pbs status-file, and jobinfo interfaces; only local PATH availability was checked. Remote PBS version and behavior remain unknown and gated; no job was submitted.",
-    "Local tcsh was found by PATH lookup but its version/behavior was not run; remote Launchpad shell compatibility remains unknown.",
+    "Local tcsh was found by PATH lookup but its version/behavior was not run; remote MLSC job-node shell compatibility remains unknown.",
     "The Slurm command contract is recorded, but local sbatch/squeue/sacct/scancel/sshare commands were absent from PATH and remote Slurm version/availability was not checked. Remote use remains gated; no remote operation or job was performed."
   ],
   "validation": {
@@ -884,25 +505,17 @@
         "resourceManifestTextSha256": "6c525c6a736e4d6318f7a34f1ac819b32af26052895d0121254085c0685b1084",
         "compilerArgumentsSha256": "87a498f12e964b577f535b11ec74a16f91ba3a5903f20c895819ba0ea2915aa7"
       },
-      "profileBinding": "local-current and MLSC-current resolve identical runner, build manifest, and resource manifest paths; MLSC current contract validation passed.",
-      "legacyPreservation": "All 217 files (886819251 bytes) under compiled/legacy-v2.0.0/ retained the same per-file SHA-256 inventory and sha256-tree-v1 digest before/after (286004dfec77fdff4547b4a635d1c82bc5ec8ccd25b6c0ef1b5013ebe665b19b).",
+      "profileBinding": "The local and MLSC profiles resolve identical runner, build manifest, and resource manifest paths; MLSC artifact contract validation passed.",
       "runnerContractSmoke": "Actual compiled runner started from the configured R2010b root and rejected a deliberately invalid phase before manifest loading or science; MCR_CACHE_ROOT was under scratch.",
       "evidenceDirectory": "scratch/2026-10-29/201331-t032-current-rebuild/",
       "buildOutputDirectory": "scratch/2026-10-29/201731-t032-current-compile/",
-      "nonActions": "No scientific run, live job, submission, remote/network operation, release, Git mutation, commit, or staging was performed; the build script read local Git metadata only for manifest provenance. Legacy-v2.0.0 was not modified."
+      "nonActions": "No scientific run, live job, submission, remote/network operation, release, Git mutation, commit, or staging was performed; the build script read local Git metadata only for manifest provenance."
     },
     "t020LocalDependencyStaging": {
       "result": "PASS",
       "evidenceDirectory": "scratch/2026-10-29/173010-t020-root-lock-remediation/",
-      "legacyPreCopyEvidence": [
-        "scratch/2026-10-29/142027-rc3-current-mlsc-build-evidence/prebuild_scope.txt",
-        "scratch/2026-10-29/142027-rc3-current-mlsc-build-evidence/legacy_before.txt",
-        "scratch/2026-10-29/163129-dependency-lock/legacy-artifact-evidence.txt",
-        "scratch/2026-10-29/163129-dependency-lock/legacy-tree-hashes.jsonl"
-      ],
       "copyVerification": "All staged root trees match the installed source tree digests; compiled/current retains its pre-existing canonical tree SHA-256.",
       "rootResolutionTest": "MATLAB R2010b 7.11.0.584 test_dependency_paths passed with MATLAB_PREFDIR and TMPDIR under the evidence directory.",
-      "lockIntegrityTest": "python3 tests/test_dependency_lock.py passed for all pinned external roots, all 217 legacy staged files, compiled/current, and a deliberate checksum mismatch.",
       "provenanceAndRights": "Installed paths and hash evidence are recorded separately from license status; unresolved rights remain blocked for public redistribution."
     },
     "correctAliasingSmoke": {
@@ -919,10 +532,10 @@
     "localCommandAvailabilityEvidence": {
       "command": "scratch/2026-10-29/165623-t026-dependency-interfaces/local-interface-availability.sh",
       "transcript": "scratch/2026-10-29/165623-t026-dependency-interfaces/local-interface-availability.txt",
-      "method": "Local PATH lookup via command -v only; no PBS, Slurm, tcsh, SSH, network, remote command, job, or science operation was performed.",
-      "scope": "Availability paths are evidence only; missing local PBS/Slurm client executables do not establish remote command availability. No versions were queried."
+      "method": "Local PATH lookup via command -v only; Slurm, tcsh, SSH, network, remote command, job, or science operation was performed.",
+      "scope": "Availability paths are evidence only; missing local Slurm client executables do not establish remote command availability. No versions were queried."
     },
     "preferenceIsolationNote": "A preliminary smoke launch used unsupported -prefdir while MATLAB_PREFDIR was unset; MATLAB preference files under $HOME/.matlab/R2010b have modification times aligned with that attempt. Their prior contents are unknown, so they were left untouched. The retained successful command explicitly sets MATLAB_PREFDIR to the scratch evidence directory.",
-    "safety": "The T032 local current-only build and early invalid-phase contract smoke are recorded above. No scientific run, live job, submission, remote/network operation, release, Git mutation, commit, or staging was performed; the build script read local Git metadata only for manifest provenance. compiled/legacy-v2.0.0 remained byte-identical."
+    "safety": "The T032 local current-only build and early invalid-phase contract smoke are recorded above. No scientific run, live job, submission, remote/network operation, release, Git mutation, commit, or staging was performed; the build script read local Git metadata only for manifest provenance."
   }
 }

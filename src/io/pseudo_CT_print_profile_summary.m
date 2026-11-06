@@ -26,9 +26,6 @@ lines{end+1} = '=== pseudo-CT Profile Summary ===';
 lines{end+1} = sprintf('Profile:            %s', local_profile_display_name(profile_name, config));
 lines{end+1} = sprintf('Canonical profile ID: %s', profile_name);
 lines{end+1} = sprintf('Selected mode (configured): %s', config.mode);
-if isfield(config, 'implementation') && ischar(config.implementation)
-    lines{end+1} = sprintf('Selected implementation (configured): %s', config.implementation);
-end
 if isfield(run_evidence, 'terminal') && isequal(run_evidence.terminal, true)
     lines{end+1} = 'Actual execution backend: MLSC lifecycle terminal outcome recorded; executor provenance is shown below when available.';
 else

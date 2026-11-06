@@ -47,16 +47,6 @@ if nargin < 3 || isempty(runtime)
     runtime = struct();
 end
 preflight = mlsc_preflight(subject, config, runtime);
-is_current = false;
-try
-    is_current = mlsc_current_validate('is_current', config);
-catch %#ok<CTCH>
-    is_current = false;
-end
-if ~is_current
-    error('pseudo_CT:MLSCGenerator', ...
-        'MLSC Slurm generation requires the current profile contract.');
-end
 artifact = local_generate_current(subject, config, runtime, preflight);
 end
 
@@ -883,7 +873,6 @@ artifact.required_evidence = {'mlsc_current_handoff.mat'; ...
     'mlsc_current_output_verification.txt'};
 artifact.optional_outputs = {normalized_name};
 artifact.secure_transport_required = true;
-artifact.is_current = true;
 artifact.current_runner = runner_path;
 artifact.current_mcr_root = mcr_root;
 artifact.current_build_manifest = build_manifest_path;
@@ -998,6 +987,7 @@ end
 function local_write_current_job_manifest(job_path, input_name, atlas_dir, ...
     check_aliasing, recenter_text, bone_value, zero_text)
 job = struct();
+% This schema ID is the shared compiled artifact contract, not a profile key.
 job.schema = 'pseudo-CT.mlsc-current-job/v1';
 job.manifest_version = 1;
 job.input_mprage = input_name;

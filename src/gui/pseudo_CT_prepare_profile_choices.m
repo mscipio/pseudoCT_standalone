@@ -1,8 +1,8 @@
 function [profiles, default_index] = pseudo_CT_prepare_profile_choices(profiles)
 %PSEUDO_CT_PREPARE_PROFILE_CHOICES Order profile metadata for the selector.
 %   Recommended profiles precede specialized profiles. Profile-owned order
-%   values determine order within each group. MLSC-CURRENT is selected by
-%   default when present, then LOCAL-CURRENT, then the first recommended
+%   values determine order within each group. MLSC is selected by default
+%   when present, then LOCAL, then the first recommended
 %   profile.
 
 group_rank = zeros(length(profiles), 1);
@@ -14,9 +14,9 @@ end
 [~, indices] = sortrows([group_rank order_rank (1:length(profiles))']);
 profiles = profiles(indices);
 
-default_index = find(strcmp({profiles.name}, 'mlsc-current'), 1);
+default_index = find(strcmp({profiles.name}, 'mlsc'), 1);
 if isempty(default_index)
-    default_index = find(strcmp({profiles.name}, 'local-current'), 1);
+    default_index = find(strcmp({profiles.name}, 'local'), 1);
 end
 if isempty(default_index)
     default_index = find([profiles.recommended], 1);

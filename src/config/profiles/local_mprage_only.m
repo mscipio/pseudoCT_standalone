@@ -1,12 +1,10 @@
 function config = local_mprage_only()
-%LOCAL_MPRAGE_ONLY Local MPRAGE-only profile matching LOCAL_CURRENT.
+%LOCAL_MPRAGE_ONLY Local MPRAGE-only profile matching LOCAL.
 
 dependency_paths = pseudo_CT_dependency_paths();
 
 % Execution mode: 'local' runs the pipeline on this computer.
 config.mode = 'local';
-% Implementation: 'current' selects the compiled current payload (only value).
-config.implementation = 'current';
 % SPM installation used by this profile.
 config.spm_root = dependency_paths.spm_root;
 % Atlas images and SPM batch templates used by the pipeline.
@@ -42,7 +40,7 @@ config.io_policy.output = 'nifti-only';
 config.io_policy.gui = 'mprage-only';
 % Compatibility baseline: empty disables baseline drift comparison;
 % a profile name requires all non-policy settings to match that baseline.
-config.compatibility_profile = 'local-current';
+config.compatibility_profile = 'local';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'Local MPRAGE Only';
 config.presentation.description = ...
@@ -63,8 +61,8 @@ config.normalization.cluster = 'No';
 config.normalization.host_folder = '';
 
 
-% Current compiled prepare/compute artifacts shared with local-current and
-% MLSC-current. Resolve every artifact from this installation's current root.
+% Current compiled prepare/compute artifacts shared with local and MLSC.
+% Resolve every artifact from this installation's current root.
 artifact_dir_here = dependency_paths.current_root;
 config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
     'run_mlsc_current_payload.sh');

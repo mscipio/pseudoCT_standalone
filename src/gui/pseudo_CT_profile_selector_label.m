@@ -9,9 +9,9 @@ if nargin < 2 || isempty(fallback_label)
 end
 dash = char(8212);
 switch profile_name
-    case 'local-current'
+    case 'local'
         label = ['PseudoCT v3 ' dash ' Local'];
-    case 'mlsc-current'
+    case 'mlsc'
         label = ['PseudoCT v3 ' dash ' MLSC'];
     case 'local-mprage-only'
         label = ['MPRAGE-only ' dash ' Local'];

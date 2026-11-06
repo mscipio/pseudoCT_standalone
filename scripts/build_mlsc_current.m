@@ -1,5 +1,7 @@
 function build_mlsc_current(varargin)
 %BUILD_MLSC_CURRENT Build compiled mlsc-current payload (T007, T014 authoritative).
+%   "mlsc-current" here names the compiled artifact/build namespace, not a
+%   selectable profile ID.
 %   BUILD_MLSC_CURRENT('OutputDir', DIR, 'SpmRoot', DIR, 'AtlasDir', DIR,
 %   'AliasingRoot', DIR, 'McrRoot', DIR) verifies the EXECUTING approved
 %   MATLAB via live introspection and compiles ONLY src/science/current/

@@ -29,14 +29,14 @@ function report = pseudo_CT_run_lifecycle(varargin)
 %                          them on success. Never changes any profile file.
 %     'mlsc_current_artifact_root'
 %                        - Absolute directory supplying the operator-selected
-%                          mlsc-current artifact (T007 build layout):
+%                          compiled MLSC artifact (T007 build layout):
 %                            <root>/payload_build/run_mlsc_current_payload.sh
 %                            <root>/mlsc_current_build.mat
 %                            <root>/mlsc_current_resources.mat
 %                          No independent runner/build/resource overrides.
 %                          Omit to use the installation-relative compiled
 %                          artifact defaults, validated by content identity.
-%                          Only mlsc-current may consume this option.
+%                          Only mlsc and mlsc-mprage-only may consume this option.
 %   The artifact root selects runner/build/resource manifest paths. Artifact
 %   checks recompute content hashes and validate runtime identity; wrong or
 %   incomplete paths fail closed. MCR_ROOT remains pinned by the current
@@ -48,13 +48,13 @@ function report = pseudo_CT_run_lifecycle(varargin)
 %
 %   Examples:
 %       run_pseudo_CT()
-%       run_pseudo_CT('profile', 'local-current')
-%       run_pseudo_CT('profile', 'mlsc-current', 'subjects', 'batch')
-%       run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, ...
+%       run_pseudo_CT('profile', 'local')
+%       run_pseudo_CT('profile', 'mlsc', 'subjects', 'batch')
+%       run_pseudo_CT('profile', 'local', 'subjects', subject_list, ...
 %                     'correct_aliasing', 0)
-%       run_pseudo_CT('profile', 'local-current', 'subjects', subject_list, ...
+%       run_pseudo_CT('profile', 'local', 'subjects', subject_list, ...
 %                     'recenter_before_normalization', 0)
-%       run_pseudo_CT('profile', 'mlsc-current', ...
+%       run_pseudo_CT('profile', 'mlsc', ...
 %                     'mlsc_current_artifact_root', '/path/to/artifact')
 %
 %   RUN_PSEUDO_CT(DEFAULTS_MAT) is supported only in deployed mode.
@@ -191,7 +191,7 @@ if isempty(profile_name)
         requested_profile_name, profile_list);
 end
 if headless_mode
-    if ~any(strcmp(requested_profile_name, {'mlsc-current'; ...
+    if ~any(strcmp(requested_profile_name, {'mlsc'; ...
             'mlsc-mprage-only'})) || ...
             ~strcmp(requested_profile_name, profile_name)
         error('run_pseudo_CT:HeadlessProfile', ...
@@ -206,7 +206,7 @@ if headless_mode
         error('run_pseudo_CT:HeadlessCredentials', ...
             'Headless execution requires a validated one-time credential.');
     end
-    if any(strcmp(profile_name, {'mlsc-current'; ...
+    if any(strcmp(profile_name, {'mlsc'; ...
             'mlsc-mprage-only'})) && ...
             (~ischar(group_account))
         error('run_pseudo_CT:HeadlessGroupAccount', ...
@@ -231,15 +231,15 @@ if headless_mode && isdeployed
     % explicit subject list only for this opt-in headless execution path.
     config.headless_execution = true;
 end
-% T009 Option A: apply explicit mlsc-current artifact overrides through the
+% Apply explicit MLSC artifact overrides through the
 % real public config path. Default (both empty) leaves the canonical
-% /usr/pubsw profile unchanged; only mlsc-current may consume overrides.
+% profile unchanged; only MLSC profiles may consume overrides.
 config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, ...
     mlsc_current_artifact_root);
 % Runtime retention override (comparison use only): omitted keeps the
 % profile default; an explicit 0/1 (or logical) overrides
 % config.cleanup_on_success without changing any profile file. The
-% existing downstream gates (local-current and the shared remote finalizer)
+% existing downstream gates (local and the shared remote finalizer)
 % already read config.cleanup_on_success, so no other change is needed.
 if ~isempty(cleanup_on_success_arg)
     config.cleanup_on_success = logical(cleanup_on_success_arg);
@@ -794,7 +794,7 @@ pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'Input prepar
 [temp_working_dir, ~, ~] = fileparts(deblank(P));
 
 % Run the pseudo-CT code. The compiled prepare and compute runner shared with
-% mlsc-current runs with the existing external local FreeSurfer normalization
+% MLSC runs with the existing external local FreeSurfer normalization
 % between phases.
 Pf = pseudo_CT_run_local_current_subject(P, temp_dir, config, ...
     job.correct_aliasing, job.recenter_before_normalization, context);
@@ -1218,12 +1218,12 @@ end
 end
 
 function context = local_status_context(context, status)
-% Canonical semantic status (START, DONE, WARN, ERROR, INFO) of a Local
-% Current stage event; the console presenter formats it without interpreting
-% the message. Other profiles are unchanged. Returns a copy (never stored).
+% Canonical semantic status (START, DONE, WARN, ERROR, INFO) of a local
+% stage event; the console presenter formats it without interpreting the
+% message. Returns a copy (never stored).
 if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
         any(strcmp(context.console_profile, ...
-        {'local-current'; 'local-mprage-only'}))
+        {'local'; 'local-mprage-only'}))
     context.stage_status = status;
 end
 end
@@ -1459,7 +1459,7 @@ end
 
 error('run_pseudo_CT:DeployedProfileRequired', ...
     ['Deployed defaults MAT does not declare profile_name, profile, ', ...
-     'or execution_profile. Silent local-current fallback is disabled.']);
+     'or execution_profile. Silent local fallback is disabled.']);
 end
 
 function options = local_job_summary_options(job)

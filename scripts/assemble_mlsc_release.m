@@ -483,6 +483,7 @@ build = loaded.build;
 if ~isstruct(build) || numel(build) ~= 1
     error('pseudo_CT:MLSCReleaseGate', 'Build manifest variable build must be one scalar struct; manifest inconsistency blocks assembly.');
 end
+% The mlsc-current schema prefix names the compiled artifact format, not a profile.
 if ~isfield(build, 'schema') || ~ischar(build.schema) || ...
         ~strcmp(build.schema, 'pseudo-CT.mlsc-current-build/v1')
     error('pseudo_CT:MLSCReleaseGate', 'Build manifest has an unexpected schema; manifest inconsistency blocks assembly.');
@@ -586,7 +587,7 @@ if exception_artifact
     lines{end + 1, 1} = 'job_10515471 user-supplied scientific acceptance only; not binary authentication'; %#ok<AGROW>
     lines{end + 1, 1} = 'job_10515471 reported_success exit_code_0 one_subject_succeeded zero_failed'; %#ok<AGROW>
     lines{end + 1, 1} = 'dataset_att_map_sha256 1517efbe3fbb8e0f4df3fb3b2a4e40c387ba09fbcbac326496fe47cf8a6981ff'; %#ok<AGROW>
-    lines{end + 1, 1} = 'dataset_matching_profiles local-current, local-legacy, mlsc-legacy, mlsc-current-r2010b'; %#ok<AGROW>
+    lines{end + 1, 1} = 'historical_compiled_artifact_comparison_labels local-current, local-legacy, mlsc-legacy, mlsc-current-r2010b; not_supported_profile_ids'; %#ok<AGROW>
     lines{end + 1, 1} = 'dataset_scientific_acceptance scope_limited_to_user-reported_dataset_and_outputs'; %#ok<AGROW>
 end
 end
@@ -726,6 +727,7 @@ for kk = 1:numel(members)
     end
     relative = entry(length(root_prefix) + 1:end);
     path_parts = ['/' relative '/'];
+    % These package-directory patterns are obsolete installation layouts, not profile IDs.
     if ~isempty(strfind(path_parts, '/pseudoCT_mlsc/')) || ...
             ~isempty(strfind(path_parts, '/pseudoCT_mlsc_current/')) || ...
             ~isempty(strfind(path_parts, '/pseudoCT_mlsc-current/'))
@@ -740,7 +742,7 @@ for kk = 1:numel(members)
             'Archive member %s violates the export-ignore policy; mismatched source blocks assembly.', entry);
     end
 end
-required = {'CHANGELOG.md'; 'run_pseudo_CT.m'; 'src/config/profiles/mlsc_current.m'; ...
+required = {'CHANGELOG.md'; 'run_pseudo_CT.m'; 'src/config/profiles/mlsc.m'; ...
     'docs/installation.md'; ...
     'compiled/current/payload_build/run_mlsc_current_payload.sh'; ...
     'compiled/current/payload_build/mlsc_current_payload'; ...

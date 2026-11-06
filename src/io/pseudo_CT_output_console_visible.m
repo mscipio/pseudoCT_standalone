@@ -237,9 +237,9 @@ end
 
 function title = local_profile_title(profile)
 switch profile
-    case 'local-current', title = 'Local v3';
+    case 'local', title = 'Local v3';
     case 'local-mprage-only', title = 'Local v3 MPRAGE-only';
-    case 'mlsc-current', title = 'MLSC v3';
+    case 'mlsc', title = 'MLSC v3';
     case 'mlsc-mprage-only', title = 'MLSC v3 MPRAGE-only';
     otherwise, title = profile;
 end
@@ -334,7 +334,7 @@ while ~isempty(rem) && rem(1) == '['
         row.job = token(5:end);
     elseif strcmp(token, 'dcm2nii')
         row.dcm2nii = true;
-    elseif any(strcmp(token, {'run'; 'mlsc'; 'mlsc-current'}))
+    elseif any(strcmp(token, {'run'; 'mlsc'}))
         % scope tags are consumed
     else
         break;  % e.g. [recentering] is message text

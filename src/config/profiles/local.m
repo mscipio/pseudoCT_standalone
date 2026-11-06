@@ -1,12 +1,10 @@
-function config = devel()
-%DEVEL Local MATLAB profile using the current installed release.
+function config = local()
+%LOCAL Local profile using the shared compiled payload.
 
 dependency_paths = pseudo_CT_dependency_paths();
 
 % Execution mode: 'local' runs the pipeline on this computer.
 config.mode = 'local';
-% Implementation: 'current' selects the compiled current payload (only value).
-config.implementation = 'current';
 % SPM installation used by this profile.
 config.spm_root = dependency_paths.spm_root;
 % Atlas images and SPM batch templates used by the pipeline.
@@ -20,7 +18,7 @@ config.recenter_before_normalization = 'Yes';
 % Set attenuation values outside the subject mask to zero: 'Yes' or 'No'.
 config.zero_background = 'No';
 % Remove temporary files after successful output promotion.
-config.cleanup_on_success = false;
+config.cleanup_on_success = true;
 % PCA implementations to try in order.
 config.pca_order = {'callable_pca'; 'repo_legacy'};
 % Required MATLAB release without the leading R; empty accepts any release.
@@ -44,12 +42,12 @@ config.io_policy.gui = 'mMR';
 % a profile name requires all non-policy settings to match that baseline.
 config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
-config.presentation.display_name = 'Development Current MATLAB';
+config.presentation.display_name = 'Local MATLAB - This Computer';
 config.presentation.description = ...
-    'DO NOT USE: This profile is for development and testing only.';
-config.presentation.group = 'specialized';
+    'Run the pseudoCT workflow locally using the shared compiled science payload.';
+config.presentation.group = 'recommended';
 config.presentation.recommended = false;
-config.presentation.order = 99;
+config.presentation.order = 10;
 
 % FreeSurfer environment command.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';
@@ -61,5 +59,19 @@ config.normalization.host = '127.0.0.1';
 config.normalization.cluster = 'No';
 % Remote normalization scratch root; empty for localhost.
 config.normalization.host_folder = '';
+
+% Current compiled prepare/compute artifact contract shared with MLSC.
+% Resolve every artifact from this profile's install root; missing artifacts
+% and integrity mismatches fail closed before local processing.
+artifact_dir_here = dependency_paths.current_root;
+config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
+    'run_mlsc_current_payload.sh');
+config.current.mcr_root = '/usr/pubsw/common/matlab/7.11';
+config.current.build_manifest = fullfile(artifact_dir_here, ...
+    'mlsc_current_build.mat');
+config.current.resource_manifest = fullfile(artifact_dir_here, ...
+    'mlsc_current_resources.mat');
+config.current.required_outputs = {'att_map.nii'; ...
+    'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
 
 end

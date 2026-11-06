@@ -150,7 +150,6 @@ current_preflight = mlsc_preflight(current_subject, current_config, current_runt
 assert(current_preflight.check_aliasing == 1, 'Per-job aliasing override lost (profile default used).');
 assert(current_preflight.needs_normalization, 'Current fixture should need normalization.');
 current_artifact = mlsc_generate_slurm_script(current_subject, current_config, current_runtime);
-assert(current_artifact.is_current, 'Current artifact identity missing.');
 assert(strcmp(current_artifact.current_mcr_root, pinned), 'Current artifact MCR_ROOT not pinned.');
 assert(strcmp(current_artifact.current_runner, current_runner), 'Current artifact runner mismatch.');
 script = current_artifact.script_text;

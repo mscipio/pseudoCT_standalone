@@ -1,5 +1,7 @@
 function varargout = mlsc_current_validate(action, varargin)
 %MLSC_CURRENT_VALIDATE Pinned current artifact contract (T004, T014).
+%   The mlsc-current schema prefixes below identify compiled artifact
+%   contracts, not selectable profile keys.
 %   Implements the T014 pinned MCR_ROOT correction, which is authoritative
 %   over the stale T004 catalog/resolver wording. There is no generic
 %   catalog, no dynamic discovery, no MCR 7.11 fallback, no workstation
@@ -12,7 +14,6 @@ function varargout = mlsc_current_validate(action, varargin)
 %
 %   Actions (R2010b-compatible, deterministic offline, no live SSH/Slurm):
 %     PINNED = MLSC_CURRENT_VALIDATE('pinned_mcr_root')
-%     FLAG = MLSC_CURRENT_VALIDATE('is_current', CONFIG)
 %     MLSC_CURRENT_VALIDATE('validate_contract', CONFIG)
 %       Fail-closed pre-submission contract: missing runner/MCR_ROOT/
 %       manifests, malformed MCR_ROOT structure, validated actual MCR_ROOT
@@ -63,14 +64,6 @@ end
 action = strtrim(action);
 if strcmp(action, 'pinned_mcr_root')
     varargout = {local_pinned_mcr_root()};
-    return;
-end
-if strcmp(action, 'is_current')
-    if length(varargin) < 1
-        varargout = {false};
-        return;
-    end
-    varargout = {local_is_current(varargin{1})};
     return;
 end
 if strcmp(action, 'expected_actual')
@@ -146,28 +139,6 @@ end
 
 function pinned = local_pinned_mcr_root()
 pinned = '/usr/pubsw/common/matlab/7.11';
-end
-
-function flag = local_is_current(config)
-flag = false;
-try
-    if ~isstruct(config) || numel(config) ~= 1
-        return;
-    end
-    if ~isfield(config, 'implementation') || ~ischar(config.implementation)
-        return;
-    end
-    if ~strcmp(config.implementation, 'current')
-        return;
-    end
-    if isfield(config, 'mode') && ischar(config.mode)
-        flag = strcmp(config.mode, 'mlsc');
-    else
-        flag = true;
-    end
-catch %#ok<CTCH>
-    flag = false;
-end
 end
 
 function actual = local_expected_actual()
@@ -264,14 +235,15 @@ if ~isstruct(config) || numel(config) ~= 1
     error('pseudo_CT:MLSCCurrentContract', ...
         'A current config struct is required.');
 end
-if ~local_is_current(config)
+if isfield(config, 'mode') && ...
+        (~ischar(config.mode) || ~strcmp(config.mode, 'mlsc'))
     error('pseudo_CT:MLSCCurrentContract', ...
-        'The selected profile is not an MLSC current profile.');
+        'The current artifact contract is not valid for this profile mode.');
 end
 if ~isfield(config, 'current') || ~isstruct(config.current) || ...
         numel(config.current) ~= 1
     error('pseudo_CT:MLSCCurrentContract', ...
-        'The MLSC current profile has no valid current artifact block.');
+        'The MLSC config has no valid current artifact block.');
 end
 current = config.current;
 required = {'runner'; 'mcr_root'; 'build_manifest'; 'resource_manifest'};

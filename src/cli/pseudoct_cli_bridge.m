@@ -311,8 +311,8 @@ end
 
 function valid = local_allowed_profile(profile)
 valid = ischar(profile) && any(strcmp(profile, ...
-    {'local-current'; 'local-mprage-only'; ...
-    'mlsc-current'; 'mlsc-mprage-only'}));
+    {'local'; 'local-mprage-only'; ...
+    'mlsc'; 'mlsc-mprage-only'}));
 end
 
 function valid = local_mprage_only(profile)

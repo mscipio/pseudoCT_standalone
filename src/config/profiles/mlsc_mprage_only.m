@@ -1,15 +1,15 @@
 function config = mlsc_mprage_only()
-%MLSC_MPRAGE_ONLY MLSC current-lineage MPRAGE-only profile.
-%   Reuse MLSC-CURRENT's artifact and scheduler contract; only the input,
+%MLSC_MPRAGE_ONLY MLSC MPRAGE-only profile.
+%   Reuse MLSC's artifact and scheduler contract; only the input,
 %   output, and GUI policies differ.
 
-config = mlsc_current();
+config = mlsc();
 
 % MPRAGE-only collection needs no UMAP reference and produces NIfTI only.
 config.io_policy.reference = 'none';
 config.io_policy.output = 'nifti-only';
 config.io_policy.gui = 'mprage-only';
-config.compatibility_profile = 'mlsc-current';
+config.compatibility_profile = 'mlsc';
 
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'MPRAGE-only — MLSC';

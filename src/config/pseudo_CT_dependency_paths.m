@@ -9,7 +9,6 @@ install_root = fileparts(fileparts(config_dir));
 paths = struct();
 paths.install_root = install_root;
 paths.spm_root = fullfile(install_root, 'external', 'spm8-r6313');
-paths.spm8_dan_root = fullfile(install_root, 'external', 'spm8-dan');
 paths.atlas_root = fullfile(install_root, 'external', 'Batch_atlas');
 paths.d2n_root = fullfile(install_root, 'external', 'dicom2nifti-1.2.5');
 paths.aliasing_root = fullfile(install_root, 'external', ...

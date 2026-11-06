@@ -421,7 +421,7 @@ end
 end
 
 function backend = local_backend(profile)
-if any(strcmp(profile, {'mlsc-current'; 'mlsc-mprage-only'}))
+if any(strcmp(profile, {'mlsc'; 'mlsc-mprage-only'}))
     backend = 'mlsc';
 else
     backend = 'local';
@@ -453,13 +453,13 @@ end
 
 function valid = local_allowed_profile(value)
 valid = local_plain_text(value) && any(strcmp(value, ...
-    {'mlsc-current'; 'mlsc-mprage-only'; ...
-    'local-current'; 'local-mprage-only'}));
+    {'mlsc'; 'mlsc-mprage-only'; ...
+    'local'; 'local-mprage-only'}));
 end
 
 function valid = local_is_local_profile(value)
 valid = ischar(value) && size(value, 1) == 1 && any(strcmp(value, ...
-    {'local-current'; 'local-mprage-only'}));
+    {'local'; 'local-mprage-only'}));
 end
 
 function valid = local_enum(value, choices)

@@ -100,8 +100,8 @@ if ~isstruct(runtime) || numel(runtime) ~= 1
 end
 runtime = local_runtime_defaults(runtime);
 local_validate_runtime(runtime);
-% Fail closed before any submission when the parser lineage is unknown.
-stream_version = local_scientific_stream_version(config);
+% MLSC has one supported scientific stream protocol.
+stream_version = 'v3';
 
     result = local_initial_result(subject, runtime, transport);
 evidence = mlsc_evidence('init', local_evidence_values(result));
@@ -573,21 +573,18 @@ contract = struct('represented', false, 'node_local_processing', false, ...
     'shared_input_staging', false, 'shared_output_staging', false, ...
     'required_output', 'att_map.nii', 'no_scp_network_payload', true, ...
     'heavy_processing_root', '$TMPDIR');
-contract.is_current = false;
 end
 
 function contract = local_contract_from_artifact(artifact)
 %LOCAL_CONTRACT_FROM_ARTIFACT Node-local/copy-back contract from script.
-%   T014 authoritative current-artifact checks. When
-%   the artifact selects current (is_current), additionally require the
-%   pinned launcher invocation, prepare BEFORE external normalization
-%   BEFORE compute, staged job/resource manifests, PREPARE-derived dynamic
-%   normalization (corrected selection without sourcing the handoff),
-%   three-output plus mandatory-evidence verify and copy-back, current
-%   milestones, pinned startup recheck, FreeSurfer isolation, and no
-%   global LD_LIBRARY_PATH. The existing heartbeat/progress/cancellation/
-%   receipt/timeout/cleanup/finalization model is reused with no second
-%   poller.
+%   Require the supported pinned launcher invocation, prepare BEFORE external
+%   normalization BEFORE compute, staged job/resource manifests,
+%   PREPARE-derived dynamic normalization (corrected selection without
+%   sourcing the handoff), three-output plus mandatory-evidence verify and
+%   copy-back, supported milestones, pinned startup recheck, FreeSurfer
+%   isolation, and no global LD_LIBRARY_PATH. The existing
+%   heartbeat/progress/cancellation/receipt/timeout/cleanup/finalization
+%   model is reused with no second poller.
 contract = local_empty_contract();
 if ~isstruct(artifact)
     return;
@@ -598,9 +595,6 @@ if isfield(artifact, 'script_text')
 end
 if isfield(artifact, 'heavy_processing_root')
     contract.heavy_processing_root = artifact.heavy_processing_root;
-end
-if isfield(artifact, 'is_current') && isequal(artifact.is_current, true)
-    contract.is_current = true;
 end
 contract.node_local_processing = strcmp(contract.heavy_processing_root, '$TMPDIR') && ...
     ~isempty(strfind(script, 'cd "$TMPDIR"')) && ...
@@ -618,59 +612,58 @@ end
 contract.represented = contract.node_local_processing && ...
     contract.shared_input_staging && contract.shared_output_staging && ...
     contract.no_scp_network_payload;
-if contract.is_current
-    current_ok = ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" prepare')) && ...
-        ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" compute')) && ...
-        ~isempty(strfind(script, 'cp -- "$shared_job_manifest" "$local_job_manifest"')) && ...
-        ~isempty(strfind(script, 'cp -- "$shared_resource_manifest" "$local_resource_manifest"')) && ...
-        ~isempty(strfind(script, 'env -u LD_LIBRARY_PATH')) && ...
-        ~isempty(strfind(script, 'tcsh -f -c')) && ...
-        ~isempty(strfind(script, 'Fusion_MR_Pseudo_CT_validation.tiff')) && ...
-        ~isempty(strfind(script, 'Pseudo_CT_AC_Version.txt')) && ...
-        ~isempty(strfind(script, 'mlsc_current_output_verification.txt')) && ...
-        ~isempty(strfind(script, 'mlsc_current_prepare_evidence.txt')) && ...
-        ~isempty(strfind(script, 'mlsc_current_handoff.mat')) && ...
-        ~isempty(strfind(script, 'preparation|done')) && ...
-        ~isempty(strfind(script, 'alias_recenter|done')) && ...
-        ~isempty(strfind(script, 'alignment_mask|done')) && ...
-        ~isempty(strfind(script, 'segmentation|done')) && ...
-        ~isempty(strfind(script, 'bone|done')) && ...
-        ~isempty(strfind(script, 'dartel_warp_reslice|done')) && ...
-        ~isempty(strfind(script, 'attenuation_qc|done')) && ...
-        ~isempty(strfind(script, 'prepare_selected=')) && ...
-        ~isempty(strfind(script, 'prepare_expected=')) && ...
-        ~isempty(strfind(script, 'pinned_mcr_root=')) && ...
-        isempty(strfind(script, 'export LD_LIBRARY_PATH')) && ...
-        isempty(strfind(script, 'source "$shared_temp/mlsc_current_handoff')) && ...
-        isempty(strfind(script, 'source $TMPDIR/mlsc_current_handoff')) && ...
-        isempty(strfind(script, 'eval '));
-    prepare_pos = strfind(script, '"$current_runner" "$current_mcr_root" prepare');
-    compute_pos = strfind(script, '"$current_runner" "$current_mcr_root" compute');
-    if isempty(prepare_pos) || isempty(compute_pos) || ...
-            ~(prepare_pos(1) < compute_pos(1))
-        current_ok = false;
-    end
-    if needs_normalization_in_script(script)
-        tcsh_pos = strfind(script, 'tcsh -f -c');
-        if isempty(tcsh_pos) || ~(prepare_pos(1) < tcsh_pos(1)) || ...
-                ~(tcsh_pos(1) < compute_pos(1))
-            current_ok = false;
-        end
-        % R001: dynamic PREPARE-derived normalization must sit between
-        % prepare and compute and must reference the resolved selection.
-        if isempty(strfind(script, 'MLSC_INPUT_NAME=$prepare_selected')) || ...
-                isempty(strfind(script, 'MLSC_NORMALIZED_NAME=$prepare_expected'))
-            current_ok = false;
-        end
-    end
-    % R003: mandatory evidence verify/copy-back (not copy_optional for
-    % handoff/evidence) must be present.
-    if isempty(strfind(script, ...
-        'Shared output verification copy-back is missing or empty.'))
-    current_ok = false;
+supported_ok = ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" prepare')) && ...
+    ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" compute')) && ...
+    ~isempty(strfind(script, 'cp -- "$shared_job_manifest" "$local_job_manifest"')) && ...
+    ~isempty(strfind(script, 'cp -- "$shared_resource_manifest" "$local_resource_manifest"')) && ...
+    ~isempty(strfind(script, 'env -u LD_LIBRARY_PATH')) && ...
+    ~isempty(strfind(script, 'tcsh -f -c')) && ...
+    ~isempty(strfind(script, 'Fusion_MR_Pseudo_CT_validation.tiff')) && ...
+    ~isempty(strfind(script, 'Pseudo_CT_AC_Version.txt')) && ...
+    ~isempty(strfind(script, 'mlsc_current_output_verification.txt')) && ...
+    ~isempty(strfind(script, 'mlsc_current_prepare_evidence.txt')) && ...
+    ~isempty(strfind(script, 'mlsc_current_handoff.mat')) && ...
+    ~isempty(strfind(script, 'preparation|done')) && ...
+    ~isempty(strfind(script, 'alias_recenter|done')) && ...
+    ~isempty(strfind(script, 'alignment_mask|done')) && ...
+    ~isempty(strfind(script, 'segmentation|done')) && ...
+    ~isempty(strfind(script, 'bone|done')) && ...
+    ~isempty(strfind(script, 'dartel_warp_reslice|done')) && ...
+    ~isempty(strfind(script, 'attenuation_qc|done')) && ...
+    ~isempty(strfind(script, 'prepare_selected=')) && ...
+    ~isempty(strfind(script, 'prepare_expected=')) && ...
+    ~isempty(strfind(script, 'pinned_mcr_root=')) && ...
+    isempty(strfind(script, 'export LD_LIBRARY_PATH')) && ...
+    isempty(strfind(script, 'source "$shared_temp/mlsc_current_handoff')) && ...
+    isempty(strfind(script, 'source $TMPDIR/mlsc_current_handoff')) && ...
+    isempty(strfind(script, 'eval '));
+prepare_pos = strfind(script, '"$current_runner" "$current_mcr_root" prepare');
+compute_pos = strfind(script, '"$current_runner" "$current_mcr_root" compute');
+if isempty(prepare_pos) || isempty(compute_pos) || ...
+        ~(prepare_pos(1) < compute_pos(1))
+    supported_ok = false;
 end
-    contract.represented = contract.represented && current_ok;
+if needs_normalization_in_script(script)
+    tcsh_pos = strfind(script, 'tcsh -f -c');
+    if isempty(tcsh_pos) || isempty(prepare_pos) || isempty(compute_pos) || ...
+            ~(prepare_pos(1) < tcsh_pos(1)) || ...
+            ~(tcsh_pos(1) < compute_pos(1))
+        supported_ok = false;
+    end
+    % R001: dynamic PREPARE-derived normalization must sit between
+    % prepare and compute and must reference the resolved selection.
+    if isempty(strfind(script, 'MLSC_INPUT_NAME=$prepare_selected')) || ...
+            isempty(strfind(script, 'MLSC_NORMALIZED_NAME=$prepare_expected'))
+        supported_ok = false;
+    end
 end
+% Mandatory evidence verify/copy-back (not copy_optional for handoff/evidence)
+% must be present for the only supported artifact.
+if isempty(strfind(script, ...
+    'Shared output verification copy-back is missing or empty.'))
+    supported_ok = false;
+end
+contract.represented = contract.represented && supported_ok;
 end
 
 function flag = needs_normalization_in_script(script)
@@ -728,14 +721,8 @@ if strcmp(record.state, 'completed')
         result.failure_detail = ...
             'Scheduler COMPLETED did not prove the node-local processing/copy-back contract.';
     elseif ~result.copy_back.verified
-        if isfield(result.contract, 'is_current') && ...
-                isequal(result.contract.is_current, true)
-            result.failure_detail = ...
-                'Scheduler COMPLETED had no complete current outputs in the shared subject temp.';
-        else
-            result.failure_detail = ...
-                'Scheduler COMPLETED had no non-empty att_map.nii in the shared subject temp.';
-        end
+        result.failure_detail = ...
+            'Scheduler COMPLETED had incomplete required outputs or evidence in the shared subject temp.';
         result.workflow_state = 'failed';
     else
         result.workflow_state = 'completed';
@@ -777,30 +764,21 @@ end
 
 function copy_back = local_verify_copyback(result, subject)
 %LOCAL_VERIFY_COPYBACK Exit-0 plus missing output is failure.
-%   Requires non-empty att_map.nii. Current requires the complete
-%   three-output set (att_map.nii plus validation TIFF plus version TXT)
-%   plus mandatory durable evidence (handoff, prepare evidence, output
-%   verification); exit 0 with any required output or evidence missing or
-%   empty fails. The output-verification evidence attests the verified
+%   Requires the complete three-output set (att_map.nii plus validation
+%   TIFF plus version TXT) and mandatory durable evidence (handoff, prepare
+%   evidence, output verification); exit 0 with any required output or
+%   evidence missing or empty fails. The output-verification evidence attests the verified
 %   normalized input and every required output with fingerprints, including
 %   the finite float32 attenuation with dimensions/affine provenance
 %   recorded by compute; copyback identity (shared bytes equal the
 %   verified node-local bytes) is rechecked here before success via the
 %   existing verification/failure path. Reuses the existing
 %   receipt/timeout/cleanup/finalization model with no second poller.
-%   Current participates identically in cancellation/state/receipt
-%   handling; validation failures occur before science where possible.
+%   The supported artifact participates identically in cancellation/state/
+%   receipt handling; validation failures occur before science where possible.
 copy_back = struct('contract_represented', result.contract.represented, ...
     'verified', false, 'att_map_path', '', 'att_map_present', false, ...
     'att_map_nonempty', false);
-is_current = false;
-try
-    if isfield(result.contract, 'is_current') && ...
-            isequal(result.contract.is_current, true)
-        is_current = true;
-    end
-catch %#ok<CTCH>
-end
 shared_temp = local_subject_value(subject, {'shared_temp'; 'temp_dir'});
 if isempty(shared_temp)
     return;
@@ -811,12 +789,7 @@ if copy_back.att_map_present
     info = dir(copy_back.att_map_path);
     copy_back.att_map_nonempty = ~isempty(info) && info(1).bytes > 0;
 end
-if ~is_current
-    copy_back.verified = copy_back.contract_represented && ...
-        copy_back.att_map_present && copy_back.att_map_nonempty;
-    return;
-end
-% Explicit authoritative key->basename map owned by the current output
+% Explicit authoritative key->basename map owned by the supported output
 % contract: no underscore/dot inference. The validation TIFF is the
 % Fusion basename or, as declared, the explicit Composite variant.
 output_map = local_current_output_filename_map();
@@ -856,8 +829,7 @@ if validation_ok
     copy_back.validation_basename = [v_base v_ext];
 end
 % Mandatory durable evidence: handoff + prepare/output verification are
-% required for current success, never optional. Nonempty-files-only is
-% insufficient without them.
+% never optional. Nonempty-files-only is insufficient without them.
 handoff_path = fullfile(shared_temp, 'mlsc_current_handoff.mat');
 prepare_evidence_path = fullfile(shared_temp, ...
     'mlsc_current_prepare_evidence.txt');
@@ -931,7 +903,8 @@ function ok = local_verification_evidence_ok(verification_path)
 %LOCAL_VERIFICATION_EVIDENCE_OK Structured verification content contract.
 %   Current-only: the local string/size substring fallback is DISABLED.
 %   Requires the compute-written structured schema
-%   (pseudo-CT.mlsc-current-output-verification/v1), the verified
+%   pseudo-CT.mlsc-current-output-verification/v1 (compiled artifact
+%   namespace, not a selectable profile ID), the verified
 %   normalized-input marker, explicit 'output <exact-basename>:' lines with
 %   bytes and mandatory SHA-256 for every declared required output
 %   (att_map.nii, version TXT, and the Fusion TIFF or its explicit
@@ -2208,7 +2181,7 @@ try
             try
                 value = source.console_profile;
                 if ischar(value) && any(strcmp(value, ...
-                        {'mlsc-current'; 'mlsc-mprage-only'}))
+                        {'mlsc'; 'mlsc-mprage-only'}))
                     context.console_profile = value;
                 end
             catch %#ok<CTCH>
@@ -2671,23 +2644,6 @@ try
     [cursors.stderr, state.stderr] = local_slurm_log_tail(paths.stderr, ...
         cursors.stderr, state.stderr, runtime, job_id, flush_partial, false);
 catch %#ok<CTCH>
-end
-end
-
-function version = local_scientific_stream_version(config)
-%LOCAL_SCIENTIFIC_STREAM_VERSION Return the MLSC scientific stream parser.
-%   Keys only on CONFIG.IMPLEMENTATION: 'current' selects v3. Runtime profile
-%   names, log text, and the generator's is_current boolean are never used.
-%   Any other value fails closed.
-implementation = '';
-if isfield(config, 'implementation') && ischar(config.implementation)
-    implementation = config.implementation;
-end
-if strcmp(implementation, 'current')
-    version = 'v3';
-else
-    error('pseudo_CT:MLSCStreamVersion', ...
-        'MLSC scientific stream requires implementation current.');
 end
 end
 
