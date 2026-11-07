@@ -57,7 +57,7 @@ catch ME
 
     clear credentials
     result.status = 'failed';
-    result.error_code = local_error_code(ME.identifier);
+    result.error_code = local_error_code(ME.identifier, result.action);
     result.error_message = local_error_message(result.error_code);
     result.diagnostics = struct('code', result.error_code, ...
         'message', result.error_message);
@@ -373,8 +373,15 @@ if close_status ~= 0 || isempty(provider)
 end
 end
 
-function code = local_error_code(identifier)
-code = 'SUBMIT_FAILED';
+function code = local_error_code(identifier, operation)
+%LOCAL_ERROR_CODE Named failures keep their mapping. Unclassified failures are
+%   scoped by the bound operation: only submit reports SUBMIT_FAILED, while
+%   validation (and any failure before the operation is bound) reports
+%   VALIDATION_FAILED, so validation never claims a submission was attempted.
+code = 'VALIDATION_FAILED';
+if strcmp(operation, 'submit')
+    code = 'SUBMIT_FAILED';
+end
 if strcmp(identifier, 'pseudo_CT:HeadlessRequest') || ...
         strcmp(identifier, 'pseudo_CT:CredentialShape') || ...
         strcmp(identifier, 'pseudo_CT:CredentialPath')
@@ -403,6 +410,8 @@ switch code
         message = 'The request or one-time credential handoff was invalid or consumed.';
     case 'PROFILE_NOT_ALLOWED'
         message = 'The requested profile is not enabled for this interface.';
+    case 'VALIDATION_FAILED'
+        message = 'Local validation failed; no authentication, submission, or dispatch was attempted.';
     case 'STALE_RESOLVED_JOB'
         message = 'Inputs or artifacts changed; validate again before submit.';
     case 'AUTHENTICATION_FAILED'

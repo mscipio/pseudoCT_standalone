@@ -13,12 +13,17 @@ if nargin ~= 2 || ~ischar(operation) || size(operation, 1) ~= 1 || ...
 end
 operation = lower(strtrim(operation));
 root_dir = fileparts(fileparts(fileparts(mfilename('fullpath'))));
-runtime_dirs = {'api'; 'cli'; 'gui'; 'orchestration'; 'backends'; ...
-    'config'; 'io'; 'qc'};
-for ii = 1:length(runtime_dirs)
-    path_here = fullfile(root_dir, 'src', runtime_dirs{ii});
-    if exist(path_here, 'dir') == 7
-        addpath(genpath(path_here), '-begin');
+% Source checkouts expose their runtime folders; installed packages never
+% add source folders to the path.
+layout = pseudo_CT_package_layout();
+if strcmp(layout.mode, 'source')
+    runtime_dirs = {'api'; 'cli'; 'gui'; 'orchestration'; 'backends'; ...
+        'config'; 'io'; 'qc'};
+    for ii = 1:length(runtime_dirs)
+        path_here = fullfile(root_dir, 'src', runtime_dirs{ii});
+        if exist(path_here, 'dir') == 7
+            addpath(genpath(path_here), '-begin');
+        end
     end
 end
 
@@ -562,23 +567,15 @@ end
 end
 
 function identity = local_artifact_identity(config, profile_name, root_dir)
-config_root = fullfile(root_dir, 'src', 'config');
-profiles = pseudo_CT_list_profiles(config_root, false);
-profile_path = '';
-for ii = 1:length(profiles)
-    if strcmp(profiles(ii).name, profile_name)
-        profile_path = profiles(ii).file_path;
-        break;
-    end
-end
-if isempty(profile_path)
-    error('pseudo_CT:InvalidProfile', 'The selected profile is unavailable.');
-end
-identity = struct('profile_path', profile_path, ...
-    'profile_sha256', local_file_sha256(profile_path), ...
-    'runner_path', '', 'runner_sha256', '', ...
-    'build_manifest_path', '', 'build_manifest_sha256', '', ...
-    'resource_manifest_path', '', 'resource_manifest_sha256', '');
+% Profile identity: installed packages bind the canonical key to the SHA-256
+% of manifest.json (no profile .m is opened); source mode hashes the file.
+identity = pseudo_CT_profile_registry('identity', profile_name, root_dir);
+identity.runner_path = '';
+identity.runner_sha256 = '';
+identity.build_manifest_path = '';
+identity.build_manifest_sha256 = '';
+identity.resource_manifest_path = '';
+identity.resource_manifest_sha256 = '';
 if isfield(config, 'current') && isstruct(config.current)
     fields = {'runner'; 'build_manifest'; 'resource_manifest'};
     for ii = 1:length(fields)

@@ -24,16 +24,7 @@ if isempty(fieldnames(profile))
     error('pseudo_CT:InvalidProfile', 'Unknown profile: %s', profile_name);
 end
 
-profile_dir = fullfile(config_root, 'profiles');
-path_was_added = isempty(strfind([path pathsep], [profile_dir pathsep]));
-if path_was_added
-    addpath(profile_dir, '-begin');
-end
-cleanup = onCleanup(@() remove_profile_path(profile_dir, ...
-    profile.function_name, path_was_added)); %#ok<NASGU>
-clear(profile.function_name);
-rehash;
-config = feval(profile.function_name);
+config = local_invoke(profile, config_root);
 
 if ~isstruct(config) || numel(config) ~= 1
     error('pseudo_CT:InvalidProfile', ...
@@ -298,6 +289,27 @@ for ii = 1:length(fields)
             '%s is missing required field %s.', label, fields{ii});
     end
 end
+end
+
+function config = local_invoke(profile, config_root)
+%LOCAL_INVOKE Call one discovered profile. Installed mode uses the direct
+%   registry (no path edits, no physical profile lookup); source mode keeps
+%   the path-scoped feval of the editable profile file.
+layout = pseudo_CT_package_layout();
+if strcmp(layout.mode, 'installed')
+    config = pseudo_CT_profile_registry('invoke', profile.name);
+    return;
+end
+profile_dir = fullfile(config_root, 'profiles');
+path_was_added = isempty(strfind([path pathsep], [profile_dir pathsep]));
+if path_was_added
+    addpath(profile_dir, '-begin');
+end
+cleanup = onCleanup(@() remove_profile_path(profile_dir, ...
+    profile.function_name, path_was_added)); %#ok<NASGU>
+clear(profile.function_name);
+rehash;
+config = feval(profile.function_name);
 end
 
 function remove_profile_path(profile_dir, function_name, path_was_added)

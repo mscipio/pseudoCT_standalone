@@ -2,6 +2,10 @@ function paths = pseudo_CT_dependency_paths()
 %PSEUDO_CT_DEPENDENCY_PATHS Resolve versioned local artifacts from install root.
 %   Paths mirror dependencies.lock.json and are based on this function's
 %   location, never caller pwd or a mutable site-wide "latest" alias.
+%   Installed packages ship no external/ or src/ trees: in installed mode the
+%   spm_root, d2n_root, aliasing_root and overrides_root strings identify
+%   compiled capabilities and are not existence requirements for validation
+%   (see setup_pseudo_CT_paths). atlas_root and current_root are packaged.
 %   Minimum supported MATLAB: R2010b.
 
 layout = pseudo_CT_package_layout();
