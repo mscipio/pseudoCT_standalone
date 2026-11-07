@@ -132,6 +132,12 @@ job = local_load_scalar_struct(job_manifest_path, 'job', ...
 resources = local_load_scalar_struct(resource_manifest_path, 'resources', ...
     'pseudo-CT.mlsc-current-resources/v1');
 local_validate_job(job);
+% Manifest atlas_dir only: a relative value (current packages) resolves against
+% the manifest's own folder; an absolute value is used as written.
+if isfield(resources, 'atlas_dir')
+    resources.atlas_dir = local_resolve_manifest_atlas( ...
+        resource_manifest_path, resources.atlas_dir);
+end
 local_validate_resources(resources);
 if ~strcmp(local_strip_sep(job.atlas_dir), local_strip_sep(resources.atlas_dir))
     error('pseudo_CT:MLSCPayloadManifest', ...
@@ -450,6 +456,54 @@ local_validate_yes_no(job.zero_background, 'zero_background');
 if ~(islogical(job.bone_enabled) || isnumeric(job.bone_enabled)) || ...
         ~isscalar(job.bone_enabled) || ~ismember(double(job.bone_enabled), [0 1])
     error('pseudo_CT:MLSCPayloadManifest', 'Job bone_enabled must be scalar logical 0 or 1.');
+end
+end
+
+function atlas = local_resolve_manifest_atlas(manifest_path, atlas_text)
+%LOCAL_RESOLVE_MANIFEST_ATLAS Canonical absolute atlas_dir of a resource manifest.
+%   Same rule as the MLSC validator: absolute values pass through (trailing
+%   separators stripped); relative values resolve against the manifest folder
+%   and are canonicalised ('.', '..', empty segments removed). Worked example:
+%   /pkg/runtimes/R2019b/payload/resource_manifest.mat with '../../../resources'
+%   canonicalises to /pkg/resources.
+if ~ischar(atlas_text) || size(atlas_text, 1) ~= 1 || isempty(strtrim(atlas_text))
+    error('pseudo_CT:MLSCPayloadManifest', ...
+        'Resource atlas_dir must be a non-empty string.');
+end
+trimmed = strtrim(atlas_text);
+while length(trimmed) > 1 && trimmed(end) == '/'
+    trimmed(end) = '';
+end
+if trimmed(1) == '/'
+    atlas = trimmed;
+    return;
+end
+manifest_path = strtrim(manifest_path);
+if isempty(manifest_path) || manifest_path(1) ~= '/'
+    error('pseudo_CT:MLSCPayloadManifest', ...
+        'The resource manifest path must be absolute.');
+end
+segments = regexp(fullfile(fileparts(manifest_path), trimmed), '/', 'split');
+kept = {};
+for ii = 1:length(segments)
+    segment = segments{ii};
+    if isempty(segment) || strcmp(segment, '.')
+        continue;
+    end
+    if strcmp(segment, '..')
+        if ~isempty(kept)
+            kept(end) = [];
+        end
+    else
+        kept{end + 1} = segment; %#ok<AGROW>
+    end
+end
+atlas = '';
+for ii = 1:length(kept)
+    atlas = [atlas '/' kept{ii}]; %#ok<AGROW>
+end
+if isempty(atlas)
+    atlas = '/';
 end
 end
 

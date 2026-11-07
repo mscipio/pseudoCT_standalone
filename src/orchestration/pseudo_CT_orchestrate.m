@@ -65,6 +65,9 @@ else
     end
     config_root = fullfile(root_dir, 'src', 'config');
     config = pseudo_CT_load_profile(profile_name, config_root);
+    % Headless/CLI validation binds the installed Runtime (env or default);
+    % a no-op in source mode.
+    config = pseudo_CT_runtime_select(config);
     config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, ...
         artifact_root);
 end

@@ -46,7 +46,6 @@ assert(exist(fullfile(root_dir, 'run_pseudo_CT.m'), 'file') == 2);
 assert(exist(fullfile(root_dir, 'src', 'api', ...
     'pseudo_CT_headless.m'), 'file') == 2);
 assert(exist(fullfile(root_dir, 'bin', 'pseudoct'), 'file') == 2);
-assert(exist(fullfile(root_dir, 'bin', 'pseudoct-headless'), 'file') == 2);
 
 % Dispatch boundary without science or a scheduler: a deliberately missing
 % MPRAGE input must fail in local validation before any job is dispatched.

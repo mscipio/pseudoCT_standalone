@@ -31,8 +31,10 @@ function report = pseudo_CT_run_lifecycle(varargin)
 %                        - Absolute directory supplying the operator-selected
 %                          compiled MLSC artifact (T007 build layout):
 %                            <root>/payload_build/run_mlsc_current_payload.sh
-%                            <root>/mlsc_current_build.mat
-%                            <root>/mlsc_current_resources.mat
+%                            source: <root>/mlsc_current_build.mat and
+%                                    <root>/mlsc_current_resources.mat
+%                            installed: <root>/build_manifest.mat and
+%                                       <root>/resource_manifest.mat
 %                          No independent runner/build/resource overrides.
 %                          Omit to use the installation-relative compiled
 %                          artifact defaults, validated by content identity.
@@ -82,13 +84,17 @@ addpath(fullfile(pathp, 'src', 'io'), '-begin');
 run_started = tic;
 run_start_time = datestr(now, 'yyyy-mm-dd HH:MM:SS');
 run_id = datestr(now, 'yyyymmdd_HHMMSS');
-interactive_gui = ~isdeployed && isempty(varargin);
+% Interactive means no arguments at all, deployed or not (the compiled app
+% launched without arguments reaches the same selector -> runtime bind -> GUI).
+interactive_gui = isempty(varargin);
 report = local_empty_run_report();
 headless_mode = false;
 headless_credentials = struct();
 group_account = '';
 umap_files_arg = [];
 resolved_jobs = struct([]);
+% Installed MATLAB Runtime label chosen in the selector ('' otherwise).
+selected_runtime = '';
 
 % Optional runtime-only MLSC trusted host-key material/provider seam.  It is
 % never a profile field, never sourced from source control, and never logged;
@@ -107,8 +113,13 @@ recenter_arg = [];
 % config.cleanup_on_success after the profile load without editing it.
 cleanup_on_success_arg = [];
 
-%% === 1. Handle deployed mode (before any argument parsing) ===
-if isdeployed
+%% === 1. Branch on invocation (before any argument parsing) ===
+% No arguments (deployed or not): interactive selector, then the runtime bind
+% below, then the existing subject GUI; this must precede
+% parse_deployed_arguments, which requires an explicit profile.
+% Deployed with arguments: parse_deployed_arguments (headless/orchestrate,
+% unchanged). Source with arguments: the named-argument CLI parser (unchanged).
+if isdeployed && ~isempty(varargin)
     [profile_name, subjects_arg, aliasing_arg, recenter_arg, headless_mode, ...
         headless_credentials, group_account, mlsc_host_key_provider, ...
         mlsc_current_artifact_root, umap_files_arg, resolved_jobs] = ...
@@ -116,10 +127,12 @@ if isdeployed
 
     %% === Interactive mode (no args): show profile selector ===
 elseif isempty(varargin)
-    profile_name = pseudo_CT_profile_selector();
+    selection = pseudo_CT_profile_selector();
+    profile_name = selection.profile;
     if isempty(profile_name)
         return;  % User cancelled
     end
+    selected_runtime = selection.runtime;
     subjects_arg = '';
     aliasing_arg = [];
 
@@ -226,6 +239,10 @@ warn_cleanup = onCleanup(@() warning(orig_warn));
 %% === Load the selected profile once and set up its resources ===
 config = pseudo_CT_load_profile(profile_name, fullfile(pathp, 'src', 'config'));
 report.profile = profile_name;
+% Installed distributions bind one MATLAB Runtime before any override,
+% validation, or subject processing: the selector's choice, else
+% PSEUDOCT_RUNTIME_RELEASE, else the catalog default. Source mode is a no-op.
+config = pseudo_CT_runtime_select(config, selected_runtime);
 if headless_mode && isdeployed
     % collect_jobs retains deployed defaults-MAT behavior and accepts an
     % explicit subject list only for this opt-in headless execution path.

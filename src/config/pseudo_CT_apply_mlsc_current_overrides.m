@@ -1,8 +1,10 @@
 function config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, artifact_root)
 %PSEUDO_CT_APPLY_MLSC_CURRENT_OVERRIDES Apply the current-MLSC artifact root.
 %   ARTIFACT_ROOT supplies the current runner and build/resource manifests
-%   under the pinned layout. Only mlsc and mlsc-mprage-only may
-%   consume this option. Empty keeps the profile-owned defaults.
+%   under the pinned layout. Source mode uses the existing compiled/current
+%   names; installed mode uses build_manifest.mat/resource_manifest.mat.
+%   Only mlsc and mlsc-mprage-only may consume this option. Empty keeps the
+%   profile-owned defaults.
 %   Minimum supported MATLAB: R2010b.
 
 if nargin < 2
@@ -41,12 +43,20 @@ end
 local_require_absolute_dir(artifact_root, ...
     'mlsc_current_artifact_root must be an absolute directory.');
 root = local_strip_sep(artifact_root);
+layout = pseudo_CT_package_layout();
+if strcmp(layout.mode, 'installed')
+    build_manifest_name = 'build_manifest.mat';
+    resource_manifest_name = 'resource_manifest.mat';
+else
+    build_manifest_name = 'mlsc_current_build.mat';
+    resource_manifest_name = 'mlsc_current_resources.mat';
+end
 config.current.runner = fullfile(root, 'payload_build', ...
     'run_mlsc_current_payload.sh');
 config.current.build_manifest = fullfile(root, ...
-    'mlsc_current_build.mat');
+    build_manifest_name);
 config.current.resource_manifest = fullfile(root, ...
-    'mlsc_current_resources.mat');
+    resource_manifest_name);
 end
 
 function local_require_absolute_dir(value, message)

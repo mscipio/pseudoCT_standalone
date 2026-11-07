@@ -391,7 +391,18 @@ recorded_build_arch = local_manifest_text(build, 'arch');
 recorded_build_mcr_root = local_manifest_text(build, 'mcr_root');
 recorded_build_source_commit = local_manifest_text(build, 'source_commit');
 recorded_build_runner_checksum = local_manifest_text(build, 'runner_checksum');
-atlas_dir = strtrim(resources.atlas_dir);
+% Only an installed package whose manifest records a relative atlas_dir is
+% resolved and submitted as an absolute copy (below). Every other case keeps
+% the configured value exactly as before.
+installed_mode = ~isempty(strtrim(getenv('PSEUDOCT_INSTALL_ROOT')));
+raw_atlas_dir = strtrim(resources.atlas_dir);
+relocated_atlas = installed_mode && ~isempty(raw_atlas_dir) && ...
+    raw_atlas_dir(1) ~= '/';
+if relocated_atlas
+    atlas_dir = mlsc_current_validate('resource_atlas_dir', resource_manifest_path);
+else
+    atlas_dir = raw_atlas_dir;
+end
 recenter_text = local_effective_yes_no(subject, config, ...
     {'recenter_before_normalization'}, 'Yes');
 zero_text = local_effective_yes_no(subject, config, ...
@@ -401,12 +412,23 @@ job_manifest_name = 'mlsc_current_job.mat';
 [~, resource_base, resource_ext] = fileparts(resource_manifest_path);
 resource_stage_name = [resource_base resource_ext];
 if isempty(resource_stage_name)
-    resource_stage_name = 'mlsc_current_resources.mat';
+    resource_stage_name = 'resource_manifest.mat';
 end
 shared_job_manifest = fullfile(shared_temp, job_manifest_name);
 local_write_current_job_manifest(shared_job_manifest, input_name, ...
     atlas_dir, check_aliasing, recenter_text, bone_value, zero_text, ...
     local_native_event_target(runtime));
+% Relocated installs only: the cluster copies the resource manifest into
+% node-local storage, where a relative atlas_dir would not resolve, so the
+% submitted copy carries the resolved absolute directory and is the file
+% identity-checked below. Otherwise the configured manifest is submitted as is.
+if relocated_atlas
+    shared_resource_manifest = fullfile(shared_temp, 'resource_manifest.mat');
+    local_write_current_resource_manifest(shared_resource_manifest, resources, ...
+        atlas_dir);
+else
+    shared_resource_manifest = resource_manifest_path;
+end
 % TOCTOU preflight identities (exact): runner/exe, build/resource
 % manifest bytes + mandatory SHA-256, pinned MCR_ROOT release/version/
 % update/arch/generation from disk. Embedded below and rechecked before
@@ -416,8 +438,8 @@ expected_runner_bytes = local_file_bytes(runner_path);
 expected_runner_sha256 = local_file_sha256_hex(runner_path);
 expected_build_bytes = local_file_bytes(build_manifest_path);
 expected_build_sha256 = local_file_sha256_hex(build_manifest_path);
-expected_resource_bytes = local_file_bytes(resource_manifest_path);
-expected_resource_sha256 = local_file_sha256_hex(resource_manifest_path);
+expected_resource_bytes = local_file_bytes(shared_resource_manifest);
+expected_resource_sha256 = local_file_sha256_hex(shared_resource_manifest);
 expected_job_bytes = local_file_bytes(shared_job_manifest);
 if isempty(expected_runner_sha256) || isempty(expected_build_sha256) || ...
         isempty(expected_resource_sha256)
@@ -425,6 +447,15 @@ if isempty(expected_runner_sha256) || isempty(expected_build_sha256) || ...
         'Current identity hashing is unavailable; failing closed before PREPARE.');
 end
 expected_mcr = mlsc_current_validate('actual_identity', pinned);
+% Expected update for the VersionInfo branch. Source mode (pinned 7.14) keeps
+% the exact compare. Installed releases take the minimum update from their own
+% build manifest and compare as a lower bound.
+expected_update_value = expected_mcr.update;
+expected_update_op = '-ne';
+if installed_mode
+    expected_update_value = build.update_minimum;
+    expected_update_op = '-lt';
+end
 q_shared_input = local_shell_quote(shared_input);
 q_shared_temp = local_shell_quote(shared_temp);
 q_input_name = local_shell_quote(input_name);
@@ -435,7 +466,7 @@ q_freesurfer_env = local_shell_quote(mlsc.freesurfer_env);
 q_runner = local_shell_quote(runner_path);
 q_mcr_root = local_shell_quote(mcr_root);
 q_shared_job = local_shell_quote(shared_job_manifest);
-q_shared_resources = local_shell_quote(resource_manifest_path);
+q_shared_resources = local_shell_quote(shared_resource_manifest);
 q_shared_build = local_shell_quote(build_manifest_path);
 stdout_log_path = fullfile(shared_temp, 'pseudoCT_mlsc_%j.out');
 stderr_log_path = fullfile(shared_temp, 'pseudoCT_mlsc_%j.err');
@@ -494,9 +525,13 @@ lines{end + 1} = ['expected_resource_bytes=' num2str(expected_resource_bytes, '%
 lines{end + 1} = ['expected_resource_sha256=' local_shell_quote(expected_resource_sha256)];
 lines{end + 1} = ['expected_mcr_release=' local_shell_quote(expected_mcr.release)];
 lines{end + 1} = ['expected_mcr_version=' local_shell_quote(expected_mcr.version)];
-lines{end + 1} = ['expected_mcr_update=' num2str(expected_mcr.update, '%.0f')];
+lines{end + 1} = ['expected_mcr_update=' num2str(expected_update_value, '%.0f')];
 lines{end + 1} = ['expected_mcr_arch=' local_shell_quote(expected_mcr.arch)];
 lines{end + 1} = ['expected_mcr_generation=' local_shell_quote(expected_mcr.generation)];
+if installed_mode
+    lines{end + 1} = ['expected_mcr_library=' local_shell_quote(expected_mcr.library)];
+    lines{end + 1} = ['expected_mcr_version_file=' local_shell_quote(expected_mcr.version_file)];
+end
 lines{end + 1} = 'if [ "$current_mcr_root" != "$pinned_mcr_root" ]; then';
 lines{end + 1} = '    printf ''Current MCR_ROOT does not match the pinned contract.\n'' >&2';
 lines{end + 1} = '    exit 72';
@@ -603,7 +638,7 @@ lines{end + 1} = '        exit 72';
 lines{end + 1} = '        ;;';
 lines{end + 1} = 'esac';
 lines{end + 1} = '# Exact numeric compare (Update 2 vs Update 20 cannot confuse).';
-lines{end + 1} = 'if [ "$actual_mcr_update" -ne "$expected_mcr_update" ]; then';
+lines{end + 1} = ['if [ "$actual_mcr_update" ' expected_update_op ' "$expected_mcr_update" ]; then'];
 lines{end + 1} = '    printf ''Current MCR_ROOT update changed after preflight (TOCTOU).\n'' >&2';
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
@@ -624,12 +659,30 @@ lines{end + 1} = '    printf ''Current MCR_ROOT architecture changed after prefl
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
 lines{end + 1} = 'else';
-lines{end + 1} = '    # MCR 7.14 has no VersionInfo.xml; the exact pinned root plus';
-lines{end + 1} = '    # runtime library path is its fail-closed identity check.';
-lines{end + 1} = '    if [ "$expected_mcr_generation" != "7.14" ] || [ ! -s "$current_mcr_root/runtime/glnxa64/libmwmclmcrrt.so" ]; then';
-lines{end + 1} = '        printf ''Pinned MCR 7.14 runtime identity is invalid.\n'' >&2';
-lines{end + 1} = '        exit 72';
-lines{end + 1} = '    fi';
+if installed_mode
+    % Installed release (no VersionInfo.xml): the selected runtime library and
+    % the catalog version file are the fail-closed identity evidence.
+    lines{end + 1} = '    if [ ! -s "$current_mcr_root/runtime/glnxa64/$expected_mcr_library" ]; then';
+    lines{end + 1} = '        printf ''Pinned MCR runtime identity is invalid.\n'' >&2';
+    lines{end + 1} = '        exit 72';
+    lines{end + 1} = '    fi';
+    lines{end + 1} = '    if [ -n "$expected_mcr_version_file" ]; then';
+    lines{end + 1} = '        actual_file_version=$(grep -o -E ''[0-9]+\.[0-9]+'' "$current_mcr_root/$expected_mcr_version_file" 2>/dev/null | head -n 1 || true)';
+    lines{end + 1} = '        if [ "$actual_file_version" != "$expected_mcr_version" ]; then';
+    lines{end + 1} = '            printf ''Current MCR_ROOT version file does not match the selected release.\n'' >&2';
+    lines{end + 1} = '            exit 72';
+    lines{end + 1} = '        fi';
+    lines{end + 1} = '    fi';
+else
+    % MCR 7.14 has no VersionInfo.xml; the exact pinned root plus runtime
+    % library path is its fail-closed identity check.
+    lines{end + 1} = '    # MCR 7.14 has no VersionInfo.xml; the exact pinned root plus';
+    lines{end + 1} = '    # runtime library path is its fail-closed identity check.';
+    lines{end + 1} = '    if [ "$expected_mcr_generation" != "7.14" ] || [ ! -s "$current_mcr_root/runtime/glnxa64/libmwmclmcrrt.so" ]; then';
+    lines{end + 1} = '        printf ''Pinned MCR 7.14 runtime identity is invalid.\n'' >&2';
+    lines{end + 1} = '        exit 72';
+    lines{end + 1} = '    fi';
+end
 lines{end + 1} = 'fi';
 lines{end + 1} = '# Runtime identity uses the pinned root and library metadata.';
 lines{end + 1} = 'if [ ! -s "$shared_build_manifest" ]; then';
@@ -983,6 +1036,14 @@ try
     end
 catch %#ok<CTCH>
 end
+end
+
+function local_write_current_resource_manifest(resource_path, resources, atlas_dir)
+%LOCAL_WRITE_CURRENT_RESOURCE_MANIFEST Submitted resource manifest copy.
+%   Identical to the package manifest except atlas_dir, which is replaced by the
+%   resolved absolute directory the payload compares with the job manifest.
+resources.atlas_dir = atlas_dir;
+save(resource_path, 'resources', '-v6');
 end
 
 function local_write_current_job_manifest(job_path, input_name, atlas_dir, ...

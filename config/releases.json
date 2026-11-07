@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "default": "R2010b",
+  "releases": [
+    {
+      "label": "R2010b",
+      "matlab_version": "7.11",
+      "mcr_version": "7.14",
+      "architecture": "glnxa64",
+      "runtime_identity": {
+        "mcr_version_file": "toolbox/compiler/mcrversion.ver",
+        "library": "libmwmclmcrrt.so.7.14"
+      }
+    },
+    {
+      "label": "R2014a",
+      "matlab_version": "8.3",
+      "mcr_version": "8.3",
+      "architecture": "glnxa64",
+      "runtime_identity": {
+        "mcr_version_file": "toolbox/compiler/mcrversion.ver",
+        "library": "libmwmclmcrrt.so.8.3"
+      }
+    },
+    {
+      "label": "R2014b",
+      "matlab_version": "8.4",
+      "mcr_version": "8.4",
+      "architecture": "glnxa64",
+      "runtime_identity": {
+        "mcr_version_file": "toolbox/compiler/mcrversion.ver",
+        "library": "libmwmclmcrrt.so.8.4"
+      }
+    },
+    {
+      "label": "R2019a",
+      "matlab_version": "9.6.0.1072779",
+      "mcr_version": "9.6",
+      "architecture": "glnxa64",
+      "runtime_identity": {
+        "mcr_version_file": "toolbox/compiler/mcrversion.ver",
+        "library": "libmwmclmcrrt.so.9.6"
+      }
+    },
+    {
+      "label": "R2019b",
+      "matlab_version": "9.7.0.1190202",
+      "mcr_version": "9.7",
+      "architecture": "glnxa64",
+      "runtime_identity": {
+        "mcr_version_file": "toolbox/compiler/mcrversion.ver",
+        "library": "libmwmclmcrrt.so.9.7"
+      }
+    },
+    {
+      "label": "R2022a",
+      "matlab_version": "9.12.0.2039608",
+      "mcr_version": "9.12",
+      "architecture": "glnxa64",
+      "runtime_identity": {
+        "mcr_version_file": "toolbox/compiler/mcrversion.ver",
+        "library": "libmwmclmcrrt.so.9.12"
+      }
+    },
+    {
+      "label": "R2022b",
+      "matlab_version": "9.13.0.2049777",
+      "mcr_version": "9.13",
+      "architecture": "glnxa64",
+      "runtime_identity": {
+        "mcr_version_file": "toolbox/compiler/mcrversion.ver",
+        "library": "libmwmclmcrrt.so.9.13"
+      }
+    },
+    {
+      "label": "R2026a",
+      "matlab_version": "26.1.0.3251617",
+      "mcr_version": "26.1",
+      "architecture": "glnxa64",
+      "runtime_identity": {
+        "mcr_version_file": "toolbox/compiler/mcrversion.ver",
+        "library": "libmwmclmcrrt.so.26.1"
+      }
+    }
+  ]
+}

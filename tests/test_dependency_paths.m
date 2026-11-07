@@ -33,12 +33,10 @@ for fn = {'local', 'mlsc', 'local_mprage_only', 'mlsc_mprage_only'}
     config = feval(fn{1});
     assert(strcmp(config.spm_root, paths.spm_root));
     assert(strcmp(config.atlas_root, paths.atlas_root));
-    if strcmp(fn{1}, 'mlsc')
-        assert(strcmp(config.current.build_manifest, ...
-            fullfile(paths.current_root, 'mlsc_current_build.mat')));
-        assert(strcmp(config.current.resource_manifest, ...
-            fullfile(paths.current_root, 'mlsc_current_resources.mat')));
-    end
+    assert(strcmp(config.current.build_manifest, ...
+        fullfile(paths.current_root, 'mlsc_current_build.mat')));
+    assert(strcmp(config.current.resource_manifest, ...
+        fullfile(paths.current_root, 'mlsc_current_resources.mat')));
 end
 
 % Setup already owns the fail-closed root checks; exercise each missing-root

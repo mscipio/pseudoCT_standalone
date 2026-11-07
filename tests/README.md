@@ -13,6 +13,8 @@ export PSEUDOCT_TEST_SCRATCH="$scratch"
 
 PYTHONDONTWRITEBYTECODE=1 python3 -B tests/test_dependency_lock.py
 PYTHONDONTWRITEBYTECODE=1 python3 -B tests/test_pseudoct_stdout_filter.py
+PYTHONDONTWRITEBYTECODE=1 python3 -I -B -m unittest discover -s tests -p test_release_application.py -t tests
+PYTHONDONTWRITEBYTECODE=1 python3 -I -B -m unittest discover -s tests -p test_standalone_release.py -t tests
 /usr/pubsw/bin/matlab7.11 -nodesktop -nosplash -r \
   "try, addpath('tests'); run_smoke_tests; exit(0); catch ME, disp(ME.message); exit(1); end"
 ```
@@ -25,8 +27,14 @@ semantic comparison capability, build preflight and package integrity (dry run
 only; never calls mcc), and current MLSC submission/monitoring with
 verified success, missing-output failure, scheduler failure, cancellation, and
 transport rejection. Its MLSC fixtures use the installed artifact and tiny
-synthetic outputs only. Python checks cover the dependency-lock integrity and
-CLI JSONL stdout transport.
+synthetic outputs only. Python checks cover the dependency-lock integrity, the
+CLI JSONL stdout transport, the release driver with fake MATLAB roots (single-launcher
+layout, generated `run_pseudo_CT.m`, publication lock, verification), and the single
+installed launcher `bin/pseudoct` (gui, run, run --orchestrate, headless, resolve,
+--list-releases, precedence and mismatch rejection) with fake compiled executables and
+fake MATLAB Runtime evidence, plus the installed payload runner (no MATLAB, mcc or jobs).
+Run the two release/launcher suites with `-p test_release_application.py` and
+`-p test_standalone_release.py` as shown above.
 
 The `manual/` directory retains interactive and scientific comparison tools;
 they are not automated checks and are not run by the commands above. In

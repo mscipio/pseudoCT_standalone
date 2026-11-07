@@ -63,7 +63,7 @@ assert(exist(sentinel, 'file') ~= 2, 'mcc was reached during the dry run.');
 % Synthetic package: inventory, manifest agreement, and tamper detection.
 pkg = fullfile(work, 'pkg');
 rels = {'app/run_pseudo_CT'; 'payload/mlsc_current_payload'; ...
-    'resources/Atlas_a.nii'; 'launchers/pseudoct'};
+    'resources/Atlas_a.nii'; 'bin/pseudoct'};
 bodies = {'app stub'; 'payload stub'; 'atlas bytes'; 'launcher'};
 for kk = 1:numel(rels)
     mkdir(fileparts(fullfile(pkg, rels{kk})));
@@ -108,7 +108,7 @@ local_expect('pseudo_CT:PackageTampered', @() verify_application_package(pkg));
 delete(hidden_path);
 rmdir(fullfile(pkg, '.hidden'));
 
-launcher_path = fullfile(pkg, 'launchers', 'pseudoct');
+launcher_path = fullfile(pkg, 'bin', 'pseudoct');
 delete(launcher_path);
 local_expect('pseudo_CT:PackageTampered', @() verify_application_package(pkg));
 local_write(launcher_path, bodies(4));

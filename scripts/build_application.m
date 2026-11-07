@@ -19,10 +19,11 @@ function report = build_application(release, varargin)
 %     'LockSha256'        Optional expected SHA-256 of dependencies.lock.json.
 %
 %   Build mode requires a clean git tree and the MATLAB Runtime root.
-%   Package layout mirrors an install root, so the bin/ launchers resolve
-%   their siblings by relative path: bin/ (pseudoct, pseudoct-headless,
-%   run_mlsc_current_payload.sh), src/ (interpreted runtime source),
+%   Package layout mirrors an install root, so bin/pseudoct (the only public
+%   launcher) resolves its siblings by relative path: bin/ (pseudoct), src/
+%   (interpreted runtime source),
 %   app/ (run_pseudo_CT GUI/CLI build), payload/ (mlsc_current_payload),
+%   standalone/ (pseudoct_standalone compiled CLI/headless dispatcher),
 %   resources/, application_manifest.txt and SHA256SUMS (see
 %   verify_application_package). Compile support for any release is
 %   UNVERIFIED until a real build is run; this file defines no support table.
@@ -186,8 +187,13 @@ plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'mlsc_cu
     fullfile(spm, 'toolbox', 'DARTEL', 'dartel2.mexa64'); ...
     fullfile(spm, 'toolbox', 'DARTEL', 'dartel3.mexa64'); ...
     fullfile(repo, 'src', 'qc', 'hot_map_mpitool_1024.mat'); fullfile(repo, 'CHANGELOG.md')})];
+% Compiled standalone dispatcher (src/cli/pseudoct_standalone.m). Its CLI and
+% headless dependencies are compiled in through the same src/ -I set as the app.
+plan.standalone_args = [{'-m', fullfile(repo, 'src', 'cli', 'pseudoct_standalone.m'), ...
+    '-d', fullfile(stage, 'standalone'), '-v'}, ...
+    local_pairs('-I', [src_dirs; {spm; opt.aliasingroot; opt.dicom2niftiroot}])];
 % Every entrypoint and -I/-a input, except the generated cfggen directory.
-all_args = [plan.app_args, plan.payload_args];
+all_args = [plan.app_args, plan.payload_args, plan.standalone_args];
 inputs = {};
 for kk = 2:numel(all_args)
     if any(strcmp(all_args{kk - 1}, {'-m', '-I', '-a'})) && ~strcmp(all_args{kk}, cfggen)
@@ -226,10 +232,13 @@ end
 
 function fs = local_file_set(repo, atlas_dir)
 fs.entrypoints = {'run_pseudo_CT.m'; 'src/science/current/mlsc_current_payload.m'};
-fs.launchers = {'bin/pseudoct'; 'bin/pseudoct-headless'; 'scripts/run_mlsc_current_payload.sh'};
+fs.launchers = {'bin/pseudoct'};
+% The payload runner is shipped per release by the release driver; it stays in the source
+% digest so the build provenance still covers it.
+fs.payload_runner = {'scripts/run_mlsc_current_payload.sh'};
 fs.src = local_walk(fullfile(repo, 'src'), 'src');
 fs.resources = local_atlas_names(atlas_dir);
-all_rels = sort([fs.entrypoints; fs.launchers; fs.src]);
+all_rels = sort([fs.entrypoints; fs.launchers; fs.payload_runner; fs.src]);
 digest_text = '';
 for kk = 1:numel(all_rels)
     full_path = fullfile(repo, strrep(all_rels{kk}, '/', filesep));
@@ -268,7 +277,7 @@ function report = local_build(repo, release, report, opt, fs)
 %LOCAL_BUILD The only branch that compiles. Reached only with Mode 'build'.
 out_dir = report.output_dir;
 stage = [out_dir '.partial'];
-for dd = {'app', 'payload', 'resources', 'bin', 'cfggen'}
+for dd = {'app', 'payload', 'standalone', 'resources', 'bin', 'cfggen'}
     local_mkdir(fullfile(stage, dd{1}));
 end
 cfggen = fullfile(stage, 'cfggen');
@@ -276,8 +285,10 @@ local_write_init_helpers(cfggen);
 plan = local_compile_plan(repo, opt, stage);
 local_compile(plan.app_args, fullfile(stage, 'mcc-app.log'));
 local_compile(plan.payload_args, fullfile(stage, 'mcc-payload.log'));
+local_compile(plan.standalone_args, fullfile(stage, 'mcc-standalone.log'));
 local_require(fullfile(stage, 'app', 'run_pseudo_CT'), 'compiled application executable');
 local_require(fullfile(stage, 'payload', 'mlsc_current_payload'), 'compiled payload executable');
+local_require(fullfile(stage, 'standalone', 'pseudoct_standalone'), 'compiled standalone dispatcher');
 
 % Interpreted runtime source at the same relative paths as an install root.
 for kk = 1:numel(fs.src)
@@ -298,12 +309,9 @@ for kk = 1:numel(fs.launchers)
         error('pseudo_CT:BuildOutput', 'Cannot make launcher executable: %s', strtrim(out));
     end
 end
-% Launcher path contract: each bin/ script resolves its siblings from its own
-% location (bin/..): bin/pseudoct -> bin/pseudoct-headless and src/cli,
-% payload/ and application_manifest.txt for run_mlsc_current_payload.sh.
+% Launcher path contract: bin/pseudoct (the only public launcher) resolves its siblings
+% from its own location (bin/..): src/cli for the headless bootstrap.
 local_require(fullfile(stage, 'bin', 'pseudoct'), 'packaged CLI launcher');
-local_require(fullfile(stage, 'bin', 'pseudoct-headless'), 'packaged headless launcher');
-local_require(fullfile(stage, 'bin', 'run_mlsc_current_payload.sh'), 'packaged payload launcher');
 local_require(fullfile(stage, 'src', 'cli', 'pseudoct_headless_cli_r2010b.m'), ...
     'packaged headless MATLAB bootstrap');
 
@@ -330,6 +338,7 @@ manifest_lines = {'schema pseudo-CT.application-package/v1'; ...
     ['aliasing_root ' opt.aliasingroot]; ['dicom2nifti_root ' opt.dicom2niftiroot]; ...
     ['mcr_root ' opt.mcrroot]; ...
     ['mcc_app ' local_mcc_text(plan.app_args)]; ['mcc_payload ' local_mcc_text(plan.payload_args)]; ...
+    ['mcc_standalone ' local_mcc_text(plan.standalone_args)]; ...
     ['build_timestamp_utc ' stamp]; ...
     ['file_count ' num2str(numel(rels) + 1)]; ...
     'inventory_file SHA256SUMS'};
@@ -380,6 +389,7 @@ fprintf('  matlab %s (%s) compiler %s arch %s\n', ...
 fprintf('  source_commit %s dirty=%d\n', report.source_commit, report.source_dirty);
 fprintf('  lock_sha256 %s\n', report.lock_sha256);
 fprintf('  compile_inputs %d present\n', report.compile_input_count);
+fprintf('  compile_targets app=run_pseudo_CT payload=mlsc_current_payload standalone=pseudoct_standalone\n');
 fprintf('  file_set entrypoints=%d src=%d launchers=%d resources=%d source_set_sha256=%s\n', ...
     numel(report.entrypoints), report.source_file_count, report.launcher_count, ...
     report.resource_count, report.source_set_sha256);

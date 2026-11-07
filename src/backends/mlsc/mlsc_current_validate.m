@@ -78,6 +78,32 @@ if strcmp(action, 'actual_identity')
     varargout = {local_actual_runtime_identity(varargin{1})};
     return;
 end
+if strcmp(action, 'resource_atlas_dir')
+    % Absolute atlas directory of one resource manifest. A relative atlas_dir
+    % (current packages) resolves against the manifest's own folder.
+    if length(varargin) < 1 || ~ischar(varargin{1})
+        error('pseudo_CT:MLSCCurrentManifest', ...
+            'A resource manifest path is required.');
+    end
+    manifest_path = strtrim(varargin{1});
+    loaded = local_load_scalar(manifest_path, 'resources', ...
+        'pseudo-CT.mlsc-current-resources/v1');
+    if ~isfield(loaded, 'atlas_dir')
+        error('pseudo_CT:MLSCCurrentManifest', ...
+            'Resource manifest is missing atlas_dir.');
+    end
+    varargout = {local_resolve_atlas_dir(manifest_path, loaded.atlas_dir)};
+    return;
+end
+if strcmp(action, 'sha256_file')
+    % Shared content identity for packaging (same method as the validators).
+    if length(varargin) < 1 || ~ischar(varargin{1})
+        error('pseudo_CT:MLSCCurrentManifest', ...
+            'A file path is required for SHA-256 identity.');
+    end
+    varargout = {local_sha_hex(varargin{1})};
+    return;
+end
 if strcmp(action, 'structure')
     if length(varargin) < 1
         error('pseudo_CT:MLSCCurrentMCR', ...
@@ -138,10 +164,51 @@ error('pseudo_CT:MLSCCurrentContract', ...
 end
 
 function pinned = local_pinned_mcr_root()
+% Source/repository mode keeps the fixed workstation pin. Installed mode uses
+% the MATLAB Runtime root selected by pseudo_CT_runtime_select; an empty value
+% fails closed in every comparison below.
 pinned = '/usr/pubsw/common/matlab/7.11';
+if local_installed_runtime()
+    pinned = local_strip_sep(getenv('PSEUDOCT_RUNTIME_MCR_ROOT'));
+end
+end
+
+function flag = local_installed_runtime()
+%LOCAL_INSTALLED_RUNTIME True in an installed standalone distribution.
+layout = pseudo_CT_package_layout();
+flag = strcmp(layout.mode, 'installed');
+end
+
+function actual = local_installed_expected()
+%LOCAL_INSTALLED_EXPECTED Identity of the selected installed release.
+%   Label and MCR version are exported by pseudo_CT_runtime_select from the
+%   installed catalog. Evidence: runtime/glnxa64/libmwmclmcrrt.so.<version>
+%   and toolbox/compiler/mcrversion.ver (see local_validate_installed_identity).
+release = strtrim(getenv('PSEUDOCT_RUNTIME_RELEASE'));
+version = strtrim(getenv('PSEUDOCT_RUNTIME_MCR_VERSION'));
+if isempty(release) || isempty(regexp(version, '^[0-9]+\.[0-9]+$', 'once'))
+    error('pseudo_CT:MLSCCurrentMCR', ...
+        'The selected MATLAB Runtime identity is unavailable.');
+end
+actual = struct();
+actual.release = release;
+% The catalog has no update field. The generator enforces the runtime's
+% reported update as a minimum against the release build manifest instead.
+actual.update = 0;
+actual.mcr_version = sscanf(version, '%d.%d')';
+actual.arch = 'glnxa64';
+actual.generation = version;
+actual.version = version;
+actual.library = ['libmwmclmcrrt.so.' version];
+% Catalog runtime_identity.mcr_version_file for every installed release.
+actual.version_file = 'toolbox/compiler/mcrversion.ver';
 end
 
 function actual = local_expected_actual()
+if local_installed_runtime()
+    actual = local_installed_expected();
+    return;
+end
 actual = struct();
 actual.release = 'R2010b';
 actual.update = 0;
@@ -149,6 +216,27 @@ actual.mcr_version = [7 14];
 actual.arch = 'glnxa64';
 actual.generation = '7.14';
 actual.version = '7.14';
+actual.library = 'libmwmclmcrrt.so';
+% Source mode has no version file: the pinned 7.14 identity uses the library.
+actual.version_file = '';
+end
+
+function local_validate_installed_identity(root, parsed)
+%LOCAL_VALIDATE_INSTALLED_IDENTITY Selected installed Runtime identity.
+%   Installed releases have no pinned workstation root: the selected root must
+%   carry the release's own runtime library and mcrversion.ver.
+runtime_lib = fullfile(root, 'runtime', 'glnxa64', parsed.library);
+if exist(runtime_lib, 'file') ~= 2
+    error('pseudo_CT:MLSCCurrentMCR', ...
+        'The selected MATLAB Runtime library is unavailable.');
+end
+version_text = local_read_text_file(fullfile(root, 'toolbox', 'compiler', ...
+    'mcrversion.ver'));
+found = regexp(version_text, '[0-9]+\.[0-9]+', 'match', 'once');
+if isempty(found) || ~strcmp(found, parsed.version)
+    error('pseudo_CT:MLSCCurrentMCR', ...
+        'The selected MATLAB Runtime version does not match its release.');
+end
 end
 
 function actual = local_actual_runtime_identity(mcr_root)
@@ -169,17 +257,21 @@ if exist(trimmed, 'dir') ~= 7
         'The current MCR_ROOT directory is unavailable.');
 end
 local_validate_structure(trimmed);
-if ~strcmp(local_strip_sep(trimmed), local_pinned_mcr_root())
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'MATLAB root must be the explicit R2010b installation at %s.', ...
-        local_pinned_mcr_root());
-end
-runtime_lib = fullfile(trimmed, 'runtime', 'glnxa64', 'libmwmclmcrrt.so');
-if exist(runtime_lib, 'file') ~= 2
-    error('pseudo_CT:MLSCCurrentMCR', ...
-        'The MCR 7.14 runtime library under the pinned MATLAB root is unavailable.');
-end
 parsed = local_expected_actual();
+if local_installed_runtime()
+    local_validate_installed_identity(trimmed, parsed);
+else
+    if ~strcmp(local_strip_sep(trimmed), local_pinned_mcr_root())
+        error('pseudo_CT:MLSCCurrentMCR', ...
+            'MATLAB root must be the explicit R2010b installation at %s.', ...
+            local_pinned_mcr_root());
+    end
+    runtime_lib = fullfile(trimmed, 'runtime', 'glnxa64', parsed.library);
+    if exist(runtime_lib, 'file') ~= 2
+        error('pseudo_CT:MLSCCurrentMCR', ...
+            'The MCR 7.14 runtime library under the pinned MATLAB root is unavailable.');
+    end
+end
 actual = struct();
 actual.release = parsed.release;
 actual.version = parsed.version;
@@ -187,6 +279,64 @@ actual.update = parsed.update;
 actual.mcr_version = parsed.mcr_version;
 actual.arch = parsed.arch;
 actual.generation = parsed.generation;
+actual.library = parsed.library;
+actual.version_file = parsed.version_file;
+end
+
+function atlas = local_resolve_atlas_dir(manifest_path, atlas_text)
+%LOCAL_RESOLVE_ATLAS_DIR Canonical absolute atlas directory of one manifest.
+%   Absolute atlas_dir (older/source manifests) is returned without
+%   resolution, as before. A relative value is resolved against the folder of
+%   the manifest file, then canonicalised. Both forms carry no trailing slash.
+%   Worked example: manifest /pkg/runtimes/R2019b/payload/resource_manifest.mat
+%   with atlas_dir '../../../resources' gives fullfile('/pkg/runtimes/R2019b/payload',
+%   '../../../resources') = '/pkg/runtimes/R2019b/payload/../../../resources';
+%   canonicalising pops payload, R2019b and runtimes, giving '/pkg/resources'.
+if ~ischar(atlas_text) || size(atlas_text, 1) ~= 1
+    error('pseudo_CT:MLSCCurrentManifest', ...
+        'Resource atlas_dir must be a single path string.');
+end
+trimmed = local_strip_sep(atlas_text);
+if isempty(trimmed)
+    error('pseudo_CT:MLSCCurrentManifest', ...
+        'Resource atlas_dir must not be empty.');
+end
+if trimmed(1) == '/'
+    atlas = trimmed;
+    return;
+end
+manifest_path = strtrim(manifest_path);
+if isempty(manifest_path) || manifest_path(1) ~= '/'
+    error('pseudo_CT:MLSCCurrentManifest', ...
+        'The resource manifest path must be absolute.');
+end
+atlas = local_canonical_path(fullfile(fileparts(manifest_path), trimmed));
+end
+
+function canonical = local_canonical_path(path_text)
+%LOCAL_CANONICAL_PATH Absolute path with '.', '..', and empty segments removed.
+segments = regexp(path_text, '/', 'split');
+kept = {};
+for ii = 1:length(segments)
+    segment = segments{ii};
+    if isempty(segment) || strcmp(segment, '.')
+        continue;
+    end
+    if strcmp(segment, '..')
+        if ~isempty(kept)
+            kept(end) = [];
+        end
+    else
+        kept{end + 1} = segment; %#ok<AGROW>
+    end
+end
+canonical = '';
+for ii = 1:length(kept)
+    canonical = [canonical '/' kept{ii}]; %#ok<AGROW>
+end
+if isempty(canonical)
+    canonical = '/';
+end
 end
 
 function value = local_strip_sep(value)
@@ -198,10 +348,10 @@ end
 
 function same = local_same_basename(path_a, path_b)
 %LOCAL_SAME_BASENAME Basename identity for relocatable installs (R2010b).
-%   Compares only the file name plus extension so the same content under a
-%   new absolute directory prefix still binds; content itself is proven by
-%   the recomputed SHA-256 at each call site. Both inputs must be absolute
-%   paths (no bare basenames or relative paths); empty names never match.
+%   Compares only the file name plus extension, so a bare basename (current
+%   package manifests) and an absolute path (older manifests) bind the same
+%   file; content itself is proven by the recomputed SHA-256 at each call site.
+%   Empty names never match.
 same = false;
 try
     if ~ischar(path_a) || size(path_a, 1) ~= 1 || ...
@@ -211,9 +361,6 @@ try
     trimmed_a = strtrim(path_a);
     trimmed_b = strtrim(path_b);
     if isempty(trimmed_a) || isempty(trimmed_b)
-        return;
-    end
-    if trimmed_a(1) ~= '/' || trimmed_b(1) ~= '/'
         return;
     end
     [~, base_a, ext_a] = fileparts(trimmed_a);
@@ -366,8 +513,11 @@ if ~local_same_basename(strtrim(build.runner), strtrim(current.runner))
         'Build manifest runner does not match the current artifact.');
 end
 pinned = local_pinned_mcr_root();
-if ~ischar(build.mcr_root) || size(build.mcr_root, 1) ~= 1 || ...
-        ~strcmp(local_strip_sep(strtrim(build.mcr_root)), pinned)
+% Installed mode: the build machine's root is not the installed Runtime; the
+% selected release is proven by the identity checks below instead.
+if ~local_installed_runtime() && ...
+        (~ischar(build.mcr_root) || size(build.mcr_root, 1) ~= 1 || ...
+        ~strcmp(local_strip_sep(strtrim(build.mcr_root)), pinned))
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Build manifest MCR_ROOT does not match the pinned %s.', pinned);
 end

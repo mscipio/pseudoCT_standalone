@@ -80,6 +80,13 @@ for kk = 1:numel(listed)
         error('pseudo_CT:PackageTampered', 'SHA-256 mismatch for %s.', listed{kk});
     end
 end
+% The compiled standalone dispatcher is optional for older packages, but a
+% standalone/ directory must contain its executable.
+if exist(fullfile(package_dir, 'standalone'), 'dir') == 7 && ...
+        exist(fullfile(package_dir, 'standalone', 'pseudoct_standalone'), 'file') ~= 2
+    error('pseudo_CT:PackageIncomplete', ...
+        'standalone/ lacks the compiled pseudoct_standalone dispatcher: %s', package_dir);
+end
 
 report = struct('passed', true, 'file_count', numel(listed), ...
     'release', local_field(manifest, 'release'), ...

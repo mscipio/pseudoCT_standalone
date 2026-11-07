@@ -62,7 +62,9 @@ config.normalization.host_folder = '';
 
 
 % Current compiled prepare/compute artifacts shared with local and MLSC.
-% Resolve every artifact from this installation's current root.
+% Source-repository profiles retain the existing compiled/current manifest
+% names; installed runtime selection rebases them to the package manifest
+% names.
 artifact_dir_here = dependency_paths.current_root;
 config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
     'run_mlsc_current_payload.sh');

@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-# User-facing CLI for MATLAB-serialized pseudoCT Headless API v2 requests.
+# pseudoct: the single public launcher for pseudoCT.
+#
+# Repository checkout (src/ present, no runtimes/): the licensed MATLAB CLI.
+# Installed distribution (runtimes/ present, no src/): compiled release selection
+# and dispatch through the MATLAB Runtime of the selected release.
+#
+#   pseudoct gui      [--mcr LABEL] [--mcr-root DIR]
+#   pseudoct run      [--mcr LABEL] [--mcr-root DIR] validate|run <CLI options>
+#   pseudoct run      [--mcr LABEL] [--mcr-root DIR] --orchestrate REQUEST.mat REPORT.mat
+#   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
+#   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
+#   pseudoct --list-releases | --help
 set -u
 
 EXIT_USAGE=64
@@ -14,10 +25,29 @@ operation_phase=not_started
 usage() {
     cat <<'USAGE'
 Usage:
-  pseudoct validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
-  pseudoct run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
+  pseudoct gui      [--mcr LABEL] [--mcr-root DIR]
+  pseudoct run      validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
+  pseudoct run      run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
+  pseudoct run      [--mcr LABEL] [--mcr-root DIR] --orchestrate REQUEST.mat REPORT.mat
+  pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
+  pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
+  pseudoct --list-releases
+  pseudoct --help
 
-Options:
+Operations:
+  gui                 Open the pseudoCT application (installed distribution only).
+  run validate|run    Validate a request, or validate and submit it (CLI options below).
+  run --orchestrate   Run one orchestrated request MAT and write a report MAT (installed).
+  headless            Run one v2 headless request MAT into a result MAT.
+  resolve             Validate one MATLAB Runtime and print sourceable PSEUDOCT_* lines.
+  --list-releases     Print one line per installed release: label, MCR, default marker.
+
+Release selection (installed distribution): --mcr LABEL selects the release (default:
+the catalog default, R2010b). The MATLAB Runtime root is taken from, in order:
+--mcr-root DIR, PSEUDOCT_MCR_ROOT_<LABEL>, PSEUDOCT_MCR_ROOT. The runtime identity is
+always validated against the catalog.
+
+Options (run validate|run):
   --profile NAME                  Canonical supported profile (required)
   --mprage FILE --umap FILE       One subject; UMAP may be omitted for discovery
   --config job.json               Multi-subject JSON with mprage[] and optional umap[]
@@ -82,122 +112,548 @@ PY
     exit "$code"
 }
 
-if [ "$#" -lt 1 ]; then
-    usage >&2
-    exit "$EXIT_USAGE"
-fi
-action=$1
-shift
-case "$action" in
-    validate|run) ;;
-    -h|--help) usage; exit 0 ;;
-    *) printf 'pseudoct: command must be validate or run.\n' >&2; exit "$EXIT_USAGE" ;;
-esac
 
-profile=''
-mprage=''
-umap=''
-config=''
-correct_aliasing=''
-recenter=''
-cleanup_success=''
-artifact_root=''
-group_account=''
-host_key_file=''
-credential_handoff=''
-format=text
-seen_mprage=0
-seen_umap=0
-seen_config=0
+fail_op() {
+    printf 'pseudoct: %s\n' "$1" >&2
+    exit "$2"
+}
+
+# Locate this launcher through PATH and symlinks; the package root is the parent of the
+# real directory of bin/pseudoct, never the caller's directory.
+case "$0" in
+    */*) self_path=$0 ;;
+    *) self_path=$(command -v "$0") || fail_op 'cannot locate the launcher' 69 ;;
+esac
+self_path=$(readlink -f -- "$self_path") || fail_op 'cannot resolve the launcher path' 69
+bin_dir=$(CDPATH= cd -P -- "$(dirname -- "$self_path")" && pwd -P) ||
+    fail_op 'cannot resolve the launcher directory' 69
+root_dir=$(CDPATH= cd -P -- "$bin_dir/.." && pwd -P) ||
+    fail_op 'cannot resolve the installation root' 69
+self=$bin_dir/$(basename -- "$self_path")
+installed=0
+if [ -d "$root_dir/runtimes" ] && [ ! -e "$root_dir/src" ]; then
+    installed=1
+fi
+if [ "$installed" -eq 1 ]; then
+    catalog=$root_dir/manifest.json
+    catalog_key=catalog
+    catalog_mode=installed
+else
+    catalog=$root_dir/config/releases.json
+    catalog_key=''
+    catalog_mode=catalog
+fi
+
+# Artifacts every installed release must provide (kept in step with the driver).
+RELEASE_ARTIFACTS='app/run_pseudo_CT payload/mlsc_current_payload payload/run_mlsc_current_payload.sh standalone/pseudoct_standalone'
+
+# Catalog reader: list | default | resolve LABEL. Installed mode lists complete releases only.
+CATALOG_PY='
+import json, os, re, shlex, sys
+path, key, command, label, root, mode = sys.argv[1:7]
+REQUIRED = ["app/run_pseudo_CT", "payload/mlsc_current_payload",
+            "payload/run_mlsc_current_payload.sh", "standalone/pseudoct_standalone"]
+def fail(message, code):
+    sys.stderr.write("pseudoct: " + message + "\n")
+    sys.exit(code)
+def complete(name):
+    return all(os.path.isfile(os.path.join(root, "runtimes", name, *rel.split("/")))
+               for rel in REQUIRED)
+try:
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, ValueError) as exc:
+    fail("release catalog is unavailable: %s" % exc, 69)
+if key:
+    data = data.get(key) if isinstance(data, dict) else None
+if not isinstance(data, dict) or data.get("schema") != 1 or not isinstance(data.get("releases"), list):
+    fail("release catalog is invalid", 69)
+entries = data["releases"]
+default = data.get("default")
+labels = []
+for entry in entries:
+    ident = entry.get("runtime_identity") if isinstance(entry, dict) else None
+    ok = (isinstance(entry, dict) and isinstance(entry.get("label"), str)
+          and re.fullmatch(r"R[0-9]{4}[ab]", entry["label"])
+          and all(isinstance(entry.get(k), str) and entry.get(k) for k in ("matlab_version", "mcr_version", "architecture"))
+          and isinstance(ident, dict) and isinstance(ident.get("mcr_version_file"), str)
+          and isinstance(ident.get("library"), str)
+          and ident["library"] == "libmwmclmcrrt.so." + entry["mcr_version"])
+    if not ok:
+        fail("release catalog contains an invalid entry", 69)
+    labels.append(entry["label"])
+if len(set(labels)) != len(labels) or default not in labels:
+    fail("release catalog has duplicate labels or an invalid default", 69)
+if command == "list":
+    for entry in entries:
+        if mode == "installed" and not complete(entry["label"]):
+            continue
+        print("%s\t%s\t%s" % (entry["label"], entry["mcr_version"],
+                              "default" if entry["label"] == default else "-"))
+elif command == "default":
+    print(default)
+else:
+    match = [entry for entry in entries if entry["label"] == label]
+    if not label or not match:
+        fail("unknown or missing release label %r; supported: %s"
+             % (label, ", ".join(labels)), 2)
+    entry = match[0]
+    print("CAT_MCR_VERSION=" + shlex.quote(entry["mcr_version"]))
+    print("CAT_ARCH=" + shlex.quote(entry["architecture"]))
+    print("CAT_VERSION_FILE=" + shlex.quote(entry["runtime_identity"]["mcr_version_file"]))
+    print("CAT_LIBRARY=" + shlex.quote(entry["runtime_identity"]["library"]))
+'
+
+catalog_query() {
+    python3 -I -B -c "$CATALOG_PY" "$catalog" "$catalog_key" "$1" "${2-}" "$root_dir" "$catalog_mode"
+}
+
+# Single-quote a value for sourcing: embedded quotes become '\''.
+quoted() {
+    q=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
+    printf "'%s'" "$q"
+}
 
 need_value() {
     [ "$#" -ge 2 ] || error_record "$EXIT_USAGE" "An option is missing its value."
 }
 
-while [ "$#" -gt 0 ]; do
-    option=$1
-    shift
-    case "$option" in
-        --profile|--mprage|--umap|--config|--correct-aliasing|\
-        --recenter-before-normalization|--cleanup-on-success|\
-        --current-artifact-root|--group-account|--host-key-file|\
-        --credential-handoff|--format)
-            need_value "$option" "$@"
-            value=$1
-            shift
+list_releases() {
+    catalog_query list '' || exit $?
+    exit 0
+}
+
+require_installed() {
+    [ "$installed" -eq 1 ] ||
+        fail_op "$1 requires an installed pseudoCT distribution (runtimes/ beside bin/)" "$EXIT_USAGE"
+}
+
+# Shared selection: LABEL HAVE_ROOT ROOT_ARG RELATIVE_EXECUTABLE. Sets SEL_EXE, SEL_RUNNER,
+# SEL_MCR_ROOT and SEL_LD_PATH. Returns 64 (unknown label or bad root option) or 69
+# (incomplete release, missing or mismatched MATLAB Runtime). The runtime identity
+# (library and mcrversion.ver) is always checked against the catalog.
+select_release() {
+    sel_label=$1
+    sel_have_root=$2
+    sel_root_arg=$3
+    sel_rel=$4
+    SEL_ERROR=''
+    rc=0
+    fields=$(catalog_query resolve "$sel_label") || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        [ "$rc" -eq 2 ] && return "$EXIT_USAGE"
+        return "$EXIT_RUNTIME"
+    fi
+    eval "$fields"
+    [ "$CAT_ARCH" = glnxa64 ] || { SEL_ERROR="unsupported architecture $CAT_ARCH"; return "$EXIT_RUNTIME"; }
+    release_dir=$root_dir/runtimes/$sel_label
+    for artifact in $RELEASE_ARTIFACTS; do
+        if [ ! -f "$release_dir/$artifact" ] || [ ! -x "$release_dir/$artifact" ]; then
+            SEL_ERROR="$sel_label is incomplete in this distribution (missing $artifact)"
+            return "$EXIT_RUNTIME"
+        fi
+    done
+    if [ "$sel_have_root" -eq 1 ]; then
+        [ -n "$sel_root_arg" ] || { SEL_ERROR='--mcr-root requires a directory'; return "$EXIT_USAGE"; }
+        selected=$sel_root_arg
+    else
+        eval "per_label=\${PSEUDOCT_MCR_ROOT_${sel_label}-}"
+        if [ -n "$per_label" ]; then
+            selected=$per_label
+        elif [ -n "${PSEUDOCT_MCR_ROOT-}" ]; then
+            selected=$PSEUDOCT_MCR_ROOT
+        else
+            SEL_ERROR="no MATLAB Runtime root for $sel_label: pass --mcr-root, or set PSEUDOCT_MCR_ROOT_$sel_label or PSEUDOCT_MCR_ROOT"
+            return "$EXIT_RUNTIME"
+        fi
+    fi
+    mcr_abs=$(CDPATH= cd -P -- "$selected" 2>/dev/null && pwd -P) ||
+        { SEL_ERROR="MATLAB Runtime root is not a directory: $selected"; return "$EXIT_RUNTIME"; }
+    library=$mcr_abs/runtime/$CAT_ARCH/$CAT_LIBRARY
+    [ -f "$library" ] ||
+        { SEL_ERROR="$sel_label: runtime library $CAT_LIBRARY not found under $mcr_abs"; return "$EXIT_RUNTIME"; }
+    version_file=$mcr_abs/$CAT_VERSION_FILE
+    [ -f "$version_file" ] ||
+        { SEL_ERROR="$sel_label: $CAT_VERSION_FILE not found under $mcr_abs"; return "$EXIT_RUNTIME"; }
+    found=$(head -n 1 "$version_file" | tr -d '\r' | sed 's/[[:space:]]*$//')
+    [ "$found" = "$CAT_MCR_VERSION" ] ||
+        { SEL_ERROR="MATLAB Runtime at $mcr_abs reports MCR '$found'; $sel_label requires '$CAT_MCR_VERSION'"; return "$EXIT_RUNTIME"; }
+    SEL_RELEASE=$sel_label
+    SEL_EXE=$release_dir/$sel_rel
+    SEL_RUNNER=$release_dir/payload/run_mlsc_current_payload.sh
+    SEL_MCR_ROOT=$mcr_abs
+    SEL_LD_PATH=$mcr_abs/runtime/glnxa64:$mcr_abs/bin/glnxa64:$mcr_abs/sys/os/glnxa64
+    return 0
+}
+
+release_fail() {
+    [ -z "${SEL_ERROR:-}" ] || printf 'pseudoct: %s\n' "$SEL_ERROR" >&2
+    exit "$1"
+}
+
+# Environment every compiled release inherits: the installation root and the resolved
+# release label, so the dispatcher binds the selected release and not the catalog default.
+export_release_env() {
+    PSEUDOCT_INSTALL_ROOT=$root_dir
+    PSEUDOCT_RUNTIME_RELEASE=$SEL_RELEASE
+    PSEUDOCT_RUNTIME_MCR_ROOT=$SEL_MCR_ROOT
+    export PSEUDOCT_INSTALL_ROOT PSEUDOCT_RUNTIME_RELEASE PSEUDOCT_RUNTIME_MCR_ROOT
+}
+
+# Leading/shared selection options anywhere in the arguments; everything else is kept
+# in REST_ARGS in order.
+parse_selection() {
+    SEL_OPT_LABEL=''
+    SEL_OPT_HAVE_LABEL=0
+    SEL_OPT_ROOT=''
+    SEL_OPT_HAVE_ROOT=0
+    REST_ARGS=()
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --mcr)
+                [ "$#" -ge 2 ] && [ "$SEL_OPT_HAVE_LABEL" -eq 0 ] ||
+                    fail_op 'option --mcr needs exactly one release label' "$EXIT_USAGE"
+                SEL_OPT_LABEL=$2; SEL_OPT_HAVE_LABEL=1; shift 2 ;;
+            --mcr=*)
+                [ "$SEL_OPT_HAVE_LABEL" -eq 0 ] || fail_op 'specify --mcr only once' "$EXIT_USAGE"
+                SEL_OPT_LABEL=${1#*=}; SEL_OPT_HAVE_LABEL=1; shift ;;
+            --mcr-root)
+                [ "$#" -ge 2 ] && [ "$SEL_OPT_HAVE_ROOT" -eq 0 ] ||
+                    fail_op 'option --mcr-root needs exactly one directory' "$EXIT_USAGE"
+                SEL_OPT_ROOT=$2; SEL_OPT_HAVE_ROOT=1; shift 2 ;;
+            --mcr-root=*)
+                [ "$SEL_OPT_HAVE_ROOT" -eq 0 ] || fail_op 'specify --mcr-root only once' "$EXIT_USAGE"
+                SEL_OPT_ROOT=${1#*=}; SEL_OPT_HAVE_ROOT=1; shift ;;
+            *)
+                REST_ARGS+=("$1"); shift ;;
+        esac
+    done
+    if [ "$SEL_OPT_HAVE_ROOT" -eq 1 ]; then
+        [ -n "$SEL_OPT_ROOT" ] || fail_op '--mcr-root requires a directory' "$EXIT_USAGE"
+        case "$SEL_OPT_ROOT" in /*) ;; *) SEL_OPT_ROOT=$PWD/$SEL_OPT_ROOT ;; esac
+    fi
+}
+
+# Label of the selection: explicit --mcr, else the catalog default.
+selection_label() {
+    if [ "$SEL_OPT_HAVE_LABEL" -eq 1 ]; then
+        SEL_LABEL=$SEL_OPT_LABEL
+    else
+        SEL_LABEL=$(catalog_query default '') || fail_op 'cannot read the default release' "$EXIT_RUNTIME"
+    fi
+}
+
+op_resolve() {
+    parse_selection "$@"
+    [ "${#REST_ARGS[@]}" -eq 0 ] || fail_op 'resolve takes only --mcr and --mcr-root' "$EXIT_USAGE"
+    require_installed resolve
+    selection_label
+    select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" standalone/pseudoct_standalone ||
+        release_fail $?
+    printf 'PSEUDOCT_EXE=%s\n' "$(quoted "$SEL_EXE")"
+    printf 'PSEUDOCT_MCR_ROOT=%s\n' "$(quoted "$SEL_MCR_ROOT")"
+    printf 'PSEUDOCT_RUNNER=%s\n' "$(quoted "$SEL_RUNNER")"
+    printf 'PSEUDOCT_INSTALL_ROOT=%s\n' "$(quoted "$root_dir")"
+    printf 'PSEUDOCT_RUNTIME_RELEASE=%s\n' "$(quoted "$SEL_RELEASE")"
+    printf 'PSEUDOCT_RUNTIME_MCR_ROOT=%s\n' "$(quoted "$SEL_MCR_ROOT")"
+    exit 0
+}
+
+op_gui() {
+    parse_selection "$@"
+    [ "${#REST_ARGS[@]}" -eq 0 ] || fail_op 'gui takes no arguments besides --mcr and --mcr-root' "$EXIT_USAGE"
+    require_installed gui
+    selection_label
+    select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" app/run_pseudo_CT ||
+        release_fail $?
+    LD_LIBRARY_PATH=$SEL_LD_PATH
+    export LD_LIBRARY_PATH
+    export_release_env
+    exec "$SEL_EXE"
+}
+
+op_orchestrate() {
+    # Arguments: REQUEST.mat REPORT.mat; selection options were consumed by parse_selection.
+    [ "$#" -eq 2 ] || fail_op 'usage: pseudoct run --orchestrate REQUEST.mat REPORT.mat [--mcr LABEL] [--mcr-root DIR]' "$EXIT_USAGE"
+    require_installed 'run --orchestrate'
+    request_path=$(readlink -f -- "$1") ||
+        fail_op 'orchestration request is unavailable or unreadable' "$EXIT_VALIDATION"
+    [ -f "$request_path" ] && [ -r "$request_path" ] ||
+        fail_op 'orchestration request is unavailable or unreadable' "$EXIT_VALIDATION"
+    report_path=$(readlink -m -- "$2") || fail_op 'orchestration report path is invalid' "$EXIT_AUTH"
+    [ -n "$report_path" ] && [ ! -d "$report_path" ] ||
+        fail_op 'orchestration report must name a file' "$EXIT_AUTH"
+    report_parent=$(dirname -- "$report_path")
+    [ -d "$report_parent" ] && [ -w "$report_parent" ] && [ -x "$report_parent" ] ||
+        fail_op 'report parent is not a writable directory' "$EXIT_AUTH"
+    [ "$request_path" != "$report_path" ] || fail_op 'request and report paths must differ' "$EXIT_AUTH"
+    selection_label
+    select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" standalone/pseudoct_standalone ||
+        release_fail $?
+    LD_LIBRARY_PATH=$SEL_LD_PATH
+    export LD_LIBRARY_PATH
+    export_release_env
+    PSEUDOCT_REQUEST_MAT=$request_path
+    PSEUDOCT_RESULT_MAT=$report_path
+    export PSEUDOCT_REQUEST_MAT PSEUDOCT_RESULT_MAT
+    "$SEL_EXE" orchestrate "$request_path" "$report_path"
+    exit $?
+}
+
+op_headless() {
+    parse_selection "$@"
+    [ "${#REST_ARGS[@]}" -eq 2 ] ||
+        fail_op 'usage: pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]' "$EXIT_USAGE"
+    request_input=${REST_ARGS[0]}
+    result_input=${REST_ARGS[1]}
+    if [ "$installed" -eq 0 ] && { [ "$SEL_OPT_HAVE_LABEL" -eq 1 ] || [ "$SEL_OPT_HAVE_ROOT" -eq 1 ]; }; then
+        fail_op '--mcr and --mcr-root are available only in an installed standalone distribution' "$EXIT_USAGE"
+    fi
+    newline='
+'
+    case "$request_input" in
+        *"$newline"*) fail_op 'request path cannot contain a newline' 65 ;;
+    esac
+    case "$result_input" in
+        *"$newline"*) fail_op 'result path cannot contain a newline' 66 ;;
+    esac
+    request_path=$(readlink -f -- "$request_input") ||
+        fail_op 'request MAT file is unavailable or unreadable' 65
+    [ -f "$request_path" ] && [ -r "$request_path" ] ||
+        fail_op 'request MAT file is unavailable or unreadable' 65
+    # -m canonicalizes a not-yet-created output and resolves existing parent and target
+    # symlinks, allowing reliable same-file checks without creating files.
+    result_path=$(readlink -m -- "$result_input") || fail_op 'result path is invalid' 66
+    [ -n "$result_path" ] && [ ! -d "$result_path" ] || fail_op 'result path must name a file' 66
+    result_parent=$(dirname -- "$result_path")
+    [ -d "$result_parent" ] && [ -w "$result_parent" ] && [ -x "$result_parent" ] ||
+        fail_op 'result parent is not a writable directory' 66
+    if [ -e "$result_path" ] && [ ! -w "$result_path" ]; then
+        fail_op 'existing result file is not writable' 66
+    fi
+    [ "$request_path" != "$result_path" ] || fail_op 'request and result paths must differ' 66
+
+    if [ "$installed" -eq 1 ]; then
+        selection_label
+        select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" standalone/pseudoct_standalone ||
+            release_fail $?
+        standalone_exe=$SEL_EXE
+        mcr_ld_path=$SEL_LD_PATH
+        export_release_env
+    else
+        unset PSEUDOCT_RUNTIME_RELEASE
+        matlab_bin=${PSEUDOCT_MATLAB:-/usr/pubsw/common/matlab/7.11/bin/matlab}
+        case "$matlab_bin" in
+            */*) ;;
+            *) matlab_bin=$(command -v "$matlab_bin") ||
+                fail_op 'MATLAB executable is unavailable; set PSEUDOCT_MATLAB to its path' "$EXIT_RUNTIME" ;;
+        esac
+        matlab_bin=$(readlink -f -- "$matlab_bin") ||
+            fail_op 'MATLAB executable is unavailable; set PSEUDOCT_MATLAB to its path' "$EXIT_RUNTIME"
+        [ -x "$matlab_bin" ] ||
+            fail_op 'MATLAB executable is unavailable; set PSEUDOCT_MATLAB to its path' "$EXIT_RUNTIME"
+        [ -f "$root_dir/src/cli/pseudoct_headless_cli_r2010b.m" ] ||
+            fail_op 'versioned MATLAB bootstrap is unavailable' 70
+    fi
+
+    # Only request/result paths are added to the MATLAB environment. Credentials
+    # remain in the external one-use MAT handoff referenced by the request.
+    PSEUDOCT_REQUEST_MAT=$request_path
+    PSEUDOCT_RESULT_MAT=$result_path
+    export PSEUDOCT_REQUEST_MAT PSEUDOCT_RESULT_MAT
+    case "$result_parent/" in
+        */MR_PET/tmp/*) ;;
+        *) fail_op 'runtime directory must be under the resolved subject MR_PET/tmp' 70 ;;
+    esac
+    runtime_dir=$(umask 077; mktemp -d "$result_parent/pseudoct-headless.XXXXXXXX") ||
+        fail_op 'subject runtime directory unavailable' 70
+    chmod 00700 "$runtime_dir" || fail_op 'cannot secure subject runtime directory' 70
+    trap 'rm -rf -- "$runtime_dir"' 0
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+    export PSEUDOCT_INSTALL_ROOT="$root_dir"
+    export TMPDIR="$runtime_dir" TMP="$runtime_dir" TEMP="$runtime_dir"
+    export MATLAB_PREFDIR="$runtime_dir/matlab-prefs" MCR_CACHE_ROOT="$runtime_dir/mcr-cache"
+    cd -P -- "$runtime_dir" || fail_op 'cannot enter subject runtime directory' 70
+
+    if [ "$installed" -eq 1 ]; then
+        LD_LIBRARY_PATH=$mcr_ld_path "$standalone_exe" headless
+    else
+        # Keep this fixed: no paths or request values are interpolated into MATLAB
+        # source or command-line expressions. The bootstrap keeps the JVM enabled.
+        "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB'
+try
+    addpath(fullfile(getenv('PSEUDOCT_INSTALL_ROOT'), 'src', 'cli'), '-begin');
+    pseudoct_headless_cli_r2010b;
+catch
+    status = 70;
+end
+if ~exist('status', 'var') || ~isnumeric(status) || ...
+        ~isscalar(status) || ~isfinite(status) || status ~= fix(status) || ...
+        status < 0 || status > 255
+    status = 70;
+end
+exit(status);
+MATLAB
+    fi
+    matlab_status=$?
+
+    case "$matlab_status" in
+        0|2|3)
+            [ -f "$result_path" ] && [ -s "$result_path" ] ||
+                fail_op 'MATLAB returned without a usable result MAT file' 70
             ;;
-        --profile=*) value=${option#*=}; option=--profile ;;
-        --mprage=*) value=${option#*=}; option=--mprage ;;
-        --umap=*) value=${option#*=}; option=--umap ;;
-        --config=*) value=${option#*=}; option=--config ;;
-        --correct-aliasing=*) value=${option#*=}; option=--correct-aliasing ;;
-        --recenter-before-normalization=*) value=${option#*=}; option=--recenter-before-normalization ;;
-        --cleanup-on-success=*) value=${option#*=}; option=--cleanup-on-success ;;
-        --current-artifact-root=*) value=${option#*=}; option=--current-artifact-root ;;
-        --group-account=*) value=${option#*=}; option=--group-account ;;
-        --host-key-file=*) value=${option#*=}; option=--host-key-file ;;
-        --credential-handoff=*) value=${option#*=}; option=--credential-handoff ;;
-        --format=*) value=${option#*=}; option=--format ;;
-        -h|--help) usage; exit 0 ;;
-        *) error_record "$EXIT_USAGE" "Unknown option: $option" ;;
     esac
-    case "$option" in
-        --profile) [ -z "$profile" ] || error_record "$EXIT_USAGE" 'Specify --profile only once.'; profile=$value ;;
-        --mprage) [ "$seen_mprage" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --mprage only once.'; mprage=$value; seen_mprage=1 ;;
-        --umap) [ "$seen_umap" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --umap only once.'; umap=$value; seen_umap=1 ;;
-        --config) [ "$seen_config" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --config only once.'; config=$value; seen_config=1 ;;
-        --correct-aliasing) correct_aliasing=$value ;;
-        --recenter-before-normalization) recenter=$value ;;
-        --cleanup-on-success) cleanup_success=$value ;;
-        --current-artifact-root) artifact_root=$value ;;
-        --group-account) group_account=$value ;;
-        --host-key-file) host_key_file=$value ;;
-        --credential-handoff) credential_handoff=$value ;;
-        --format) format=$value ;;
+    case "$matlab_status" in
+        0|2|3) exit "$matlab_status" ;;
+        70)
+            printf 'pseudoct: MATLAB dispatch/runtime failure\n' >&2
+            exit 70 ;;
+        *)
+            printf 'pseudoct: MATLAB startup failed or exited unexpectedly\n' >&2
+            exit 70 ;;
     esac
-done
+}
 
-case " $profiles " in *" $profile "*) ;; *) error_record "$EXIT_USAGE" 'A supported --profile is required.' ;; esac
-case "$format" in text|jsonl) ;; *) error_record "$EXIT_USAGE" '--format must be text or jsonl.' ;; esac
-if [ "$seen_config" -eq 1 ]; then
-    [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] || \
-        error_record "$EXIT_USAGE" 'Use either --config or single-subject --mprage/--umap flags.'
-    [ -f "$config" ] && [ -r "$config" ] || \
-        error_record "$EXIT_USAGE" 'The job configuration file is unavailable.'
-else
-    [ "$seen_mprage" -eq 1 ] || error_record "$EXIT_USAGE" 'Specify --mprage or --config.'
-fi
-for flag_value in "$correct_aliasing" "$recenter" "$cleanup_success"; do
-    case "$flag_value" in ''|yes|no) ;; *) error_record "$EXIT_USAGE" 'Processing options accept only yes or no.' ;; esac
-done
-case "$profile" in
-    local|local-mprage-only) backend=local ;;
-    mlsc|mlsc-mprage-only) backend=mlsc ;;
-esac
-case "$profile" in *mprage-only*) mprage_only=1 ;; *) mprage_only=0 ;; esac
-if [ "$mprage_only" -eq 1 ] && [ "$seen_umap" -eq 1 ]; then
-    error_record "$EXIT_USAGE" 'MPRAGE-only profiles do not accept --umap.'
-fi
-if [ -n "$artifact_root" ]; then
-    case "$profile" in mlsc|mlsc-mprage-only|local|local-mprage-only) ;; *) error_record "$EXIT_USAGE" '--current-artifact-root requires a supported profile.' ;; esac
-fi
-if [ -n "$group_account" ] && [ "$backend" != mlsc ]; then
-    error_record "$EXIT_USAGE" '--group-account is available only for MLSC profiles.'
-fi
-if [ -n "$host_key_file" ] && [ "$backend" != mlsc ]; then
-    error_record "$EXIT_USAGE" '--host-key-file is available only for MLSC profiles.'
-fi
-if [ -n "$credential_handoff" ] && { [ "$action" != run ] || [ "$backend" = local ]; }; then
-    error_record "$EXIT_USAGE" '--credential-handoff is valid only for remote run.'
-fi
-case "$group_account$artifact_root$host_key_file$credential_handoff" in *$'\n'*|*$'\r'*) error_record "$EXIT_USAGE" 'CLI text values cannot contain line breaks.' ;; esac
-if [ -n "$credential_handoff" ]; then
-    credential_handoff=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$credential_handoff") || \
-        error_record "$EXIT_USAGE" 'Credential handoff path is invalid.'
-fi
+op_run() {
+    parse_selection "$@"
+    if [ "${#REST_ARGS[@]}" -gt 0 ] && [ "${REST_ARGS[0]}" = --orchestrate ]; then
+        op_orchestrate "${REST_ARGS[@]:1}"
+    fi
+    set -- ${REST_ARGS[@]+"${REST_ARGS[@]}"}
+    if [ "$#" -lt 1 ]; then
+        usage >&2
+        exit "$EXIT_USAGE"
+    fi
+    action=$1
+    shift
+    case "$action" in
+        validate|run) ;;
+        *) fail_op 'run takes validate or run (or --orchestrate); see --help' "$EXIT_USAGE" ;;
+    esac
 
-root_dir=$(CDPATH= cd -P -- "$(dirname -- "$(readlink -f -- "$0")")/.." 2>/dev/null && pwd -P) || \
-    error_record "$EXIT_RUNTIME" 'Cannot resolve pseudoCT installation root.'
+    profile=''
+    mprage=''
+    umap=''
+    config=''
+    correct_aliasing=''
+    recenter=''
+    cleanup_success=''
+    artifact_root=''
+    group_account=''
+    host_key_file=''
+    credential_handoff=''
+    format=text
+    seen_mprage=0
+    seen_umap=0
+    seen_config=0
+
+    while [ "$#" -gt 0 ]; do
+        option=$1
+        shift
+        case "$option" in
+            --profile|--mprage|--umap|--config|--correct-aliasing|\
+            --recenter-before-normalization|--cleanup-on-success|\
+            --current-artifact-root|--group-account|--host-key-file|\
+            --credential-handoff|--format)
+                need_value "$option" "$@"
+                value=$1
+                shift
+                ;;
+            --profile=*) value=${option#*=}; option=--profile ;;
+            --mprage=*) value=${option#*=}; option=--mprage ;;
+            --umap=*) value=${option#*=}; option=--umap ;;
+            --config=*) value=${option#*=}; option=--config ;;
+            --correct-aliasing=*) value=${option#*=}; option=--correct-aliasing ;;
+            --recenter-before-normalization=*) value=${option#*=}; option=--recenter-before-normalization ;;
+            --cleanup-on-success=*) value=${option#*=}; option=--cleanup-on-success ;;
+            --current-artifact-root=*) value=${option#*=}; option=--current-artifact-root ;;
+            --group-account=*) value=${option#*=}; option=--group-account ;;
+            --host-key-file=*) value=${option#*=}; option=--host-key-file ;;
+            --credential-handoff=*) value=${option#*=}; option=--credential-handoff ;;
+            --format=*) value=${option#*=}; option=--format ;;
+            -h|--help) usage; exit 0 ;;
+            *) error_record "$EXIT_USAGE" "Unknown option: $option" ;;
+        esac
+        case "$option" in
+            --profile) [ -z "$profile" ] || error_record "$EXIT_USAGE" 'Specify --profile only once.'; profile=$value ;;
+            --mprage) [ "$seen_mprage" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --mprage only once.'; mprage=$value; seen_mprage=1 ;;
+            --umap) [ "$seen_umap" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --umap only once.'; umap=$value; seen_umap=1 ;;
+            --config) [ "$seen_config" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --config only once.'; config=$value; seen_config=1 ;;
+            --correct-aliasing) correct_aliasing=$value ;;
+            --recenter-before-normalization) recenter=$value ;;
+            --cleanup-on-success) cleanup_success=$value ;;
+            --current-artifact-root) artifact_root=$value ;;
+            --group-account) group_account=$value ;;
+            --host-key-file) host_key_file=$value ;;
+            --credential-handoff) credential_handoff=$value ;;
+            --format) format=$value ;;
+        esac
+    done
+
+    case " $profiles " in *" $profile "*) ;; *) error_record "$EXIT_USAGE" 'A supported --profile is required.' ;; esac
+    case "$format" in text|jsonl) ;; *) error_record "$EXIT_USAGE" '--format must be text or jsonl.' ;; esac
+    if [ "$seen_config" -eq 1 ]; then
+        [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] || \
+            error_record "$EXIT_USAGE" 'Use either --config or single-subject --mprage/--umap flags.'
+        [ -f "$config" ] && [ -r "$config" ] || \
+            error_record "$EXIT_USAGE" 'The job configuration file is unavailable.'
+    else
+        [ "$seen_mprage" -eq 1 ] || error_record "$EXIT_USAGE" 'Specify --mprage or --config.'
+    fi
+    for flag_value in "$correct_aliasing" "$recenter" "$cleanup_success"; do
+        case "$flag_value" in ''|yes|no) ;; *) error_record "$EXIT_USAGE" 'Processing options accept only yes or no.' ;; esac
+    done
+    case "$profile" in
+        local|local-mprage-only) backend=local ;;
+        mlsc|mlsc-mprage-only) backend=mlsc ;;
+    esac
+    case "$profile" in *mprage-only*) mprage_only=1 ;; *) mprage_only=0 ;; esac
+    if [ "$mprage_only" -eq 1 ] && [ "$seen_umap" -eq 1 ]; then
+        error_record "$EXIT_USAGE" 'MPRAGE-only profiles do not accept --umap.'
+    fi
+    if [ -n "$artifact_root" ]; then
+        case "$profile" in mlsc|mlsc-mprage-only|local|local-mprage-only) ;; *) error_record "$EXIT_USAGE" '--current-artifact-root requires a supported profile.' ;; esac
+    fi
+    if [ -n "$group_account" ] && [ "$backend" != mlsc ]; then
+        error_record "$EXIT_USAGE" '--group-account is available only for MLSC profiles.'
+    fi
+    if [ -n "$host_key_file" ] && [ "$backend" != mlsc ]; then
+        error_record "$EXIT_USAGE" '--host-key-file is available only for MLSC profiles.'
+    fi
+    if [ -n "$credential_handoff" ] && { [ "$action" != run ] || [ "$backend" = local ]; }; then
+        error_record "$EXIT_USAGE" '--credential-handoff is valid only for remote run.'
+    fi
+    case "$group_account$artifact_root$host_key_file$credential_handoff" in *$'\n'*|*$'\r'*) error_record "$EXIT_USAGE" 'CLI text values cannot contain line breaks.' ;; esac
+    if [ -n "$credential_handoff" ]; then
+        credential_handoff=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$credential_handoff") || \
+            error_record "$EXIT_USAGE" 'Credential handoff path is invalid.'
+    fi
+
+    # Release selection. A repository checkout has no release selection and is refused
+    # the selection options; an installed distribution selects one compiled release.
+    headless_args=(headless)
+    if [ "$installed" -eq 0 ]; then
+        if [ "$SEL_OPT_HAVE_LABEL" -eq 1 ] || [ "$SEL_OPT_HAVE_ROOT" -eq 1 ]; then
+            error_record "$EXIT_USAGE" '--mcr and --mcr-root are available only in an installed standalone distribution.'
+        fi
+        unset PSEUDOCT_RUNTIME_RELEASE
+    else
+        selection_label
+        rc=0
+        select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" standalone/pseudoct_standalone || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            error_record "$rc" "${SEL_ERROR:-The selected MATLAB Runtime is unavailable or does not match its release.}"
+        fi
+        standalone_exe=$SEL_EXE
+        mcr_ld_path=$SEL_LD_PATH
+        export_release_env
+        headless_args=(headless --mcr "$SEL_RELEASE")
+        if [ "$SEL_OPT_HAVE_ROOT" -eq 1 ]; then
+            headless_args+=(--mcr-root "$SEL_OPT_ROOT")
+        fi
+    fi
+
 # Resolve the request's owning subject before creating ANY runtime files.
 # A multi-subject request's CLI transport belongs to its first subject;
 # scientific runners still allocate beneath each individual job.temp_dir.
@@ -388,6 +844,7 @@ then
     error_record "$EXIT_USAGE" 'Job configuration or input paths are invalid.'
 fi
 
+if [ "$installed" -eq 0 ]; then
 matlab_bin=${PSEUDOCT_MATLAB:-/usr/pubsw/common/matlab/7.11/bin/matlab}
 if [ ! -x "$matlab_bin" ]; then
     if command -v "$matlab_bin" >/dev/null 2>&1; then
@@ -396,16 +853,22 @@ if [ ! -x "$matlab_bin" ]; then
         error_record "$EXIT_RUNTIME" 'MATLAB executable is unavailable; set PSEUDOCT_MATLAB to its path.'
     fi
 fi
+fi
 
 matlab_support() {
     support_mode=$1
     (
     cd -- "$tmp_dir" || exit 69
-    PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE="$support_mode" \
+    export PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE="$support_mode" \
     PSEUDOCT_CLI_INPUT="$input_file" PSEUDOCT_CLI_REQUEST="$2" \
     PSEUDOCT_CLI_RESULT="${3:-}" PSEUDOCT_CLI_SUMMARY="${4:-}" \
     PSEUDOCT_CLI_INVOCATION="$invocation_id" PSEUDOCT_CLI_PROFILE="$profile" \
-    PSEUDOCT_CLI_ACTION="$5" PSEUDOCT_CLI_HANDOFF="${credential_handoff:-}" \
+    PSEUDOCT_CLI_ACTION="$5" PSEUDOCT_CLI_HANDOFF="${credential_handoff:-}"
+    if [ "$installed" -eq 1 ]; then
+        export LD_LIBRARY_PATH=$mcr_ld_path
+        "$standalone_exe" "$support_mode" >"$tmp_dir/matlab-diagnostics-support-$support_mode.log" 2>&1
+        exit $?
+    fi
     "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB' \
         >"$tmp_dir/matlab-diagnostics-support-$support_mode.log" 2>&1
 try
@@ -437,9 +900,10 @@ run_headless() {
     request_path=$2
     result_path=$3
     set +e
-    python3 - "$root_dir/bin/pseudoct-headless" "$request_path" \
+    python3 - "$self" "$request_path" \
         "$result_path" "$format" "$tmp_dir/matlab-diagnostics-$phase.log" \
-        "$invocation_id" "$run_log_index" "$profile" <<'PY'
+        "$invocation_id" "$run_log_index" "$profile" \
+        ${headless_args[@]+"${headless_args[@]}"} <<'PY'
 import json
 import os
 import re
@@ -448,7 +912,9 @@ import subprocess
 import sys
 
 launcher, request_path, result_path, output_format, diagnostics_path, \
-    invocation_id, run_log_index, run_profile = sys.argv[1:]
+    invocation_id, run_log_index, run_profile = sys.argv[1:9]
+# Optional installed-standalone selection (--mcr / --mcr-root) follows the fixed arguments.
+launcher_args = sys.argv[9:]
 environment = os.environ.copy()
 environment["PSEUDOCT_CLI_OUTPUT"] = "1"
 # Non-secret correlation only: names the per-run log and a private index of
@@ -734,7 +1200,7 @@ except OSError:
 
 selector = None
 try:
-    process = subprocess.Popen([launcher, request_path, result_path], env=environment,
+    process = subprocess.Popen([launcher] + launcher_args + [request_path, result_path], env=environment,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                bufsize=0)
     selector = selectors.DefaultSelector()
@@ -863,9 +1329,14 @@ PY
             unset username password
             handoff_output=$handoff_registry
             if ! (cd -- "$tmp_dir" || exit 69
-                PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE=store_credentials \
+                export PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE=store_credentials \
                 PSEUDOCT_CLI_SECRET_FILE="$secret_dir/login" \
-                PSEUDOCT_CLI_HANDOFF_OUTPUT="$handoff_output" \
+                PSEUDOCT_CLI_HANDOFF_OUTPUT="$handoff_output"
+                if [ "$installed" -eq 1 ]; then
+                    export LD_LIBRARY_PATH=$mcr_ld_path
+                    "$standalone_exe" store_credentials >"$tmp_dir/matlab-diagnostics-store-credentials.log" 2>&1
+                    exit $?
+                fi
                 "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB' \
                     >"$tmp_dir/matlab-diagnostics-store-credentials.log" 2>&1
 try
@@ -1018,3 +1489,22 @@ raise SystemExit(code)
 PY
 result_status=$?
 exit "$result_status"
+}
+
+if [ "$#" -lt 1 ]; then
+    usage >&2
+    exit "$EXIT_USAGE"
+fi
+operation=$1
+shift
+case "$operation" in
+    -h|--help) usage; exit 0 ;;
+    --list-releases)
+        [ "$#" -eq 0 ] || fail_op '--list-releases takes no other arguments' "$EXIT_USAGE"
+        list_releases ;;
+    gui) op_gui "$@" ;;
+    run) op_run "$@" ;;
+    headless) op_headless "$@" ;;
+    resolve) op_resolve "$@" ;;
+    *) fail_op "unknown operation: $operation (see --help)" "$EXIT_USAGE" ;;
+esac

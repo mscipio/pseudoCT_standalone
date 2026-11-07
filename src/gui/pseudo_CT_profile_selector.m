@@ -1,9 +1,13 @@
-function profile = pseudo_CT_profile_selector()
+function selection = pseudo_CT_profile_selector()
 %PSEUDO_CT_PROFILE_SELECTOR Show the profile selection dialog.
-%   Returns the filename-derived canonical profile key, or an empty string
-%   when the user cancels or closes the window. Standard Processing remains
-%   visible; the MPRAGE-only Processing disclosure starts collapsed. Selecting
-%   an option never collapses its section.
+%   SELECTION is a struct with fields:
+%     profile - filename-derived canonical profile key, or '' when the user
+%               cancels or closes the window.
+%     runtime - installed MATLAB Runtime label chosen in the MATLAB Runtime
+%               popup, or '' in source/repository mode (popup hidden).
+%   Standard Processing remains visible; the MPRAGE-only Processing
+%   disclosure starts collapsed. Selecting an option never collapses its
+%   section. The last runtime chosen in this MATLAB session is preselected.
 %
 %   Minimum supported MATLAB: R2010b.
 
@@ -11,6 +15,7 @@ config_root = fullfile(fileparts(mfilename('fullpath')), '..', 'config');
 [profiles, default_index] = ...
     pseudo_CT_prepare_routine_profile_choices(config_root);
 profile = '';
+runtime = '';
 
 % Present the recommended Center Standard option first while retaining the
 % local MATLAB routine choice in the same Standard Processing section.
@@ -155,11 +160,45 @@ uicontrol('Parent', dialog, 'Style', 'pushbutton', 'String', 'Run Selected', ...
     'Tag', 'run_selected', ...
     'Callback', @run_selection);
 
+% Compact MATLAB Runtime popup, installed distributions only. Items come from
+% the installed catalog; source/repository mode has none, so no popup is shown.
+runtime_labels = {};
+runtime_popup = [];
+releases = pseudo_CT_runtime_select();
+if ~isempty(releases)
+    runtime_items = cell(1, length(releases));
+    selected_runtime = 1;
+    for ii = 1:length(releases)
+        runtime_labels{ii} = releases(ii).label;
+        runtime_items{ii} = [releases(ii).label '  (MCR ' ...
+            releases(ii).mcr_version ')'];
+        if releases(ii).default
+            selected_runtime = ii;
+        end
+    end
+    remembered = '';
+    if isappdata(0, 'pseudo_CT_last_runtime')
+        remembered = getappdata(0, 'pseudo_CT_last_runtime');
+    end
+    remembered_index = find(strcmp(runtime_labels, remembered), 1);
+    if ~isempty(remembered_index)
+        selected_runtime = remembered_index;
+    end
+    uicontrol('Parent', dialog, 'Style', 'text', ...
+        'String', 'MATLAB Runtime:', 'HorizontalAlignment', 'left', ...
+        'FontSize', 9, 'Position', [24 30 110 20], ...
+        'Tag', 'runtime_selector_label');
+    runtime_popup = uicontrol('Parent', dialog, 'Style', 'popupmenu', ...
+        'String', runtime_items, 'Value', selected_runtime, ...
+        'Position', [136 26 260 26], 'Tag', 'runtime_selector_popup');
+end
+
 movegui(dialog, 'center');
 uiwait(dialog);
 if ishghandle(dialog)
     delete(dialog);
 end
+selection = struct('profile', profile, 'runtime', runtime);
 
     function select_profile(~, ~, index)
         selected_index = index;
@@ -174,11 +213,16 @@ end
         if ~isempty(selected_index)
             profile = profiles(selected_index).name;
         end
+        if ~isempty(runtime_popup) && ishghandle(runtime_popup)
+            runtime = runtime_labels{get(runtime_popup, 'Value')};
+            setappdata(0, 'pseudo_CT_last_runtime', runtime);
+        end
         uiresume(dialog);
     end
 
     function cancel_selection(~, ~)
         profile = '';
+        runtime = '';
         uiresume(dialog);
     end
 

@@ -61,8 +61,10 @@ config.normalization.cluster = 'No';
 config.normalization.host_folder = '';
 
 % Current compiled prepare/compute artifact contract shared with MLSC.
-% Resolve every artifact from this profile's install root; missing artifacts
-% and integrity mismatches fail closed before local processing.
+% Source-repository profiles retain the existing compiled/current manifest
+% names; installed runtime selection rebases them to the package manifest
+% names. Missing artifacts and integrity mismatches fail closed before local
+% processing.
 artifact_dir_here = dependency_paths.current_root;
 config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
     'run_mlsc_current_payload.sh');

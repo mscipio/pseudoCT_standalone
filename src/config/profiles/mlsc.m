@@ -94,9 +94,11 @@ config.mlsc.time = '02:00:00';
 % own location at load time: this file lives in
 % <version>/src/config/profiles/, so the version directory is three
 % levels up and the staged artifact layout keeps the launcher under
-% <version>/compiled/current/payload_build/ with the manifests at
-% <version>/compiled/current/. There is no absolute pin and no silent
-% fallback: absent bundled files fail closed at missing-file validation.
+% <version>/compiled/current/payload_build/ with the existing source
+% manifests at <version>/compiled/current/. Installed runtime selection
+% rebases these paths to build_manifest.mat/resource_manifest.mat under the
+% release payload. There is no absolute pin and no silent fallback: absent
+% bundled files fail closed at missing-file validation.
 % The explicit mlsc_current_artifact_root override wins over these defaults.
 % MATLAB_ROOT stays pinned below while
 % the required bundled MCR release remains separately pinned at 7.14. The

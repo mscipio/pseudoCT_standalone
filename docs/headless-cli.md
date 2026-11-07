@@ -10,10 +10,10 @@ public shell command adds text/JSONL progress and exit codes.
 pseudo_CT_headless(request_path, result_path)
 ```
 
-The lower-level launcher accepts a request and result path:
+The lower-level operation accepts a request and result path:
 
 ```sh
-bin/pseudoct-headless REQUEST.mat RESULT.mat
+bin/pseudoct headless REQUEST.mat RESULT.mat
 ```
 
 `REQUEST.mat` must contain a single scalar variable named `request`, saved as
@@ -129,7 +129,7 @@ completion fields rather than inferring completion from process exit alone.
 | `68` | Scientific failure or completion not verified. |
 | `69` | Launcher or runtime failure. |
 
-`bin/pseudoct-headless` uses `0` for success, `2` for a rejected request/profile,
+`bin/pseudoct headless` uses `0` for success, `2` for a rejected request/profile,
 `3` for authentication/account/submission failure, `64`–`66` for argument or
 path errors, `69` when MATLAB is unavailable, and `70` for bootstrap/runtime or
 invalid-result failures.

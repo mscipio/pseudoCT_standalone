@@ -4,12 +4,18 @@ function paths = pseudo_CT_dependency_paths()
 %   location, never caller pwd or a mutable site-wide "latest" alias.
 %   Minimum supported MATLAB: R2010b.
 
-config_dir = fileparts(mfilename('fullpath'));
-install_root = fileparts(fileparts(config_dir));
+layout = pseudo_CT_package_layout();
+install_root = layout.root;
 paths = struct();
 paths.install_root = install_root;
 paths.spm_root = fullfile(install_root, 'external', 'spm8-r6313');
 paths.atlas_root = fullfile(install_root, 'external', 'Batch_atlas');
+% Installed distribution ships the atlas under <package>/resources. Source mode
+% keeps external/Batch_atlas above. The string is absolute with no trailing
+% slash, the same form package-manifests records as atlas_dir.
+if strcmp(layout.mode, 'installed')
+    paths.atlas_root = fullfile(install_root, 'resources');
+end
 paths.d2n_root = fullfile(install_root, 'external', 'dicom2nifti-1.2.5');
 paths.aliasing_root = fullfile(install_root, 'external', ...
     'correct_aliasing-0.4.0');
