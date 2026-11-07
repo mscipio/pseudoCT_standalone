@@ -114,82 +114,35 @@ recenter_arg = [];
 cleanup_on_success_arg = [];
 
 %% === 1. Branch on invocation (before any argument parsing) ===
-% No arguments (deployed or not): interactive selector, then the runtime bind
-% below, then the existing subject GUI; this must precede
-% parse_deployed_arguments, which requires an explicit profile.
-% Deployed with arguments: parse_deployed_arguments (headless/orchestrate,
-% unchanged). Source with arguments: the named-argument CLI parser (unchanged).
+% Deployed with arguments: parse_deployed_arguments (the headless submit
+% request). Otherwise the named-argument parser. Interactive selection lives in
+% run_pseudo_CT (frontend); without a profile this stops with ProfileRequired.
 if isdeployed && ~isempty(varargin)
     [profile_name, subjects_arg, aliasing_arg, recenter_arg, headless_mode, ...
         headless_credentials, group_account, mlsc_host_key_provider, ...
-        mlsc_current_artifact_root, umap_files_arg, resolved_jobs] = ...
+        mlsc_current_artifact_root, umap_files_arg, resolved_jobs, ...
+        cleanup_on_success_arg] = ...
         parse_deployed_arguments(varargin{:});
-
-    %% === Interactive mode (no args): show profile selector ===
-elseif isempty(varargin)
-    selection = pseudo_CT_profile_selector();
-    profile_name = selection.profile;
-    if isempty(profile_name)
-        return;  % User cancelled
-    end
-    selected_runtime = selection.runtime;
-    subjects_arg = '';
-    aliasing_arg = [];
-
-    %% === CLI/script mode: parse named arguments ===
 else
-    p = inputParser;
-    p.addParamValue('profile', '', @(x) ischar(x));
-    p.addParamValue('subjects', '', @(x) ischar(x) || iscell(x));
-    p.addParamValue('umap_files', [], @(x) isempty(x) || ischar(x) || iscell(x));
-    p.addParamValue('resolved_jobs', struct([]), @(x) isstruct(x));
-    p.addParamValue('correct_aliasing', [], ...
-        @(x) isempty(x) || ((isnumeric(x) || islogical(x)) && ...
-        isscalar(x) && ismember(double(x), [0 1])));
-    p.addParamValue('recenter_before_normalization', [], ...
-        @(x) isempty(x) || ((isnumeric(x) || islogical(x)) && ...
-        isscalar(x) && ismember(double(x), [0 1])));
-    % Optional runtime retention override for profile comparison. Omitted
-    % keeps the profile default; an explicit 0/1 (or scalar logical)
-    % overrides config.cleanup_on_success after the profile load.
-    p.addParamValue('cleanup_on_success', [], ...
-        @(x) isempty(x) || (islogical(x) && isscalar(x)) || ...
-        (isnumeric(x) && isscalar(x) && ismember(x, [0 1])));
-    % Optional, out-of-band MLSC trusted host-key material/provider.  Accepts a
-    % character known_hosts record or a zero-argument function handle returning
-    % one; it is never read from a profile and never logged.  Empty (default)
-    % selects the password-authentication workflow; a supplied
-    % value selects strict pinned host-key verification.
-    p.addParamValue('mlsc_host_key_provider', [], ...
-        @(x) isempty(x) || ischar(x) || isa(x, 'function_handle'));
-    % Explicit operator-selected current-MLSC artifact-root override.
-    p.addParamValue('mlsc_current_artifact_root', '', @(x) ischar(x));
-    p.addParamValue('headless_mode', false, ...
-        @(x) islogical(x) && isscalar(x));
-    p.addParamValue('headless_credentials', struct(), ...
-        @(x) isstruct(x) && numel(x) == 1);
-    p.addParamValue('group_account', '', @(x) ischar(x));
-    p.parse(varargin{:});
-
-    profile_name = p.Results.profile;
-    subjects_arg = p.Results.subjects;
-    aliasing_arg = p.Results.correct_aliasing;
-    recenter_arg = p.Results.recenter_before_normalization;
-    mlsc_host_key_provider = p.Results.mlsc_host_key_provider;
-    mlsc_current_artifact_root = p.Results.mlsc_current_artifact_root;
-    cleanup_on_success_arg = p.Results.cleanup_on_success;
-    headless_mode = p.Results.headless_mode;
-    headless_credentials = p.Results.headless_credentials;
-    group_account = p.Results.group_account;
-    umap_files_arg = p.Results.umap_files;
-    resolved_jobs = p.Results.resolved_jobs;
+    args = pseudo_CT_lifecycle_arguments(varargin{:});
+    profile_name = args.profile;
+    subjects_arg = args.subjects;
+    aliasing_arg = args.correct_aliasing;
+    recenter_arg = args.recenter_before_normalization;
+    mlsc_host_key_provider = args.mlsc_host_key_provider;
+    mlsc_current_artifact_root = args.mlsc_current_artifact_root;
+    cleanup_on_success_arg = args.cleanup_on_success;
+    headless_mode = args.headless_mode;
+    headless_credentials = args.headless_credentials;
+    group_account = args.group_account;
+    umap_files_arg = args.umap_files;
+    resolved_jobs = args.resolved_jobs;
 end
-gui_cleanup_on_success = [];
-gui_handoff = struct('credentials', struct(), 'group_account', '');
+selected_runtime = '';
 gui_credentials = struct();
 
 %% === Validate profile name against available profile files ===
-available_profiles = pseudo_CT_list_profiles(fullfile(pathp, 'src', 'config'));
+available_profiles = pseudo_CT_list_profiles(false);
 valid_profiles = {available_profiles.name}';
 if isempty(profile_name)
     error('run_pseudo_CT:ProfileRequired', ...
@@ -237,15 +190,13 @@ warning('off', 'all');
 warn_cleanup = onCleanup(@() warning(orig_warn));
 
 %% === Load the selected profile once and set up its resources ===
-config = pseudo_CT_load_profile(profile_name, fullfile(pathp, 'src', 'config'));
+config = pseudo_CT_load_profile(profile_name);
 report.profile = profile_name;
 % Installed distributions bind one MATLAB Runtime before any override,
 % validation, or subject processing: the selector's choice, else
 % PSEUDOCT_RUNTIME_RELEASE, else the catalog default. Source mode is a no-op.
 config = pseudo_CT_runtime_select(config, selected_runtime);
 if headless_mode && isdeployed
-    % collect_jobs retains deployed defaults-MAT behavior and accepts an
-    % explicit subject list only for this opt-in headless execution path.
     config.headless_execution = true;
 end
 % Apply explicit MLSC artifact overrides through the
@@ -269,35 +220,14 @@ if ~isempty(config.required_matlab_release) && ...
 end
 setup_pseudo_CT_paths(pathp, config);
 
-%% === Collect jobs ===
-if ~isempty(resolved_jobs)
-    jobs = resolved_jobs;
-    collection_stats = struct('requested', length(jobs), 'skipped', 0, ...
-        'skipped_subjects', {{}});
-elseif isempty(subjects_arg)
-    [jobs, collection_stats, gui_cleanup_on_success, gui_handoff] = ...
-        collect_jobs(config);
-elseif ischar(subjects_arg) && size(subjects_arg, 1) == 1 && ...
-       strcmpi(strtrim(subjects_arg), 'batch')
-    [jobs, collection_stats] = collect_jobs(config, 'batch', ...
-        aliasing_arg, recenter_arg);
-else
-    [jobs, collection_stats] = collect_jobs(config, subjects_arg, ...
-        aliasing_arg, recenter_arg, umap_files_arg);
+%% === Resolved jobs: the only run input (produced by validation) ===
+if isempty(resolved_jobs)
+    error('pseudo_CT:ResolvedJobRequired', ...
+        'Run execution requires jobs resolved by validation (validate, then submit).');
 end
-if isempty(cleanup_on_success_arg) && ~isempty(gui_cleanup_on_success)
-    config.cleanup_on_success = logical(gui_cleanup_on_success);
-end
-if isstruct(gui_handoff) && isfield(gui_handoff, 'credentials') && ...
-        isstruct(gui_handoff.credentials)
-    gui_credentials = gui_handoff.credentials;
-end
-if isempty(group_account) && isstruct(gui_handoff) && ...
-        isfield(gui_handoff, 'group_account') && ...
-        ischar(gui_handoff.group_account)
-    group_account = gui_handoff.group_account;
-end
-clear gui_handoff
+jobs = resolved_jobs;
+collection_stats = struct('requested', length(jobs), 'skipped', 0, ...
+    'skipped_subjects', {{}});
 % Explicit runtime overrides also apply to GUI-collected jobs, while omitted
 % values preserve each GUI control and the selected profile's defaults.
 for ii = 1:length(jobs)
@@ -1414,7 +1344,7 @@ end
 
 function [profile_name, subjects_arg, aliasing_arg, recenter_arg, headless_mode, ...
         headless_credentials, group_account, host_key_provider, ...
-        artifact_root, umap_files_arg, resolved_jobs] = ...
+        artifact_root, umap_files_arg, resolved_jobs, cleanup_on_success_arg] = ...
     parse_deployed_arguments(varargin)
 %PARSE_DEPLOYED_ARGUMENTS Require an explicit profile in deployed mode.
 
@@ -1428,6 +1358,7 @@ host_key_provider = [];
 artifact_root = '';
 umap_files_arg = [];
 resolved_jobs = struct([]);
+cleanup_on_success_arg = [];
 
 if nargin == 1 && ischar(varargin{1}) && exist(varargin{1}, 'file') == 2
     loaded = load(varargin{1});
@@ -1444,37 +1375,19 @@ if nargin == 0
         'Deployed invocation requires an explicit profile selection.');
 end
 
-p = inputParser;
-p.addParamValue('profile', '', @(x) ischar(x));
-p.addParamValue('subjects', '', @(x) ischar(x) || iscell(x));
-p.addParamValue('umap_files', [], @(x) isempty(x) || ischar(x) || iscell(x));
-p.addParamValue('resolved_jobs', struct([]), @(x) isstruct(x));
-p.addParamValue('correct_aliasing', [], ...
-    @(x) isempty(x) || ((isnumeric(x) || islogical(x)) && ...
-    isscalar(x) && ismember(double(x), [0 1])));
-p.addParamValue('recenter_before_normalization', [], ...
-    @(x) isempty(x) || ((isnumeric(x) || islogical(x)) && ...
-    isscalar(x) && ismember(double(x), [0 1])));
-p.addParamValue('mlsc_host_key_provider', [], ...
-    @(x) isempty(x) || ischar(x) || isa(x, 'function_handle'));
-p.addParamValue('mlsc_current_artifact_root', '', @(x) ischar(x));
-p.addParamValue('headless_mode', false, ...
-    @(x) islogical(x) && isscalar(x));
-p.addParamValue('headless_credentials', struct(), ...
-    @(x) isstruct(x) && numel(x) == 1);
-p.addParamValue('group_account', '', @(x) ischar(x));
-p.parse(varargin{:});
-profile_name = p.Results.profile;
-subjects_arg = p.Results.subjects;
-aliasing_arg = p.Results.correct_aliasing;
-recenter_arg = p.Results.recenter_before_normalization;
-host_key_provider = p.Results.mlsc_host_key_provider;
-artifact_root = p.Results.mlsc_current_artifact_root;
-headless_mode = p.Results.headless_mode;
-headless_credentials = p.Results.headless_credentials;
-group_account = p.Results.group_account;
-umap_files_arg = p.Results.umap_files;
-resolved_jobs = p.Results.resolved_jobs;
+args = pseudo_CT_lifecycle_arguments(varargin{:});
+profile_name = args.profile;
+subjects_arg = args.subjects;
+aliasing_arg = args.correct_aliasing;
+recenter_arg = args.recenter_before_normalization;
+host_key_provider = args.mlsc_host_key_provider;
+artifact_root = args.mlsc_current_artifact_root;
+headless_mode = args.headless_mode;
+headless_credentials = args.headless_credentials;
+group_account = args.group_account;
+umap_files_arg = args.umap_files;
+resolved_jobs = args.resolved_jobs;
+cleanup_on_success_arg = args.cleanup_on_success;
 if isempty(profile_name)
     error('run_pseudo_CT:DeployedProfileRequired', ...
         'Deployed invocation requires an explicit profile selection.');

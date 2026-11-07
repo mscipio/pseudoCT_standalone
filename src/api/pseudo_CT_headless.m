@@ -49,10 +49,23 @@ try
         result = local_submit(request, result, credentials);
     end
 catch ME
-    fprintf(2, 'pseudoct-headless: MATLAB exception: %s\n', ME.identifier);
-    for kk = 1:min(3, numel(ME.stack))
-        fprintf(2, '  at %s:%d\n', ...
-            ME.stack(kk).name, ME.stack(kk).line);
+    diag = local_exception_report(ME);
+    for kk = 1:length(diag)
+        % One preformatted %s argument per line: in the compiled runtime a
+        % literal before %s moves the value to the next line, which the launcher
+        % would drop (it forwards only lines starting with pseudoct-headless:).
+        fprintf(2, '%s\n', ['pseudoct-headless: ' diag{kk}]);
+    end
+    try
+        diag_file = fopen(fullfile(fileparts(result_path), ...
+            'pseudoct-headless-diagnostics.txt'), 'w');
+        if diag_file ~= -1
+            for kk = 1:length(diag)
+                fprintf(diag_file, '%s\n', diag{kk});
+            end
+            fclose(diag_file);
+        end
+    catch
     end
 
     clear credentials
@@ -68,6 +81,26 @@ end
 result.schema = 'pseudoCT.headless-result/v2';
 save(result_path, 'result', '-v6');
 clear request credentials
+end
+
+function lines = local_exception_report(ME)
+%LOCAL_EXCEPTION_REPORT Exception fields as text lines, safe in compiled mode.
+%   Lengths are printed next to each field so an empty value is distinguishable
+%   from a missing one; lasterr and getReport are fallbacks for the message.
+text = @(value) strrep(char(value), char(10), ' | ');
+lines = {sprintf('exception class=%s identifier_len=%d message_len=%d stack_frames=%d', ...
+    class(ME), numel(ME.identifier), numel(ME.message), numel(ME.stack)), ...
+    ['exception identifier=' text(ME.identifier)], ...
+    ['exception message=' text(ME.message)], ...
+    ['exception lasterr=' text(lasterr)]};
+try
+    lines{end + 1} = ['exception report=' text(getReport(ME, 'basic'))];
+catch
+end
+for kk = 1:min(5, numel(ME.stack))
+    lines{end + 1} = sprintf('exception at %s line=%d file_len=%d', ...
+        text(ME.stack(kk).name), ME.stack(kk).line, numel(ME.stack(kk).file)); %#ok<AGROW>
+end
 end
 
 function result = local_empty_result()

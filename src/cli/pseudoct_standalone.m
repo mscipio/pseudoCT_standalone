@@ -8,12 +8,6 @@ function status = pseudoct_standalone(varargin)
 %     headless
 %         -> PSEUDOCT_HEADLESS_CLI(), which reads PSEUDOCT_REQUEST_MAT and
 %            PSEUDOCT_RESULT_MAT and calls PSEUDO_CT_HEADLESS(request, result).
-%   STATUS = PSEUDOCT_STANDALONE('orchestrate', REQUEST_MAT, REPORT_MAT)
-%         -> loads the cell array ARGUMENTS from REQUEST_MAT, calls
-%            PSEUDO_CT_ORCHESTRATE('run', struct('arguments', {ARGUMENTS})),
-%            saves the result as variable REPORT into REPORT_MAT (-v6) and
-%            returns 0. Any error is printed to stderr and returns 70; no
-%            report is written then.
 %   STATUS = PSEUDOCT_STANDALONE('package-manifests', PAYLOAD_DIR, RESOURCES_DIR, OUTPUT_DIR)
 %         -> writes OUTPUT_DIR/build_manifest.mat and resource_manifest.mat
 %            (OUTPUT_DIR must be <package>/runtimes/<LABEL>/payload; RESOURCES_DIR
@@ -33,9 +27,6 @@ try
     if nargin == 4 && ischar(varargin{1}) && ...
             strcmp(varargin{1}, 'package-manifests')
         status = local_package_manifests(varargin{2}, varargin{3}, varargin{4});
-    elseif nargin == 3 && ischar(varargin{1}) && ...
-            strcmp(varargin{1}, 'orchestrate')
-        status = local_orchestrate(varargin{2}, varargin{3});
     elseif nargin ~= 1 || ~ischar(varargin{1})
         fprintf(2, 'pseudoct: standalone dispatch requires exactly one mode.\n');
     elseif strcmp(varargin{1}, 'headless')
@@ -56,36 +47,6 @@ if ~isnumeric(status) || ~isscalar(status)
 end
 if nargout == 0
     exit(status);
-end
-end
-
-function status = local_orchestrate(request_path, report_path)
-%LOCAL_ORCHESTRATE Run one orchestrate request and save its report MAT.
-%   Errors are reported on stderr and mapped to 70; the report file is only
-%   written after a successful run.
-status = 70;
-try
-    if ~ischar(request_path) || ~ischar(report_path)
-        error('pseudoct:orchestrate', 'Request and report paths are required.');
-    end
-    loaded = load(request_path, 'arguments');
-    if ~isfield(loaded, 'arguments') || ~iscell(loaded.arguments)
-        error('pseudoct:orchestrate', ...
-            'The orchestrate request must contain a cell array ARGUMENTS.');
-    end
-    % An empty request would make the lifecycle open the interactive selector.
-    % Reject it here, before pseudo_CT_orchestrate is called.
-    if isempty(loaded.arguments)
-        error('pseudoct:orchestrate', ...
-            'The orchestrate request has no run arguments; refusing an interactive run.');
-    end
-    report = pseudo_CT_orchestrate('run', ...
-        struct('arguments', {loaded.arguments}));
-    save(report_path, 'report', '-v6');
-    status = 0;
-catch ME
-    fprintf(2, 'pseudoct: orchestrate failed: %s\n', ME.message);
-    status = 70;
 end
 end
 

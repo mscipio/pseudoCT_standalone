@@ -4,8 +4,9 @@ function setup_pseudo_CT_paths(root_dir, config, purpose, has_inputs, needs_dico
 %   not added to the MATLAB source path. Converter resources are checked/added
 %   for runs or when validation includes a resolved input.
 %   Source mode checks and adds the physical trees. Installed mode performs no
-%   path or rehash operation; it checks packaged resources (atlas) and the
-%   compiled capabilities (dicom2nifti, SPM, SPM overrides) by name.
+%   path or rehash operation; it checks packaged resources (atlas) and, for
+%   run/preflight only, the compiled capabilities (dicom2nifti, SPM, SPM
+%   overrides) by name. Installed validation skips those capabilities.
 %   Minimum supported MATLAB: R2010b.
 
 if nargin < 2 || ~isstruct(config)
@@ -30,10 +31,17 @@ end
 
 layout = pseudo_CT_package_layout();
 installed = strcmp(layout.mode, 'installed');
-needs_converter = strcmp(purpose, 'run') || has_inputs;
+% Installed distributions: the converter, SPM and SPM override code is compiled
+% into the science payload (run_mlsc_current_payload), not into the headless
+% standalone that runs this setup. Checking those names here fails on the
+% standalone's own function table, so installed mode skips them for every
+% purpose. The payload's build manifest and runner checksum are validated by
+% the artifact check and the payload fails closed if its code is missing.
+execution_only = installed;
+needs_converter = (strcmp(purpose, 'run') || has_inputs) && ~execution_only;
 % Any resolved input can be submitted through the same run setup, which
 % conservatively requires SPM even when the input itself is NIfTI.
-needs_spm = strcmp(purpose, 'run') || has_inputs || needs_dicom;
+needs_spm = (strcmp(purpose, 'run') || has_inputs || needs_dicom) && ~execution_only;
 needs_science_resources = strcmp(purpose, 'run') || has_inputs;
 if needs_science_resources && exist(config.atlas_root, 'dir') ~= 7
     error('pseudo_CT:AtlasRootMissing', ...

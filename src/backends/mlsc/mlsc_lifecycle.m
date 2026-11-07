@@ -1537,7 +1537,10 @@ result.timestamps.finished_at = local_timestamp(transport);
 end
 
 function result = local_apply_interrupted(result, transport)
-result = local_request_cancel(result, transport);
+%LOCAL_APPLY_INTERRUPTED Caught post-submit interruption: never cancels.
+%   Cancellation policy (docs/headless-cli.md): an interruption after the job
+%   was accepted leaves the Slurm job running and reports it as unverified; only
+%   the timeout path requests cancellation. The operator cancels manually.
 result.interrupted = true;
 result.terminal = true;
 result.success = false;
@@ -1546,15 +1549,27 @@ result.state = 'interrupted';
 result.scheduler_state = 'interrupted';
 result.workflow_state = 'interrupted';
 result.state_history{end + 1} = 'interrupted';
-result.interruption_detail = ...
-    'MLSC polling was interrupted after submission.';
-if ~result.cancel_succeeded
-    result.interruption_detail = [result.interruption_detail ...
-        ' Cancellation could not be confirmed.'];
-end
+result.interruption_detail = local_interrupt_detail(result);
 result.failure_detail = result.interruption_detail;
 result.failure = struct('present', true, 'detail', result.failure_detail);
 result.timestamps.finished_at = local_timestamp(transport);
+end
+
+function detail = local_interrupt_detail(result)
+%LOCAL_INTERRUPT_DETAIL Unverified-outcome text with the manual cancel command.
+job_known = isfield(result, 'job_id') && isnumeric(result.job_id) && ...
+    isscalar(result.job_id) && isfinite(result.job_id) && ...
+    result.job_id == floor(result.job_id) && result.job_id >= 1;
+if job_known
+    job_text = sprintf('%d', result.job_id);
+    detail = ['MLSC polling was interrupted after submission. Slurm job ' ...
+        job_text ' was not cancelled and continues to run on the cluster; ' ...
+        'the result is unverified. To cancel it manually, run: scancel ' ...
+        job_text];
+else
+    detail = ['MLSC polling was interrupted before a Slurm job ID was ' ...
+        'recorded; the result is unverified.'];
+end
 end
 
 function result = local_request_cancel(result, transport)
@@ -2402,6 +2417,11 @@ try
     context = local_output_context(runtime, job_id);
     pseudo_CT_output(level, context, 'MLSC job %d %s exit %s elapsed %s.', ...
         job_id, state, exit_text, local_elapsed_text(elapsed));
+    if isfield(result, 'interrupted') && isequal(result.interrupted, true)
+        pseudo_CT_output('WARN', context, ['Slurm job %d continues on the ' ...
+            'cluster; the result is unverified. Cancel it manually with: ' ...
+            'scancel %d'], job_id, job_id);
+    end
 catch %#ok<CTCH>
 end
 end
@@ -2616,9 +2636,32 @@ cursors = struct('stdout', local_slurm_log_cursor(), ...
 end
 
 function cursor = local_slurm_log_cursor()
+%LOCAL_SLURM_LOG_CURSOR Fresh byte cursor. 'emitted' records complete lines
+%   already forwarded from this log; it survives truncation/rewrite resets so
+%   a re-read line is not displayed a second time (see local_slurm_log_fresh).
 cursor = struct('offset', 0, 'pending', '', 'discarding_line', false, ...
     'was_missing', false, 'identity_prefix', '', ...
-    'identity_datenum', [], 'identity_bytes', []);
+    'identity_datenum', [], 'identity_bytes', [], ...
+    'emitted', containers.Map('KeyType', 'char', 'ValueType', 'logical'));
+end
+
+function fresh = local_slurm_log_fresh(cursor, line)
+%LOCAL_SLURM_LOG_FRESH True the first time a complete log line is seen.
+%   Content-based: a repeated identical line from a re-read (after truncation
+%   or a rewrite) is not forwarded again. Identical lines inside one log
+%   therefore show once; Slurm log lines carry timestamps, so this is rare.
+fresh = true;
+key = ['L' line];
+try
+    if isfield(cursor, 'emitted') && isa(cursor.emitted, 'containers.Map')
+        if isKey(cursor.emitted, key)
+            fresh = false;
+        else
+            cursor.emitted(key) = true;
+        end
+    end
+catch %#ok<CTCH>
+end
 end
 
 function state = local_slurm_log_diagnostic_state()
@@ -2871,7 +2914,11 @@ try
             local_slurm_log_identity_changed(cursor, info(1), ...
             identity_prefix);
         if identity_changed
+            % Restart the byte cursor but keep what was already forwarded, so
+            % the re-read does not repeat earlier output (dedupe in bytes/flush).
+            emitted = cursor.emitted;
             cursor = local_slurm_log_cursor();
+            cursor.emitted = emitted;
             state = local_slurm_log_diagnostic_state();
         end
         cursor.was_missing = false;
@@ -2908,8 +2955,10 @@ if flush_partial
         if ~isempty(line) && line(end) == char(13)
             line(end) = '';
         end
-        state = local_slurm_log_forward(line, state, runtime, job_id, ...
-            direct_scientific);
+        if local_slurm_log_fresh(cursor, line)
+            state = local_slurm_log_forward(line, state, runtime, job_id, ...
+                direct_scientific);
+        end
     end
     cursor.pending = '';
     cursor.discarding_line = false;
@@ -2962,8 +3011,10 @@ while ~isempty(bytes)
         if ~isempty(line) && line(end) == char(13)
             line(end) = '';
         end
-        state = local_slurm_log_forward(line, state, runtime, job_id, ...
-            direct_scientific);
+        if local_slurm_log_fresh(cursor, line)
+            state = local_slurm_log_forward(line, state, runtime, job_id, ...
+                direct_scientific);
+        end
         cursor.pending = '';
     else
         cursor.pending = '';

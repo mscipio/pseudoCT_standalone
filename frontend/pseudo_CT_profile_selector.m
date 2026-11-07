@@ -1,4 +1,4 @@
-function selection = pseudo_CT_profile_selector()
+function selection = pseudo_CT_profile_selector(launcher)
 %PSEUDO_CT_PROFILE_SELECTOR Show the profile selection dialog.
 %   SELECTION is a struct with fields:
 %     profile - filename-derived canonical profile key, or '' when the user
@@ -11,9 +11,12 @@ function selection = pseudo_CT_profile_selector()
 %
 %   Minimum supported MATLAB: R2010b.
 
-config_root = fullfile(fileparts(mfilename('fullpath')), '..', 'config');
-[profiles, default_index] = ...
-    pseudo_CT_prepare_routine_profile_choices(config_root);
+% Frontend copy: profiles come from the static table and runtimes from the
+% installed launcher (empty when the launcher is not an installed distribution).
+if nargin < 1
+    launcher = '';
+end
+[profiles, default_index] = pseudo_CT_prepare_routine_profile_choices();
 profile = '';
 runtime = '';
 
@@ -164,7 +167,7 @@ uicontrol('Parent', dialog, 'Style', 'pushbutton', 'String', 'Run Selected', ...
 % the installed catalog; source/repository mode has none, so no popup is shown.
 runtime_labels = {};
 runtime_popup = [];
-releases = pseudo_CT_runtime_select();
+releases = pseudo_CT_launch_request('releases', launcher);
 if ~isempty(releases)
     runtime_items = cell(1, length(releases));
     selected_runtime = 1;

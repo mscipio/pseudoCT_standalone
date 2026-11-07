@@ -28,13 +28,21 @@ only; never calls mcc), and current MLSC submission/monitoring with
 verified success, missing-output failure, scheduler failure, cancellation, and
 transport rejection. Its MLSC fixtures use the installed artifact and tiny
 synthetic outputs only. Python checks cover the dependency-lock integrity, the
-CLI JSONL stdout transport, the release driver with fake MATLAB roots (single-launcher
-layout, generated `run_pseudo_CT.m`, publication lock, verification), and the single
-installed launcher `bin/pseudoct` (gui, run, run --orchestrate, headless, resolve,
---list-releases, precedence and mismatch rejection) with fake compiled executables and
+CLI JSONL stdout transport, the release driver (catalog and selection, the frontend
+allowlist against `frontend/`, `--verify` of a synthetic package, the dry-run plan), the
+launcher outcome block (`test_pseudoct_outcome.py`), and the single installed launcher
+`bin/pseudoct` (run, headless, resolve, --list-releases, precedence and mismatch
+rejection; `gui` and `run --orchestrate` refused) with fake compiled executables and
 fake MATLAB Runtime evidence, plus the installed payload runner (no MATLAB, mcc or jobs).
 Run the two release/launcher suites with `-p test_release_application.py` and
 `-p test_standalone_release.py` as shown above.
+
+MATLAB suites (run each in a fresh R2010b session, `test_profile_authority` from
+the repository root): `test_profile_authority`, `test_frontend_launch` (launcher
+bridge, GUI state, shared argument builder, UMAP discovery parity, optional real
+distribution check), `test_mlsc_slurm_lifecycle`, `test_headless_result_validator`,
+`test_runtime_selection`, `test_build_application`, `test_cli_progress_output` and
+`test_dependency_paths`.
 
 The `manual/` directory retains interactive and scientific comparison tools;
 they are not automated checks and are not run by the commands above. In

@@ -62,7 +62,7 @@ try
             end
         end
     end
-    status = local_status_code(result);
+    status = pseudoct_headless_status(result);
 catch
     % Do not expose exception text or paths; the shell maps this to 70.
     status = 70;
@@ -71,6 +71,10 @@ if status == 0 && strcmp(result.action, 'validate')
     if ~strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
         fprintf(1, 'pseudoct-headless: validation ready for %s.\n', result.profile);
     end
+elseif status == 3 && strcmp(result.status, 'submitted')
+    fprintf(2, ['pseudoct-headless: submission returned, but scientific completion ' ...
+        'is %s: the result is unverified (exit 3). Dispatch is not completion evidence.\n'], ...
+        result.scientific_completion);
 elseif any(status == [2 3])
     fprintf(2, 'pseudoct-headless: %s: %s\n', ...
         result.error_code, result.error_message);
@@ -135,26 +139,6 @@ try
 catch
     expected = struct('has_binding', false, 'has_action', false, ...
         'invocation_id', '', 'profile', '');
-end
-end
-
-function status = local_status_code(result)
-if strcmp(result.status, 'ready') && strcmp(result.action, 'validate')
-    status = 0;
-elseif strcmp(result.status, 'submitted') && strcmp(result.action, 'submit')
-    if strcmp(result.backend, 'local') && ...
-            ~strcmp(result.scientific_completion, 'completed')
-        status = 3;
-    else
-        status = 0;
-    end
-elseif any(strcmp(result.error_code, ...
-        {'INVALID_REQUEST'; 'PROFILE_NOT_ALLOWED'}))
-    status = 2;
-elseif strcmp(result.status, 'failed')
-    status = 3;
-else
-    status = 70;
 end
 end
 

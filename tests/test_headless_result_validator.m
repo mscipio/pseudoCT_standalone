@@ -1,4 +1,5 @@
 function test_headless_result_validator()
+local_exit_status_checks();
 %TEST_HEADLESS_RESULT_VALIDATOR Focused MAT v2 result-contract checks.
 %   Synthetic result records follow TMPDIR (tests/README.md);
 %   no credentials, network, scheduler, or scientific processing is used.
@@ -167,6 +168,50 @@ assert(strcmp(submit_failed.action, 'submit') && ...
 
 fprintf('Headless v2 result-contract cases passed; synthetic MATs: %s\n', ...
     scratch_dir);
+end
+
+function local_exit_status_checks()
+%LOCAL_EXIT_STATUS_CHECKS Raw headless exit status for validated result shapes.
+%   A submission returned by the scheduler is not completion: only a verified
+%   'completed' scientific result exits 0 (local and remote alike).
+addpath(fullfile(fileparts(fileparts(mfilename('fullpath'))), 'src', 'cli'), '-begin');
+invocation_id = '6f1f5f0e-2b7a-4c1d-9e3a-0123456789ab';
+submitted = local_result('submit', invocation_id, 'mlsc');
+submitted.status = 'submitted';
+submitted.error_code = '';
+submitted.error_message = '';
+submitted.dispatch_status = 'dispatched';
+submitted.submission_status = 'accepted';
+submitted.authentication_status = 'authenticated';
+submitted.job_ids = 31415;
+submitted.scientific_completion = 'not_observed';
+assert(pseudoct_headless_status(submitted) == 3, ...
+    'A remote submission without verified completion must exit 3.');
+submitted.scientific_completion = 'completed';
+assert(pseudoct_headless_status(submitted) == 0, ...
+    'A remote submission with verified completion must exit 0.');
+submitted.scientific_completion = 'failed';
+assert(pseudoct_headless_status(submitted) == 3, ...
+    'A remote submission with a failed scientific result must exit 3.');
+
+local_submitted = submitted;
+local_submitted.backend = 'local';
+local_submitted.authentication_status = 'not_attempted';
+local_submitted.submission_status = 'not_attempted';
+local_submitted.job_ids = [];
+local_submitted.scientific_completion = 'not_observed';
+assert(pseudoct_headless_status(local_submitted) == 3, ...
+    'An unverified local submission must keep exit 3.');
+local_submitted.scientific_completion = 'completed';
+assert(pseudoct_headless_status(local_submitted) == 0, ...
+    'A verified local submission must exit 0.');
+
+ready = local_result('validate', invocation_id, 'local');
+ready.status = 'ready';
+ready.error_code = '';
+ready.scientific_completion = 'not_applicable';
+ready.dispatch_status = 'not_dispatched';
+assert(pseudoct_headless_status(ready) == 0, 'A ready validation must exit 0.');
 end
 
 function result = local_result(action, invocation_id, profile)

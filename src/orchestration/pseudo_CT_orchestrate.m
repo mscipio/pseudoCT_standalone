@@ -2,8 +2,9 @@ function value = pseudo_CT_orchestrate(operation, request)
 %PSEUDO_CT_ORCHESTRATE Shared GUI and headless MATLAB orchestration API.
 %   VALIDATE performs local-only checks and returns a serializable resolved
 %   job. SUBMIT revalidates that job and dispatches it through the existing
-%   lifecycle; authentication occurs only in this operation. RUN is a
-%   scripting convenience that performs VALIDATE followed by SUBMIT.
+%   lifecycle; authentication occurs only in this operation. The launcher
+%   (bin/pseudoct) and the MATLAB frontend reach both through validate and
+%   submit; there is no single-call run operation.
 %   Minimum supported MATLAB: R2010b.
 
 if nargin ~= 2 || ~ischar(operation) || size(operation, 1) ~= 1 || ...
@@ -32,8 +33,6 @@ switch operation
         value = local_validate(request, root_dir);
     case 'submit'
         value = local_submit(request, root_dir);
-    case 'run'
-        value = local_run(request, root_dir);
     otherwise
         error('pseudo_CT:OrchestrationAction', ...
             'Unknown pseudoCT orchestration operation.');
@@ -68,8 +67,7 @@ else
         error('pseudo_CT:InvalidProfile', ...
             'Validation requires a canonical profile key.');
     end
-    config_root = fullfile(root_dir, 'src', 'config');
-    config = pseudo_CT_load_profile(profile_name, config_root);
+    config = pseudo_CT_load_profile(profile_name);
     % Headless/CLI validation binds the installed Runtime (env or default);
     % a no-op in source mode.
     config = pseudo_CT_runtime_select(config);
@@ -335,61 +333,6 @@ report.scientific_completion = report.completion_status;
 report.resolved_job = resolved;
 end
 
-function report = local_run(request, root_dir)
-if ~isfield(request, 'arguments') || ~iscell(request.arguments)
-    error('pseudo_CT:OrchestrationRequest', ...
-        'A run request must contain named run arguments as a cell array.');
-end
-arguments = request.arguments;
-if isempty(arguments)
-    report = pseudo_CT_run_lifecycle();
-    return;
-end
-options = struct();
-for ii = 1:2:length(arguments)
-    if ii == length(arguments) || ~ischar(arguments{ii})
-        error('pseudo_CT:OrchestrationRequest', ...
-            'Run arguments must be name/value pairs.');
-    end
-    options.(arguments{ii}) = arguments{ii + 1};
-end
-if ~isfield(options, 'profile') || ~isfield(options, 'subjects') || ...
-        isempty(options.subjects) || (ischar(options.subjects) && ...
-        strcmpi(strtrim(options.subjects), 'batch'))
-    report = pseudo_CT_run_lifecycle(arguments{:});
-    return;
-end
-validation_request = struct('profile', options.profile, ...
-    'subjects', {options.subjects});
-copy_names = {'umap_files'; 'correct_aliasing'; ...
-    'recenter_before_normalization'; 'cleanup_on_success'; 'output_config'};
-for ii = 1:length(copy_names)
-    if isfield(options, copy_names{ii})
-        validation_request.(copy_names{ii}) = options.(copy_names{ii});
-    end
-end
-if isfield(options, 'mlsc_current_artifact_root')
-    validation_request.current_artifact_root = ...
-        options.mlsc_current_artifact_root;
-end
-validated = local_validate(validation_request, root_dir);
-submit_request = struct('resolved_job', validated.resolved_job);
-copy_names = {'group_account'; 'headless_credentials'; ...
-    'mlsc_host_key_provider'};
-for ii = 1:length(copy_names)
-    if isfield(options, copy_names{ii})
-        if strcmp(copy_names{ii}, 'headless_credentials')
-            submit_request.credentials = options.(copy_names{ii});
-        elseif strcmp(copy_names{ii}, 'mlsc_host_key_provider')
-            submit_request.host_key_provider = options.(copy_names{ii});
-        else
-            submit_request.(copy_names{ii}) = options.(copy_names{ii});
-        end
-    end
-end
-report = local_submit(submit_request, root_dir);
-end
-
 function same = local_same_resolved_job(a, b)
 same = strcmp(a.profile, b.profile) && ...
     isequal(a.invocation_id, b.invocation_id) && ...
@@ -569,7 +512,7 @@ end
 function identity = local_artifact_identity(config, profile_name, root_dir)
 % Profile identity: installed packages bind the canonical key to the SHA-256
 % of manifest.json (no profile .m is opened); source mode hashes the file.
-identity = pseudo_CT_profile_registry('identity', profile_name, root_dir);
+identity = pseudo_CT_profile_registry('identity', profile_name);
 identity.runner_path = '';
 identity.runner_sha256 = '';
 identity.build_manifest_path = '';

@@ -62,9 +62,9 @@ assert(exist(sentinel, 'file') ~= 2, 'mcc was reached during the dry run.');
 
 % Synthetic package: inventory, manifest agreement, and tamper detection.
 pkg = fullfile(work, 'pkg');
-rels = {'app/run_pseudo_CT'; 'payload/mlsc_current_payload'; ...
+rels = {'standalone/pseudoct_standalone'; 'payload/mlsc_current_payload'; ...
     'resources/Atlas_a.nii'; 'bin/pseudoct'};
-bodies = {'app stub'; 'payload stub'; 'atlas bytes'; 'launcher'};
+bodies = {'standalone stub'; 'payload stub'; 'atlas bytes'; 'launcher'};
 for kk = 1:numel(rels)
     mkdir(fileparts(fullfile(pkg, rels{kk})));
     local_write(fullfile(pkg, rels{kk}), bodies(kk));
@@ -116,6 +116,15 @@ local_write(launcher_path, bodies(4));
 restored = verify_application_package(pkg);
 assert(restored.passed, 'Restored synthetic package must verify.');
 assert(exist(sentinel, 'file') ~= 2, 'mcc was reached during the tests.');
+
+% Payload data plan: spm_dicom_headers loads spm_dicom_dict.mat by a bare name,
+% so it must be a -a input of the payload CTF; the deployed compute reads the
+% atlas TPM.nii from the resources folder, so it must be a resource.
+plan_text = local_read_text(fullfile(repo, 'scripts', 'build_application.m'));
+assert(~isempty(strfind(plan_text, 'fullfile(spm, ''spm_dicom_dict.mat'')')), ...
+    'The payload -a plan must include the SPM DICOM dictionary.');
+assert(~isempty(strfind(plan_text, '''TPM.nii''')), ...
+    'The atlas resources must include TPM.nii.');
 end
 
 function local_expect(identifier, handle)
@@ -143,6 +152,15 @@ cleanup_fid = onCleanup(@() fclose(fid));
 for kk = 1:numel(lines)
     fprintf(fid, '%s\n', lines{kk});
 end
+end
+
+function text = local_read_text(path_text)
+fid = fopen(path_text, 'r');
+if fid == -1
+    error('test_build_application:Read', 'Cannot read %s.', path_text);
+end
+cleanup_fid = onCleanup(@() fclose(fid)); %#ok<NASGU>
+text = fscanf(fid, '%c');
 end
 
 function hex = local_sha256(path_text)

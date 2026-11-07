@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic tests for the single installed launcher bin/pseudoct.
 
-Covers bin/pseudoct (gui, run, run --orchestrate, headless, resolve, --list-releases)
+Covers bin/pseudoct (run, headless, resolve, --list-releases; gui and --orchestrate refused)
 and the installed payload runner scripts/run_mlsc_current_payload.sh.
 
 An installed package is assembled under PSEUDOCT_TEST_SCRATCH: a copy of the real
@@ -31,7 +31,6 @@ LAUNCHER_SRC = os.path.join(REPO, 'bin', 'pseudoct')
 RUNNER_SRC = os.path.join(REPO, 'scripts', 'run_mlsc_current_payload.sh')
 BUILT = ('R2010b', 'R2014b')
 EXECUTABLES = {
-    'app': 'app/run_pseudo_CT',
     'payload': 'payload/mlsc_current_payload',
     'standalone': 'standalone/pseudoct_standalone',
 }
@@ -61,9 +60,6 @@ case "$1" in
     printf 'ready\n-\nnot_required\nnot_attempted\nlocal\nnot_run\nnot_dispatched\n-\nvalidate\n-\n' > "$PSEUDOCT_CLI_SUMMARY" ;;
   headless)
     printf 'synthetic result\n' > "$PSEUDOCT_RESULT_MAT" ;;
-  orchestrate)
-    [ "$scenario" != orchestrate-fail ] || exit 3
-    printf 'synthetic report\n' > "$3" ;;
 esac
 exit 0
 '''
@@ -209,16 +205,16 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault'])
         rc, out, _err = self.pseudoct(['--help'], env={})
         self.assertEqual(rc, 0)
-        self.assertIn('pseudoct gui', out)
+        self.assertIn('pseudoct run', out)
+        self.assertNotIn('gui', out)
+        self.assertNotIn('--orchestrate', out)
 
-    def test_gui_launches_compiled_app_with_no_arguments(self):
-        rc, _out, err = self.pseudoct(['gui', '--mcr', 'R2014b', '--mcr-root', self.root['R2014b']],
-                                      env={})
-        self.assertEqual(rc, 0, err)
-        self.assert_single_call('R2014b', 'app', self.root_real['R2014b'], '')
-        rc, _out, err = self.pseudoct(['gui', 'extra'], env={})
-        self.assertEqual(rc, 64, err)
-        self.assertEqual(len(self.invocations()), 1)
+    def test_removed_gui_and_orchestrate_modes_are_refused_without_invocation(self):
+        for args in (['gui'], ['gui', '--mcr', 'R2014b'],
+                     ['run', '--orchestrate', 'request.mat', 'report.mat']):
+            rc, _out, err = self.pseudoct(args, env={})
+            self.assertEqual(rc, 64, err)
+        self.assertEqual(self.invocations(), [])
 
     def test_resolve_prints_sourceable_lines_with_root_precedence(self):
         env_root = os.path.join(self.base, 'mcr-env-label')
@@ -260,22 +256,6 @@ class StandaloneTestCase(unittest.TestCase):
         rc, _out, err = self.pseudoct(['resolve', '--mcr', 'R1999z', '--mcr-root', bad], env={})
         self.assertEqual(rc, 64, err)
         self.assertIn('unknown or missing release label', err)
-
-    def test_orchestrate_forwards_both_paths_and_propagates_failure(self):
-        request = os.path.join(self.base, 'request.mat')
-        report = os.path.join(self.base, 'report.mat')
-        write(request, 'synthetic request mat\n')
-        rc, _out, err = self.pseudoct(['run', '--orchestrate', request, report,
-                                       '--mcr', 'R2010b', '--mcr-root', self.root['R2010b']], env={})
-        self.assertEqual(rc, 0, err)
-        self.assertTrue(os.path.isfile(report))
-        self.assert_single_call('R2010b', 'standalone', self.root_real['R2010b'],
-                                'orchestrate %s %s' % (os.path.realpath(request),
-                                                       os.path.realpath(report)))
-        rc, _out, err = self.pseudoct(['run', '--orchestrate', request, report + '.2',
-                                       '--mcr-root', self.root['R2010b']],
-                                      env={'PSEUDOCT_FAKE_SCENARIO': 'orchestrate-fail'})
-        self.assertEqual(rc, 3, err)
 
     def test_headless_two_argument_contract_and_selection(self):
         self.subject()
@@ -338,10 +318,13 @@ class StandaloneTestCase(unittest.TestCase):
         links = os.path.join(self.base, 'links')
         os.makedirs(links)
         os.symlink(self.launcher, os.path.join(links, 'pseudoct'))
-        rc, _out, err = self.pseudoct(['gui', '--mcr', 'R2014b', '--mcr-root', self.root['R2014b']],
-                                      env={}, launcher=os.path.join(links, 'pseudoct'))
+        direct_rc, direct_out, _err = self.pseudoct(['--list-releases'], env={})
+        rc, out, err = self.pseudoct(['--list-releases'], env={},
+                                     launcher=os.path.join(links, 'pseudoct'))
         self.assertEqual(rc, 0, err)
-        self.assert_single_call('R2014b', 'app', self.root_real['R2014b'], '')
+        self.assertEqual(direct_rc, 0)
+        self.assertEqual(out, direct_out)
+        self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault', 'R2014b\t8.4\t-'])
 
     def test_payload_runner_execs_compiled_payload_with_its_runtime(self):
         runner = os.path.join(self.pkg, 'runtimes', 'R2010b', 'payload', 'run_mlsc_current_payload.sh')

@@ -56,11 +56,15 @@ helper_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_output.m')
 profile_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_print_profile_summary.m'));
 promote_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_promote_final_outputs.m'));
 dicom_source = local_read(fullfile(root_dir, 'src', 'io', 'nii2dcm_header_copy_vb20_david.m'));
-jobs_source = local_read(fullfile(root_dir, 'src', 'orchestration', 'build_jobs_from_subject_list.m'));
 prepare_source = local_read(fullfile(root_dir, 'src', 'science', 'current', 'pseudo_CT_current_prepare.m'));
 
 assert(~isempty(strfind(run_source, 'run_id = datestr(now, ''yyyymmdd_HHMMSS'')')));
-assert(~isempty(strfind(entry_source, 'pseudo_CT_orchestrate(')));
+% run_pseudo_CT is the frontend: argument mode and the window both go through
+% the launcher bridge, never through the in-process orchestrator or lifecycle.
+assert(~isempty(strfind(entry_source, 'pseudo_CT_launch_request(')));
+assert(isempty(strfind(entry_source, 'pseudo_CT_orchestrate(')));
+assert(isempty(strfind(entry_source, 'pseudo_CT_run_lifecycle')));
+assert(isempty(strfind(entry_source, 'local_run_subject')));
 assert(~isempty(strfind(run_source, ...
     'sprintf(''pseudoct-run-%s-%s.log'', log_utc, log_uuid)')));
 assert(~isempty(strfind(run_source, 'all_log_files{end + 1} = jobs(ii).log_file')));
@@ -72,7 +76,6 @@ assert(~isempty(strfind(run_source, 'show_subject_dialog = interactive_gui')));
 assert(~isempty(strfind(run_source, 'if ~promotion_success')));
 assert(~isempty(strfind(run_source, 'num_failed = num_failed + 1')));
 assert(~isempty(strfind(dicom_source, 'pseudo_CT:DICOMDimensionMismatch')));
-assert(~isempty(strfind(jobs_source, 'stats.skipped = stats.skipped + 1')));
 assert(~isempty(strfind(run_source, 'requested %d, started %d, succeeded %d, failed %d')));
 assert(local_active_occurrences(run_source, 'warning(''off'', ''all'')') == 1);
 assert(~isempty(strfind(profile_source, 'pseudo_CT_profile_summary.txt')));
@@ -204,21 +207,15 @@ end
 rmpath(stub_dir);
 assert(dimension_failed, 'DICOM dimension mismatch must propagate as an error.');
 
-[skipped_jobs, skipped_stats] = build_jobs_from_subject_list( ...
-    fullfile(test_dir, 'subject_without_mr', 'mprage.nii'), 1);
-assert(isempty(skipped_jobs));
-assert(skipped_stats.requested == 1 && skipped_stats.skipped == 1);
-
 new_sources = {run_source, helper_source, profile_source, promote_source, ...
-    dicom_source, jobs_source, prepare_source};
+    dicom_source, prepare_source};
 for ii = 1:length(new_sources)
     assert(isempty(regexp(new_sources{ii}, '\<datetime\>', 'once')));
     assert(isempty(regexp(new_sources{ii}, '\bstring\s*\(', 'once')));
     assert(isempty(regexp(new_sources{ii}, '\btable\s*\(', 'once')));
 end
 
-fprintf('=== CLI progress output tests: 97/97 passed ===\n');
-% NOTE: update the count above when adding or removing assertions.
+fprintf('CLI progress output tests passed.\n');
 end
 
 function count = local_active_occurrences(text, needle)

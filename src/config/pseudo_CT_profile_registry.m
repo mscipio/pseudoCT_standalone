@@ -1,20 +1,21 @@
-function out = pseudo_CT_profile_registry(action, key, root_dir)
-%PSEUDO_CT_PROFILE_REGISTRY Canonical profile registry and identity authority.
+function out = pseudo_CT_profile_registry(action, arg)
+%PSEUDO_CT_PROFILE_REGISTRY Canonical profile keys, configurations and identity.
 %   KEYS = PSEUDO_CT_PROFILE_REGISTRY('keys') returns the four canonical
 %   hyphenated profile keys in registry order as a cell column.
 %
-%   CONFIG = PSEUDO_CT_PROFILE_REGISTRY('invoke', KEY) calls the profile
-%   function for KEY through direct callable references. This is the installed
-%   profile path: it never scans src/config/profiles, never changes the MATLAB
-%   path, and never opens a profile .m file. Underscore spellings are rejected.
+%   CONFIG = PSEUDO_CT_PROFILE_REGISTRY('invoke', KEY) calls the profile function
+%   for KEY through direct callable references. One mechanism serves source
+%   checkouts (the profile files are on the path) and compiled distributions
+%   (build_application compiles them in). Underscore spellings and display
+%   labels are rejected.
 %
-%   IDENTITY = PSEUDO_CT_PROFILE_REGISTRY('identity', KEY, ROOT_DIR) returns
-%   the resolved profile identity struct with fields profile_key,
-%   profile_identity_source, profile_path and profile_sha256.
-%     Installed mode: KEY is bound to the SHA-256 of the installed
-%       manifest.json (no profile file is opened, profile_path is empty).
-%     Source mode: the physical profile file under ROOT_DIR/src/config/profiles
-%       is hashed, exactly as before.
+%   IDENTITY = PSEUDO_CT_PROFILE_REGISTRY('identity', KEY) returns profile_key,
+%   profile_identity_source ('effective-config') and profile_sha256: the SHA-256
+%   of the canonical text of the effective configuration. Any changed setting
+%   changes the identity in both modes; comment-only edits do not.
+%
+%   HASH = PSEUDO_CT_PROFILE_REGISTRY('config_hash', CONFIG) hashes one
+%   configuration struct the same way.
 %   Minimum supported MATLAB: R2010b.
 
 if nargin < 1 || ~ischar(action)
@@ -24,7 +25,7 @@ switch action
     case 'keys'
         out = {'local'; 'local-mprage-only'; 'mlsc'; 'mlsc-mprage-only'};
     case 'invoke'
-        key = local_require_key(key);
+        key = local_require_key(arg);
         switch key
             case 'local'
                 out = local();
@@ -36,60 +37,79 @@ switch action
                 out = mlsc_mprage_only();
         end
     case 'identity'
-        out = local_identity(key, root_dir);
+        key = local_require_key(arg);
+        config = pseudo_CT_profile_registry('invoke', key);
+        out = struct('profile_key', key, ...
+            'profile_identity_source', 'effective-config', ...
+            'profile_sha256', local_config_hash(config));
+    case 'config_hash'
+        out = local_config_hash(arg);
     otherwise
         error('pseudo_CT:ProfileRegistry', 'Unknown profile registry action.');
 end
 end
 
 function key = local_require_key(key)
-%LOCAL_REQUIRE_KEY Exact canonical key among the four installed profiles.
+%LOCAL_REQUIRE_KEY Exact canonical key among the four profiles.
 if ~ischar(key) || size(key, 1) ~= 1 || ~any(strcmp(key, ...
         {'local'; 'mlsc'; 'local-mprage-only'; 'mlsc-mprage-only'}))
     error('pseudo_CT:InvalidProfile', 'Unknown profile: %s', local_text(key));
 end
 end
 
-function identity = local_identity(key, root_dir)
-layout = pseudo_CT_package_layout();
-if strcmp(layout.mode, 'installed')
-    if ~ischar(key) || size(key, 1) ~= 1 || ~any(strcmp(key, ...
-            {'local'; 'mlsc'; 'local-mprage-only'; 'mlsc-mprage-only'}))
-        error('pseudo_CT:InvalidProfile', 'The selected profile is unavailable.');
-    end
-    identity = struct('profile_key', key, ...
-        'profile_identity_source', 'installed-manifest', ...
-        'profile_path', '', ...
-        'profile_sha256', local_sha256(fullfile(layout.root, 'manifest.json')));
-    return;
+function hash = local_config_hash(config)
+%LOCAL_CONFIG_HASH SHA-256 of the canonical text of one configuration struct.
+text = local_canonical(config);
+path_name = [tempname '.txt'];
+fid = fopen(path_name, 'w');
+if fid == -1
+    error('pseudo_CT:OrchestrationArtifact', ...
+        'A profile identity could not be computed.');
 end
-profiles = pseudo_CT_list_profiles(fullfile(root_dir, 'src', 'config'), false);
-profile_path = '';
-for ii = 1:length(profiles)
-    if ischar(key) && strcmp(profiles(ii).name, key)
-        profile_path = profiles(ii).file_path;
-        break;
-    end
-end
-if isempty(profile_path)
-    error('pseudo_CT:InvalidProfile', 'The selected profile is unavailable.');
-end
-identity = struct('profile_key', key, ...
-    'profile_identity_source', 'source-file', ...
-    'profile_path', profile_path, ...
-    'profile_sha256', local_sha256(profile_path));
-end
-
-function hash = local_sha256(path_name)
+cleanup_file = onCleanup(@() local_delete(path_name)); %#ok<NASGU>
+fprintf(fid, '%s', text);
+fclose(fid);
 try
     hash = mlsc_release_gate('sha256_file', path_name);
 catch ME
     error('pseudo_CT:OrchestrationArtifact', ...
-        'A local input or artifact could not be fingerprinted: %s', ME.message);
+        'A profile identity could not be computed: %s', ME.message);
 end
 if ~ischar(hash) || isempty(hash)
-    error('pseudo_CT:OrchestrationArtifact', ...
-        'A local input or artifact could not be fingerprinted.');
+    error('pseudo_CT:OrchestrationArtifact', 'A profile identity could not be computed.');
+end
+end
+
+function text = local_canonical(value)
+%LOCAL_CANONICAL ASCII, order-independent text of a value (fields sorted,
+%   numbers and characters as code points, so encoding cannot change it).
+size_text = sprintf('%dx', size(value));
+if isstruct(value)
+    text = ['struct' size_text '{'];
+    for ii = 1:numel(value)
+        names = sort(fieldnames(value(ii)));
+        for jj = 1:numel(names)
+            text = [text names{jj} '=' local_canonical(value(ii).(names{jj})) ';']; %#ok<AGROW>
+        end
+        text = [text '|']; %#ok<AGROW>
+    end
+    text = [text '}'];
+elseif iscell(value)
+    text = ['cell' size_text '{'];
+    for ii = 1:numel(value)
+        text = [text local_canonical(value{ii}) ',']; %#ok<AGROW>
+    end
+    text = [text '}'];
+elseif ischar(value)
+    text = ['char' size_text ':' sprintf('%d.', double(value))];
+elseif islogical(value)
+    text = ['logical' size_text ':' sprintf('%d.', double(value(:)))];
+elseif isnumeric(value)
+    text = ['num' class(value) size_text ':' sprintf('%.17g.', double(value(:)))];
+elseif isa(value, 'function_handle')
+    text = ['fh:' func2str(value)];
+else
+    text = ['class:' class(value)];
 end
 end
 
@@ -98,5 +118,11 @@ if ischar(value)
     text = value;
 else
     text = '<non-text>';
+end
+end
+
+function local_delete(path_name)
+if exist(path_name, 'file') == 2
+    delete(path_name);
 end
 end

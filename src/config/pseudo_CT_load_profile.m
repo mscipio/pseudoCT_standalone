@@ -1,34 +1,19 @@
-function config = pseudo_CT_load_profile(profile_name, config_root)
-%PSEUDO_CT_LOAD_PROFILE Load and validate one discovered profile.
+function config = pseudo_CT_load_profile(profile_name)
+%PSEUDO_CT_LOAD_PROFILE Load and validate one canonical profile.
+%   The registry is the only profile mechanism, in source and compiled modes.
+%   Minimum supported MATLAB: R2010b.
 
 if nargin < 1 || ~ischar(profile_name) || isempty(strtrim(profile_name))
     error('pseudo_CT:InvalidProfile', 'Profile name must be a non-empty string.');
 end
-if nargin < 2 || isempty(config_root)
-    config_root = fileparts(mfilename('fullpath'));
-end
-
-% Single canonical-resolution authority: accept only exact hyphenated
-% canonical keys discovered from src/config/profiles. Underscore spellings
-% and display labels are rejected. Discovery stays non-recursive.
-trimmed = strtrim(profile_name);
-profiles = pseudo_CT_list_profiles(config_root, false);
-profile = struct();
-for ii = 1:length(profiles)
-    if strcmp(trimmed, profiles(ii).name)
-        profile = profiles(ii);
-        break;
-    end
-end
-if isempty(fieldnames(profile))
-    error('pseudo_CT:InvalidProfile', 'Unknown profile: %s', profile_name);
-end
-
-config = local_invoke(profile, config_root);
+% Exact hyphenated canonical keys only: the registry rejects underscore
+% spellings and display labels.
+profile_key = strtrim(profile_name);
+config = pseudo_CT_profile_registry('invoke', profile_key);
 
 if ~isstruct(config) || numel(config) ~= 1
     error('pseudo_CT:InvalidProfile', ...
-        'Profile %s must return one config struct.', profile.name);
+        'Profile %s must return one config struct.', profile_key);
 end
 
 required = {'mode'; 'spm_root'; 'atlas_root'; 'd2n_root'; ...
@@ -50,67 +35,67 @@ require_fields(config.normalization, ...
 
 if ~ismember(config.mode, {'local', 'mlsc'})
     error('pseudo_CT:InvalidProfile', ...
-        'config.mode must be ''local'' or ''mlsc'' in profile %s.', profile.name);
+        'config.mode must be ''local'' or ''mlsc'' in profile %s.', profile_key);
 end
 if strcmp(config.mode, 'mlsc')
     require_fields(config.mlsc, ...
         {'host'; 'shell'; 'freesurfer_env'; 'partition'; ...
          'nodes'; 'ntasks'; 'cpus_per_task'; 'memory'; 'time'}, ...
         'config.mlsc');
-    validate_mlsc_scheduler(config.mlsc, profile.name);
+    validate_mlsc_scheduler(config.mlsc, profile_key);
 end
 if strcmp(config.mode, 'mlsc')
     require_fields(config.current, ...
         {'runner'; 'mcr_root'; 'build_manifest'; ...
          'resource_manifest'; 'required_outputs'}, 'config.current');
-    validate_current(config.current, profile.name);
-elseif any(strcmp(profile.name, {'local'; 'local-mprage-only'}))
+    validate_current(config.current, profile_key);
+elseif any(strcmp(profile_key, {'local'; 'local-mprage-only'}))
     require_fields(config.current, ...
         {'runner'; 'mcr_root'; 'build_manifest'; ...
          'resource_manifest'; 'required_outputs'}, 'config.current');
-    validate_current(config.current, profile.name);
+    validate_current(config.current, profile_key);
 elseif isfield(config, 'current')
     error('pseudo_CT:InvalidProfile', ...
         'config.current is unsupported in local profile %s.', ...
-        profile.name);
+        profile_key);
 end
 if ~ischar(config.aliasing_root) || isempty(strtrim(config.aliasing_root))
     error('pseudo_CT:InvalidProfile', ...
         'config.aliasing_root must be a non-empty string in profile %s.', ...
-        profile.name);
+        profile_key);
 end
 if ~ismember(config.recenter_before_normalization, {'Yes', 'No'}) || ...
         ~ismember(config.zero_background, {'Yes', 'No'})
     error('pseudo_CT:InvalidProfile', ...
         'Recenter and zero-background values must be ''Yes'' or ''No'' in profile %s.', ...
-        profile.name);
+        profile_key);
 end
 if ~islogical(config.cleanup_on_success) || ...
         ~islogical(config.bone_enabled) || ...
         ~isscalar(config.cleanup_on_success) || ~isscalar(config.bone_enabled)
     error('pseudo_CT:InvalidProfile', ...
         'Cleanup and bone settings must be scalar logical values in profile %s.', ...
-        profile.name);
+        profile_key);
 end
 if ~isnumeric(config.fwhm) || ~isscalar(config.fwhm) || config.fwhm < 0
     error('pseudo_CT:InvalidProfile', ...
-        'config.fwhm must be a non-negative scalar in profile %s.', profile.name);
+        'config.fwhm must be a non-negative scalar in profile %s.', profile_key);
 end
 if ~isnumeric(config.aliasing_default) || ...
         ~isscalar(config.aliasing_default) || ...
         ~ismember(config.aliasing_default, [0 1])
     error('pseudo_CT:InvalidProfile', ...
-        'config.aliasing_default must be 0 or 1 in profile %s.', profile.name);
+        'config.aliasing_default must be 0 or 1 in profile %s.', profile_key);
 end
 
-validate_io_policy(config, profile.name);
-validate_presentation(config.presentation, profile.name);
+validate_io_policy(config, profile_key);
+validate_presentation(config.presentation, profile_key);
 if ~isempty(config.compatibility_profile)
-    baseline = pseudo_CT_load_profile(config.compatibility_profile, config_root);
+    baseline = pseudo_CT_load_profile(config.compatibility_profile);
     if ~isequal(remove_io_policy(config), remove_io_policy(baseline))
         error('pseudo_CT:ProfileDrift', ...
             'Profile %s does not match its compatibility baseline %s.', ...
-            profile.name, config.compatibility_profile);
+            profile_key, config.compatibility_profile);
     end
 end
 
@@ -291,30 +276,4 @@ for ii = 1:length(fields)
 end
 end
 
-function config = local_invoke(profile, config_root)
-%LOCAL_INVOKE Call one discovered profile. Installed mode uses the direct
-%   registry (no path edits, no physical profile lookup); source mode keeps
-%   the path-scoped feval of the editable profile file.
-layout = pseudo_CT_package_layout();
-if strcmp(layout.mode, 'installed')
-    config = pseudo_CT_profile_registry('invoke', profile.name);
-    return;
-end
-profile_dir = fullfile(config_root, 'profiles');
-path_was_added = isempty(strfind([path pathsep], [profile_dir pathsep]));
-if path_was_added
-    addpath(profile_dir, '-begin');
-end
-cleanup = onCleanup(@() remove_profile_path(profile_dir, ...
-    profile.function_name, path_was_added)); %#ok<NASGU>
-clear(profile.function_name);
-rehash;
-config = feval(profile.function_name);
-end
 
-function remove_profile_path(profile_dir, function_name, path_was_added)
-clear(function_name);
-if path_was_added
-    rmpath(profile_dir);
-end
-end

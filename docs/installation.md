@@ -101,14 +101,16 @@ build_application('<release>', 'Mode', 'build', ...
 verify_application_package('<output-root>/<release>')
 ```
 
-`<output-root>` must be outside `src/`, `external/` and `compiled/`. A package
-is written to `<output-root>/<release>/` and is never overwritten. The package
-mirrors an install root so `bin/pseudoct` (the only public launcher) resolves its
-siblings by relative path: `bin/` (`pseudoct`), `src/` (interpreted runtime source that the CLI and headless bootstrap need),
-`app/` (the `run_pseudo_CT` GUI/CLI build), `payload/` (`mlsc_current_payload`),
-`resources/` (atlas and template files), `application_manifest.txt` (release,
-MATLAB and Compiler identity, source commit, lock hash, and inputs) and
-`SHA256SUMS`. An independent check is
+`<output-root>` must be outside `src/`, `external/` and `compiled/`, and a build
+refuses a dirty git tree, so commit before building. The build compiles exactly two
+targets: the headless engine `standalone/pseudoct_standalone` and the science worker
+`payload/mlsc_current_payload`. Distribution assembly is
+`scripts/release_application.py` (see [Release catalog and layout](releases.md)):
+it runs `build_application` once per selected release and writes
+`pseudoct-<version>/` with `bin/pseudoct`, `run_pseudo_CT.m`, `frontend/`,
+`runtimes/<LABEL>/`, `resources/`, `manifest.json` and `SHA256SUMS`. It contains no
+`src/`, `external/` or GUI executable; `--verify <dir>` checks it. An independent check
+of the `build_application` package is
 `cd <output-root>/<release> && sha256sum -c SHA256SUMS`.
 
 Compile support is unverified. The procedure has not been run as a real build

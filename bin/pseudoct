@@ -5,9 +5,7 @@
 # Installed distribution (runtimes/ present, no src/): compiled release selection
 # and dispatch through the MATLAB Runtime of the selected release.
 #
-#   pseudoct gui      [--mcr LABEL] [--mcr-root DIR]
 #   pseudoct run      [--mcr LABEL] [--mcr-root DIR] validate|run <CLI options>
-#   pseudoct run      [--mcr LABEL] [--mcr-root DIR] --orchestrate REQUEST.mat REPORT.mat
 #   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
 #   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
 #   pseudoct --list-releases | --help
@@ -25,19 +23,15 @@ operation_phase=not_started
 usage() {
     cat <<'USAGE'
 Usage:
-  pseudoct gui      [--mcr LABEL] [--mcr-root DIR]
   pseudoct run      validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
   pseudoct run      run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
-  pseudoct run      [--mcr LABEL] [--mcr-root DIR] --orchestrate REQUEST.mat REPORT.mat
   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
   pseudoct --list-releases
   pseudoct --help
 
 Operations:
-  gui                 Open the pseudoCT application (installed distribution only).
   run validate|run    Validate a request, or validate and submit it (CLI options below).
-  run --orchestrate   Run one orchestrated request MAT and write a report MAT (installed).
   headless            Run one v2 headless request MAT into a result MAT.
   resolve             Validate one MATLAB Runtime and print sourceable PSEUDOCT_* lines.
   --list-releases     Print one line per installed release: label, MCR, default marker.
@@ -145,13 +139,13 @@ else
 fi
 
 # Artifacts every installed release must provide (kept in step with the driver).
-RELEASE_ARTIFACTS='app/run_pseudo_CT payload/mlsc_current_payload payload/run_mlsc_current_payload.sh standalone/pseudoct_standalone'
+RELEASE_ARTIFACTS='payload/mlsc_current_payload payload/run_mlsc_current_payload.sh standalone/pseudoct_standalone'
 
 # Catalog reader: list | default | resolve LABEL. Installed mode lists complete releases only.
 CATALOG_PY='
 import json, os, re, shlex, sys
 path, key, command, label, root, mode = sys.argv[1:7]
-REQUIRED = ["app/run_pseudo_CT", "payload/mlsc_current_payload",
+REQUIRED = ["payload/mlsc_current_payload",
             "payload/run_mlsc_current_payload.sh", "standalone/pseudoct_standalone"]
 def fail(message, code):
     sys.stderr.write("pseudoct: " + message + "\n")
@@ -359,47 +353,6 @@ op_resolve() {
     exit 0
 }
 
-op_gui() {
-    parse_selection "$@"
-    [ "${#REST_ARGS[@]}" -eq 0 ] || fail_op 'gui takes no arguments besides --mcr and --mcr-root' "$EXIT_USAGE"
-    require_installed gui
-    selection_label
-    select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" app/run_pseudo_CT ||
-        release_fail $?
-    LD_LIBRARY_PATH=$SEL_LD_PATH
-    export LD_LIBRARY_PATH
-    export_release_env
-    exec "$SEL_EXE"
-}
-
-op_orchestrate() {
-    # Arguments: REQUEST.mat REPORT.mat; selection options were consumed by parse_selection.
-    [ "$#" -eq 2 ] || fail_op 'usage: pseudoct run --orchestrate REQUEST.mat REPORT.mat [--mcr LABEL] [--mcr-root DIR]' "$EXIT_USAGE"
-    require_installed 'run --orchestrate'
-    request_path=$(readlink -f -- "$1") ||
-        fail_op 'orchestration request is unavailable or unreadable' "$EXIT_VALIDATION"
-    [ -f "$request_path" ] && [ -r "$request_path" ] ||
-        fail_op 'orchestration request is unavailable or unreadable' "$EXIT_VALIDATION"
-    report_path=$(readlink -m -- "$2") || fail_op 'orchestration report path is invalid' "$EXIT_AUTH"
-    [ -n "$report_path" ] && [ ! -d "$report_path" ] ||
-        fail_op 'orchestration report must name a file' "$EXIT_AUTH"
-    report_parent=$(dirname -- "$report_path")
-    [ -d "$report_parent" ] && [ -w "$report_parent" ] && [ -x "$report_parent" ] ||
-        fail_op 'report parent is not a writable directory' "$EXIT_AUTH"
-    [ "$request_path" != "$report_path" ] || fail_op 'request and report paths must differ' "$EXIT_AUTH"
-    selection_label
-    select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" standalone/pseudoct_standalone ||
-        release_fail $?
-    LD_LIBRARY_PATH=$SEL_LD_PATH
-    export LD_LIBRARY_PATH
-    export_release_env
-    PSEUDOCT_REQUEST_MAT=$request_path
-    PSEUDOCT_RESULT_MAT=$report_path
-    export PSEUDOCT_REQUEST_MAT PSEUDOCT_RESULT_MAT
-    "$SEL_EXE" orchestrate "$request_path" "$report_path"
-    exit $?
-}
-
 op_headless() {
     parse_selection "$@"
     [ "${#REST_ARGS[@]}" -eq 2 ] ||
@@ -517,9 +470,6 @@ MATLAB
 
 op_run() {
     parse_selection "$@"
-    if [ "${#REST_ARGS[@]}" -gt 0 ] && [ "${REST_ARGS[0]}" = --orchestrate ]; then
-        op_orchestrate "${REST_ARGS[@]:1}"
-    fi
     set -- ${REST_ARGS[@]+"${REST_ARGS[@]}"}
     if [ "$#" -lt 1 ]; then
         usage >&2
@@ -529,7 +479,7 @@ op_run() {
     shift
     case "$action" in
         validate|run) ;;
-        *) fail_op 'run takes validate or run (or --orchestrate); see --help' "$EXIT_USAGE" ;;
+        *) fail_op 'run takes validate or run; see --help' "$EXIT_USAGE" ;;
     esac
 
     profile=''
@@ -1086,6 +1036,10 @@ def write_line(channel, raw, diagnostics):
     if channel == "stderr":
         diagnostics.write("[stderr] " + text)
         diagnostics.flush()
+        # The headless exception identifier, message and stack are the only
+        # diagnostics for a failed operation; keep them on the caller's stderr.
+        if text.startswith("pseudoct-headless:"):
+            forward_line(text, "stderr")
         return
     candidate = strip_prompts(text)
     if matlab_noise(candidate):
@@ -1417,7 +1371,9 @@ elif science == "completed":
 elif science == "failed":
     outcome = "scientific_failed"
 elif result_backend == "local" and status == "failed":
-    outcome = "scientific_failed"
+    # Verified failures were handled above (science == "failed"); a failed local
+    # dispatch without that verdict is unverified (exit 68).
+    outcome = "scientific_completion_unverified"
 elif accepted:
     outcome = "submission_accepted_completion_unverified"
 elif submission in {"rejected", "unresolved"} or status == "failed":
@@ -1502,7 +1458,6 @@ case "$operation" in
     --list-releases)
         [ "$#" -eq 0 ] || fail_op '--list-releases takes no other arguments' "$EXIT_USAGE"
         list_releases ;;
-    gui) op_gui "$@" ;;
     run) op_run "$@" ;;
     headless) op_headless "$@" ;;
     resolve) op_resolve "$@" ;;

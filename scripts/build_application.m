@@ -19,12 +19,13 @@ function report = build_application(release, varargin)
 %     'LockSha256'        Optional expected SHA-256 of dependencies.lock.json.
 %
 %   Build mode requires a clean git tree and the MATLAB Runtime root.
+%   Exactly two compiled targets: payload/ (mlsc_current_payload) and
+%   standalone/ (pseudoct_standalone, the headless engine dispatcher). The
+%   GUI application is not built; a MATLAB frontend comes later.
 %   Package layout mirrors an install root, so bin/pseudoct (the only public
 %   launcher) resolves its siblings by relative path: bin/ (pseudoct), src/
-%   (interpreted runtime source),
-%   app/ (run_pseudo_CT GUI/CLI build), payload/ (mlsc_current_payload),
-%   standalone/ (pseudoct_standalone compiled CLI/headless dispatcher),
-%   resources/, application_manifest.txt and SHA256SUMS (see
+%   (interpreted runtime source), payload/, standalone/, resources/,
+%   application_manifest.txt and SHA256SUMS (see
 %   verify_application_package). Compile support for any release is
 %   UNVERIFIED until a real build is run; this file defines no support table.
 %
@@ -173,13 +174,12 @@ cfggen = fullfile(stage, 'cfggen');
 src_dirs = local_dirs(fullfile(repo, 'src'));
 spm_dirs = {spm; fullfile(spm, 'matlabbatch'); fullfile(spm, 'config'); ...
     fullfile(spm, 'toolbox', 'Seg'); fullfile(spm, 'toolbox', 'DARTEL')};
-plan.app_args = [{'-m', fullfile(repo, 'run_pseudo_CT.m'), '-d', fullfile(stage, 'app'), '-v'}, ...
-    local_pairs('-I', [src_dirs; {spm; opt.aliasingroot; opt.dicom2niftiroot}])];
 plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'mlsc_current_payload.m'), ...
     '-d', fullfile(stage, 'payload'), '-R', '-nodisplay', '-v'}, ...
     local_pairs('-I', [src_dirs; spm_dirs; {opt.aliasingroot; opt.dicom2niftiroot; cfggen}]), ...
     local_pairs('-a', {cfggen; opt.aliasingroot; opt.dicom2niftiroot; ...
     fullfile(spm, 'config'); fullfile(spm, 'EEGtemplates'); ...
+    fullfile(spm, 'spm_dicom_dict.mat'); ...
     fullfile(spm, 'toolbox', 'Seg'); fullfile(spm, 'toolbox', 'DARTEL'); ...
     fullfile(spm, 'spm_sample_vol.mexa64'); fullfile(spm, 'spm_bsplinc.mexa64'); ...
     fullfile(spm, 'spm_bsplins.mexa64'); fullfile(spm, 'spm_slice_vol.mexa64'); ...
@@ -188,12 +188,12 @@ plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'mlsc_cu
     fullfile(spm, 'toolbox', 'DARTEL', 'dartel3.mexa64'); ...
     fullfile(repo, 'src', 'qc', 'hot_map_mpitool_1024.mat'); fullfile(repo, 'CHANGELOG.md')})];
 % Compiled standalone dispatcher (src/cli/pseudoct_standalone.m). Its CLI and
-% headless dependencies are compiled in through the same src/ -I set as the app.
+% headless dependencies are compiled in through the same src/ -I set as the payload.
 plan.standalone_args = [{'-m', fullfile(repo, 'src', 'cli', 'pseudoct_standalone.m'), ...
     '-d', fullfile(stage, 'standalone'), '-v'}, ...
     local_pairs('-I', [src_dirs; {spm; opt.aliasingroot; opt.dicom2niftiroot}])];
 % Every entrypoint and -I/-a input, except the generated cfggen directory.
-all_args = [plan.app_args, plan.payload_args, plan.standalone_args];
+all_args = [plan.payload_args, plan.standalone_args];
 inputs = {};
 for kk = 2:numel(all_args)
     if any(strcmp(all_args{kk - 1}, {'-m', '-I', '-a'})) && ~strcmp(all_args{kk}, cfggen)
@@ -221,7 +221,8 @@ end
 function names = local_atlas_names(atlas_dir)
 fixed = {'ch2.nii'; 'new_segment_batch.mat'; 'dartel_existing_template_batch.mat'; ...
     'create_inverse_warped_batch.mat'; 'Template_1.nii'; 'Template_2.nii'; ...
-    'Template_3.nii'; 'Template_4.nii'; 'Template_5.nii'; 'Template_6.nii'};
+    'Template_3.nii'; 'Template_4.nii'; 'Template_5.nii'; 'Template_6.nii'; ...
+    'TPM.nii'};
 listed = dir(fullfile(atlas_dir, '*Atlas*.nii'));
 if isempty(listed)
     error('pseudo_CT:BuildDependency', 'No *Atlas*.nii files in %s.', atlas_dir);
@@ -231,7 +232,7 @@ names = [fixed; atlas];
 end
 
 function fs = local_file_set(repo, atlas_dir)
-fs.entrypoints = {'run_pseudo_CT.m'; 'src/science/current/mlsc_current_payload.m'};
+fs.entrypoints = {'src/science/current/mlsc_current_payload.m'};
 fs.launchers = {'bin/pseudoct'};
 % The payload runner is shipped per release by the release driver; it stays in the source
 % digest so the build provenance still covers it.
@@ -277,16 +278,14 @@ function report = local_build(repo, release, report, opt, fs)
 %LOCAL_BUILD The only branch that compiles. Reached only with Mode 'build'.
 out_dir = report.output_dir;
 stage = [out_dir '.partial'];
-for dd = {'app', 'payload', 'standalone', 'resources', 'bin', 'cfggen'}
+for dd = {'payload', 'standalone', 'resources', 'bin', 'cfggen'}
     local_mkdir(fullfile(stage, dd{1}));
 end
 cfggen = fullfile(stage, 'cfggen');
 local_write_init_helpers(cfggen);
 plan = local_compile_plan(repo, opt, stage);
-local_compile(plan.app_args, fullfile(stage, 'mcc-app.log'));
 local_compile(plan.payload_args, fullfile(stage, 'mcc-payload.log'));
 local_compile(plan.standalone_args, fullfile(stage, 'mcc-standalone.log'));
-local_require(fullfile(stage, 'app', 'run_pseudo_CT'), 'compiled application executable');
 local_require(fullfile(stage, 'payload', 'mlsc_current_payload'), 'compiled payload executable');
 local_require(fullfile(stage, 'standalone', 'pseudoct_standalone'), 'compiled standalone dispatcher');
 
@@ -337,7 +336,7 @@ manifest_lines = {'schema pseudo-CT.application-package/v1'; ...
     ['spm_root ' opt.spmroot]; ['atlas_dir ' opt.atlasdir]; ...
     ['aliasing_root ' opt.aliasingroot]; ['dicom2nifti_root ' opt.dicom2niftiroot]; ...
     ['mcr_root ' opt.mcrroot]; ...
-    ['mcc_app ' local_mcc_text(plan.app_args)]; ['mcc_payload ' local_mcc_text(plan.payload_args)]; ...
+    ['mcc_payload ' local_mcc_text(plan.payload_args)]; ...
     ['mcc_standalone ' local_mcc_text(plan.standalone_args)]; ...
     ['build_timestamp_utc ' stamp]; ...
     ['file_count ' num2str(numel(rels) + 1)]; ...
@@ -389,7 +388,7 @@ fprintf('  matlab %s (%s) compiler %s arch %s\n', ...
 fprintf('  source_commit %s dirty=%d\n', report.source_commit, report.source_dirty);
 fprintf('  lock_sha256 %s\n', report.lock_sha256);
 fprintf('  compile_inputs %d present\n', report.compile_input_count);
-fprintf('  compile_targets app=run_pseudo_CT payload=mlsc_current_payload standalone=pseudoct_standalone\n');
+fprintf('  compile_targets payload=mlsc_current_payload standalone=pseudoct_standalone\n');
 fprintf('  file_set entrypoints=%d src=%d launchers=%d resources=%d source_set_sha256=%s\n', ...
     numel(report.entrypoints), report.source_file_count, report.launcher_count, ...
     report.resource_count, report.source_set_sha256);

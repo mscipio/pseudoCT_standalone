@@ -130,6 +130,21 @@ completion fields rather than inferring completion from process exit alone.
 | `69` | Launcher or runtime failure. |
 
 `bin/pseudoct headless` uses `0` for success, `2` for a rejected request/profile,
-`3` for authentication/account/submission failure, `64`–`66` for argument or
-path errors, `69` when MATLAB is unavailable, and `70` for bootstrap/runtime or
-invalid-result failures.
+`3` for authentication/account/submission failure, for any other failed headless
+result (including validation failures), and for a submitted result whose
+scientific completion is not verified (dispatch or scheduler acceptance alone is
+not completion evidence), `64`–`66` for argument or path errors, `69` when MATLAB
+is unavailable, and `70` for bootstrap/runtime or invalid-result failures.
+
+## Cancellation policy
+
+- **Timeout:** when polling reaches the configured timeout before terminal
+  accounting, the lifecycle requests cancellation (`scancel`) and reports the
+  outcome from accounting.
+- **Interruption after submission:** a polling error or a lost connection after
+  the Slurm job was accepted never cancels the job. The result is reported as
+  unverified (`bin/pseudoct run`: exit `68`; raw `headless`: exit `3`). The job
+  ID and the manual command `scancel <job id>` are printed. The remote job keeps
+  running until it is cancelled by hand.
+- **Before submission:** nothing was accepted by the scheduler, so there is
+  nothing to cancel.

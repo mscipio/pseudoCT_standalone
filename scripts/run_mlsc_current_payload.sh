@@ -65,9 +65,9 @@ fi
 
 if [ "$layout" = repository ]; then
     mcr_version=$(sed -n 's/^mcr_version \[\([0-9][0-9]*\) \([0-9][0-9]*\)\]$/\1.\2/p' "$manifest")
-    # MATLAB R2010b/compiler root and deployed MCR release are distinct.
-    expected_root="/usr/pubsw/common/matlab/7.11"
-    if [ -z "$mcr_version" ] || [ "$mcr_root" != "$expected_root" ] || [ "$mcr_version" != "7.14" ]; then
+    # The Runtime root is the one recorded for the artifact (checked above for
+    # existence and layout); the deployed MCR release must be 7.14 (R2010b).
+    if [ -z "$mcr_version" ] || [ "$mcr_version" != "7.14" ]; then
         echo "Recorded MATLAB root/MCR release does not match the supported contract: $mcr_root (MCR $mcr_version)" >&2
         exit 1
     fi

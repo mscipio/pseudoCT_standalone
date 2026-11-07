@@ -8,7 +8,7 @@ old_path = path();
 addpath(genpath(fullfile(root_dir, 'src')), '-begin');
 cleanup_path = onCleanup(@() path(old_path)); %#ok<NASGU>
 
-config = pseudo_CT_load_profile('mlsc', fullfile(root_dir, 'src', 'config'));
+config = pseudo_CT_load_profile('mlsc');
 dependency_paths = pseudo_CT_dependency_paths();
 addpath(dependency_paths.spm_root, '-begin');
 
@@ -26,6 +26,10 @@ cleanup_root = onCleanup(@() local_cleanup(test_root)); %#ok<NASGU>
 
 active_scenario = '';
 active_shared_temp = '';
+last_console = '';
+log_line_a = '[2026-11-06 12:00:01] Aligning MPRAGE and creating subject mask.';
+log_line_b = '[2026-11-06 12:00:02] Running SPM New Segment.';
+log_line_c = '[2026-11-06 12:00:03] Applying inverse warp.';
 active_scheduler_state = 'COMPLETED';
 active_exit_code = '0:0';
 transport_allowed = true;
@@ -76,6 +80,27 @@ result = run_case('cancelled', 'timeout_cancel');
 assert(result.terminal && ~result.success && strcmp(result.state, 'cancelled'));
 assert(result.cancel_requested && result.cancel_succeeded && cancel_calls == 1);
 
+% Caught post-submit interruption: the job is never cancelled, the outcome is
+% unverified, and the manual scancel command is printed.
+result = run_case('interrupted', 'interrupt');
+assert(result.interrupted && result.terminal && ~result.success && ...
+    ~result.eligible_for_finalization && strcmp(result.state, 'interrupted'));
+assert(cancel_calls == 0, 'A caught interruption must not cancel the Slurm job.');
+assert(result.job_id == 31415);
+assert(~isempty(strfind(result.interruption_detail, 'continues to run')) && ...
+    ~isempty(strfind(result.interruption_detail, 'scancel 31415')));
+assert(~isempty(strfind(last_console, 'scancel 31415')), ...
+    'The manual cancellation command must be printed for an interrupted job.');
+
+% A Slurm log truncated and rewritten mid-run must not show earlier lines again.
+result = run_case('log-rotate', 'log_rotate');
+log_counts = [numel(strfind(last_console, 'Aligning MPRAGE and creating subject mask.')), ...
+    numel(strfind(last_console, 'Running SPM New Segment.')), ...
+    numel(strfind(last_console, 'Applying inverse warp.'))];
+assert(isequal(log_counts, [1 1 1]), ...
+    sprintf(['Each log line must show once across a rewrite: counts A/B/C = ' ...
+    '%d/%d/%d. Console: %s'], log_counts(1), log_counts(2), log_counts(3), last_console));
+
 % A rejected security gate must fail closed before the submit callback.
 transport_allowed = false;
 result = run_case('transport-rejected', 'transport_rejected');
@@ -121,12 +146,16 @@ fprintf('Current MLSC submit/monitor/output/failure/cancellation checks passed.\
         elseif strcmp(scenario, 'transport_rejected')
             transport_allowed = false;
         end
+        if strcmp(scenario, 'log_rotate')
+            runtime.timeout_seconds = 3600;
+            runtime.max_polls = 4;
+        end
         submit_calls = 0;
         squeue_calls = 0;
         sacct_calls = 0;
         cancel_calls = 0;
         clock_calls = 0;
-        output = mlsc_lifecycle(subject, config, runtime, transport);
+        last_console = evalc('output = mlsc_lifecycle(subject, config, runtime, transport);');
     end
 
     function accepted = verify_transport()
@@ -145,18 +174,39 @@ fprintf('Current MLSC submit/monitor/output/failure/cancellation checks passed.\
                 submit_fixture_error = ME.message;
             end
         end
+        if strcmp(active_scenario, 'log_rotate')
+            % stderr keeps milestone lines on the plain path (stdout is parsed
+            % by the scientific-stdout reader and is not the case under test).
+            local_write(fullfile(active_shared_temp, 'pseudoCT_mlsc_31415.err'), ...
+                [log_line_a char(10) log_line_b char(10)]);
+        end
         response = '31415;mlsc';
         submit_response = response;
     end
 
     function response = query_squeue(~)
         squeue_calls = squeue_calls + 1;
+        if strcmp(active_scenario, 'interrupt')
+            error('mlsc_test:Interrupt', 'Injected interruption after submission.');
+        end
+        if strcmp(active_scenario, 'log_rotate')
+            log_path = fullfile(active_shared_temp, 'pseudoCT_mlsc_31415.err');
+            if squeue_calls == 2
+                % Truncate to a shorter log: the reader restarts at byte 0.
+                local_write(log_path, [log_line_a char(10)]);
+            elseif squeue_calls == 3
+                % Append after the rewrite: only the new line may show.
+                local_write(log_path, [log_line_a char(10) log_line_c char(10)]);
+            end
+        end
         response = 'RUNNING';
     end
 
     function response = query_sacct(~)
         sacct_calls = sacct_calls + 1;
-        if strcmp(active_scenario, 'timeout_cancel') && cancel_calls == 0
+        if strcmp(active_scenario, 'log_rotate')
+            response = '31415|PENDING|0:0|2026-11-06T12:00:00||';
+        elseif strcmp(active_scenario, 'timeout_cancel') && cancel_calls == 0
             response = '31415|PENDING|0:0|2026-11-06T12:00:00||';
         elseif strcmp(active_scenario, 'timeout_cancel')
             response = '31415|CANCELLED|0:15|2026-11-06T12:00:00|2026-11-06T12:01:00|60';

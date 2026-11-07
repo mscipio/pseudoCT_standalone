@@ -50,24 +50,27 @@ Each `--mcr` value must be one of these exact labels.
 
 ```
 pseudoct-<version>/
-  bin/pseudoct                                          the only public launcher
-  run_pseudo_CT.m                                       installed MATLAB wrapper (generated)
-  runtimes/<LABEL>/app/run_pseudo_CT                    compiled GUI/application
-  runtimes/<LABEL>/app/run_pseudo_CT.ctf                compiler sidecar (optional)
-  runtimes/<LABEL>/payload/mlsc_current_payload         compiled MLSC payload
+  bin/pseudoct                                          the only public launcher (copied)
+  run_pseudo_CT.m                                       MATLAB frontend (copied from the repository)
+  frontend/                                             MATLAB frontend files (copied verbatim)
+  runtimes/<LABEL>/payload/mlsc_current_payload         compiled MLSC payload (science worker)
   runtimes/<LABEL>/payload/run_mlsc_current_payload.sh  payload runner (copy of scripts/)
   runtimes/<LABEL>/payload/build_manifest.mat           per-release build manifest (package-manifests)
   runtimes/<LABEL>/payload/resource_manifest.mat        per-release resource manifest (package-manifests)
-  runtimes/<LABEL>/standalone/pseudoct_standalone       compiled CLI/headless/orchestration dispatcher
-  runtimes/<LABEL>/standalone/pseudoct_standalone.ctf   compiler sidecar (optional)
+  runtimes/<LABEL>/standalone/pseudoct_standalone       compiled headless engine (dispatcher)
   resources/                                            atlas and template files
   manifest.json                                         canonical; embeds the release catalog
   SHA256SUMS                                            sorted checksums, includes manifest.json
 ```
 
-- `*.ctf` sidecars are kept only directly inside `app/`, `payload/` and `standalone/`.
-- The distribution contains no `src/`, no tests, no build tools, no logs and no `cfggen/`.
-  Its only launcher is `bin/pseudoct`. `--verify DIR` of the driver refuses anything else.
+- `frontend/` holds the window, its profile selector, the request bridge and the
+  profile table. The credential store and the password dialog (with its tools) are
+  shipped from their `src/` originals, which the compiled CLI and the lifecycle also
+  use. The driver's `FRONTEND_OWN` and `FRONTEND_FROM_SRC` lists are the complete
+  allowlist; nothing else is shipped beside them.
+- The distribution contains no `src/`, no `external/`, no tests, no build tools, no logs
+  and no `app/` GUI executable. `--verify DIR` of the driver refuses anything outside the
+  allowlist.
 - Paths inside the distribution are relative to the installed location, so the tree
   works after it is moved or reached through a symlink.
 
@@ -88,25 +91,21 @@ pseudoct-<version>/
 `bin/pseudoct` is the single public launcher in both layouts. In an installed
 distribution it selects a release and dispatches to its compiled executables. A
 repository checkout (`src/` present) keeps its licensed MATLAB behaviour; `--mcr` and
-`--mcr-root` are errors there, and `gui`, `resolve` and `run --orchestrate` require an
-installed distribution.
+`--mcr-root` are errors there, and `resolve` requires an installed distribution.
 
 ```
-pseudoct gui      [--mcr LABEL] [--mcr-root DIR]
 pseudoct run      [--mcr LABEL] [--mcr-root DIR] validate|run <CLI options>
-pseudoct run      [--mcr LABEL] [--mcr-root DIR] --orchestrate REQUEST.mat REPORT.mat
 pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
 pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
 pseudoct --list-releases
 pseudoct --help
 ```
 
-- `gui` runs `runtimes/<LABEL>/app/run_pseudo_CT` with no arguments, in the background
-  from the wrapper.
+- There is no GUI operation in the launcher. The MATLAB window is `run_pseudo_CT`
+  (see below). `gui` and `run --orchestrate` were removed; both are refused as unknown
+  operations with exit `64`.
 - `run validate|run` is the CLI (validate, or validate and submit) with the same
   options, text/JSONL output and exit codes as before. The action word follows `run`.
-- `run --orchestrate` runs `standalone/pseudoct_standalone orchestrate REQUEST REPORT`
-  and returns its exit status. The installed wrapper uses it.
 - `headless` keeps the two-positional contract and runs `standalone/pseudoct_standalone
   headless` with `PSEUDOCT_REQUEST_MAT` and `PSEUDOCT_RESULT_MAT`.
 - `resolve` validates one release and prints single-quoted, sourceable lines:
@@ -114,8 +113,8 @@ pseudoct --help
   `PSEUDOCT_RUNNER='...'` (`runtimes/<LABEL>/payload/run_mlsc_current_payload.sh`),
   `PSEUDOCT_INSTALL_ROOT='...'` and `PSEUDOCT_RUNTIME_RELEASE='<LABEL>'`. This is the one
   runtime-selection mechanism; MATLAB callers use it.
-- Every installed operation that runs a release (`gui`, `run`, `headless`,
-  `run --orchestrate`) exports `PSEUDOCT_INSTALL_ROOT` and `PSEUDOCT_RUNTIME_RELEASE`
+- Every installed operation that runs a release (`run`, `headless`)
+  exports `PSEUDOCT_INSTALL_ROOT` and `PSEUDOCT_RUNTIME_RELEASE`
   (the resolved label) before it runs the compiled executable, so the dispatcher binds
   the selected release and not the catalog default. A repository checkout unsets
   `PSEUDOCT_RUNTIME_RELEASE`.
@@ -126,9 +125,9 @@ pseudoct --help
 
 ### Release and MATLAB Runtime root selection
 
-- A release is complete only when all four artifacts exist and are executable:
-  `app/run_pseudo_CT`, `payload/mlsc_current_payload`,
-  `payload/run_mlsc_current_payload.sh` and `standalone/pseudoct_standalone`.
+- A release is complete only when all three artifacts exist and are executable:
+  `payload/mlsc_current_payload`, `payload/run_mlsc_current_payload.sh` and
+  `standalone/pseudoct_standalone`.
 - The MATLAB Runtime root precedence is:
   1. `--mcr-root <dir>`
   2. `PSEUDOCT_MCR_ROOT_<LABEL>`, for example `PSEUDOCT_MCR_ROOT_R2010b`
@@ -145,24 +144,29 @@ takes `<mcr_root> <phase> <job_manifest> <resource_manifest>`, sets the Runtime 
 path from `mcr_root` and execs the compiled payload from its own directory. The
 repository branch of `scripts/run_mlsc_current_payload.sh` is unchanged.
 
-## Installed MATLAB wrapper: `run_pseudo_CT.m`
+## MATLAB frontend: `run_pseudo_CT.m` and `frontend/`
 
-The package root contains a generated `run_pseudo_CT.m`. It never references `src/`.
+`run_pseudo_CT.m` ships unchanged from the repository, beside `bin/pseudoct`, with the
+`frontend/` files it needs. Argument mode and the window both call the launcher through
+`frontend/pseudo_CT_launch_request.m`: MATLAB parses the parameters, writes the launcher
+arguments (POSIX single-quoted; no secret ever appears on a command line), runs
+`bin/pseudoct run validate|run ... --format jsonl` in a child environment without MATLAB's
+library and path variables, and displays the result. No validation or science runs in
+MATLAB.
 
-- `run_pseudo_CT()` (no arguments) starts `bin/pseudoct gui` in the background and
-  returns `report = []`.
-- `report = run_pseudo_CT(...)` saves the arguments as variable `arguments` in a
-  temporary request MAT, runs `bin/pseudoct run --orchestrate REQUEST RESULT`, raises an
-  error with the captured output on a non-zero status, and returns the `report`
-  variable of the result MAT. Temporary files are removed on exit.
-
-Every path placed in a shell command (the launcher, the temporary request and report
-MAT files) is passed through a POSIX single-quote helper, `shell_word`, so `$`, backticks,
-quotes, spaces and parentheses in the install or temporary paths stay literal. The
-generated text contains no double-quote character. The quoting rule is tested in
-`tests/test_release_application.py`.
-
-The repository `run_pseudo_CT.m` is not changed by this.
+- `run_pseudo_CT('Profile', P, 'MPRAGE', FILE, ...)` validates by default; `'Action',
+  'submit'` runs the launcher's `run` action. `'Runtime'` and `'McrRoot'` select the
+  installed release and its MATLAB Runtime root. `'Launcher'` names the launcher; without
+  it the `bin/pseudoct` beside `run_pseudo_CT.m` is used in an installed distribution, or
+  `PSEUDOCT_LAUNCHER` in a checkout.
+- `run_pseudo_CT()` (no arguments) opens the profile selector, then the MPRAGE/UMAP
+  window. Validate and Submit use the same bridge. Submit is enabled only after a
+  successful validation of exactly the current inputs and options.
+- The MATLAB Runtime root comes from `PSEUDOCT_MCR_ROOT_<LABEL>` or `PSEUDOCT_MCR_ROOT`;
+  if neither is set, the window asks once.
+- MLSC submission creates one single-use credential handoff with the existing
+  `pseudo_CT_credentials('store', ...)` format and passes only its path to the launcher.
+- The frontend needs `python3` to read the launcher's result record.
 
 ## Publication
 
@@ -208,7 +212,19 @@ behind, which must then be removed by hand after confirming that no release is r
 
 ## Verification status
 
-Synthetic tests in `tests/test_release_application.py` and
-`tests/test_standalone_release.py` use fake MATLAB roots, fake compiled executables and
-fake runtime evidence only. A real MATLAB Compiler build and real MCR loading have not
-been qualified by these tests.
+Synthetic tests in `tests/test_release_application.py` (catalog, selection, frontend
+allowlist, `--verify`) and `tests/test_standalone_release.py` (launcher) use fake
+MATLAB roots, fake compiled executables and fake runtime evidence only. Real builds are
+checked separately by running the driver against a MATLAB installation. Passing these
+tests is not certification or deployment.
+
+### Staging path and temporary directories
+
+The driver stages in a short `.s<random>` directory inside `--output`. Before MATLAB
+runs, it refuses a build whose staged executable path would exceed 240 characters. Set
+these before running, to short directories outside the output tree if needed; the driver
+and MATLAB inherit them:
+
+- `TMPDIR` (driver temporary files and MATLAB temporary files),
+- `MATLAB_PREFDIR` (MATLAB preferences),
+- `MCR_CACHE_ROOT` (compiled-executable CTF extraction; long values broke extraction).

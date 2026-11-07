@@ -45,6 +45,12 @@ input/output policy differ.
 | MATLAB headless API: `pseudo_CT_headless(request_path, result_path)` | Versioned MAT v5 request/result interface with separate local validation and submission. |
 | Terminal CLI: `bin/pseudoct` | Shell and application integration; supports `validate` and `run`, text or JSONL progress, and stable exit codes. |
 
+Architecture: one headless engine (`standalone/pseudoct_standalone`, the
+dispatcher for validate, submit and headless calls) and one compiled science
+worker (`payload/mlsc_current_payload`). `run_pseudo_CT` (window or argument
+mode) and `bin/pseudoct` are the only entry points; both run validation and
+submission through the launcher. MATLAB never runs the science pipeline itself.
+
 The CLI launches the headless API through `bin/pseudoct headless`. Its request
 and result schemas, credential handoff, JSONL records, and exit codes are
 documented in [Headless CLI](docs/headless-cli.md). Use `bin/pseudoct --help`
