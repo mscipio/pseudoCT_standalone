@@ -13,15 +13,16 @@ function report = build_application(release, varargin)
 %                         OUTPUTROOT/RELEASE. Existing packages are never
 %                         overwritten. Must not be inside src/, external/ or
 %                         compiled/.
-%     'McrRoot'           MATLAB Runtime root recorded for the payload (build).
+%     'McrRoot'           MATLAB Runtime root recorded for the worker build.
 %     'SpmRoot', 'AtlasDir', 'AliasingRoot', 'DicomToNiftiRoot'
 %                         Dependency roots (default: pinned external/ trees).
 %     'LockSha256'        Optional expected SHA-256 of dependencies.lock.json.
 %
 %   Build mode requires a clean git tree and the MATLAB Runtime root.
-%   Exactly two compiled targets: payload/ (mlsc_current_payload) and
+%   Exactly two compiled targets: payload/ (the pseudoct_worker executable) and
 %   standalone/ (pseudoct_standalone, the headless engine dispatcher). The
-%   GUI application is not built; a MATLAB frontend comes later.
+%   MATLAB frontend (run_pseudo_CT.m and frontend/) is not compiled here; it is
+%   not one of the two compiled targets.
 %   Package layout mirrors an install root, so bin/pseudoct (the only public
 %   launcher) resolves its siblings by relative path: bin/ (pseudoct), src/
 %   (interpreted runtime source), payload/, standalone/, resources/,
@@ -157,6 +158,7 @@ end
 
 function local_check_roots(opt)
 local_require(fullfile(opt.spmroot, 'Contents.m'), 'SPM root (Contents.m)');
+local_require(fullfile(opt.spmroot, 'spm_dicom_dict.mat'), 'SPM DICOM dictionary');
 local_require(fullfile(opt.aliasingroot, 'config', 'defaults.m'), 'aliasing root (config/defaults.m)');
 local_require(opt.dicom2niftiroot, 'dicom2nifti root');
 local_require(opt.atlasdir, 'atlas directory');
@@ -174,12 +176,11 @@ cfggen = fullfile(stage, 'cfggen');
 src_dirs = local_dirs(fullfile(repo, 'src'));
 spm_dirs = {spm; fullfile(spm, 'matlabbatch'); fullfile(spm, 'config'); ...
     fullfile(spm, 'toolbox', 'Seg'); fullfile(spm, 'toolbox', 'DARTEL')};
-plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'mlsc_current_payload.m'), ...
+plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'pseudoct_worker.m'), ...
     '-d', fullfile(stage, 'payload'), '-R', '-nodisplay', '-v'}, ...
     local_pairs('-I', [src_dirs; spm_dirs; {opt.aliasingroot; opt.dicom2niftiroot; cfggen}]), ...
     local_pairs('-a', {cfggen; opt.aliasingroot; opt.dicom2niftiroot; ...
     fullfile(spm, 'config'); fullfile(spm, 'EEGtemplates'); ...
-    fullfile(spm, 'spm_dicom_dict.mat'); ...
     fullfile(spm, 'toolbox', 'Seg'); fullfile(spm, 'toolbox', 'DARTEL'); ...
     fullfile(spm, 'spm_sample_vol.mexa64'); fullfile(spm, 'spm_bsplinc.mexa64'); ...
     fullfile(spm, 'spm_bsplins.mexa64'); fullfile(spm, 'spm_slice_vol.mexa64'); ...
@@ -188,10 +189,15 @@ plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'mlsc_cu
     fullfile(spm, 'toolbox', 'DARTEL', 'dartel3.mexa64'); ...
     fullfile(repo, 'src', 'qc', 'hot_map_mpitool_1024.mat'); fullfile(repo, 'CHANGELOG.md')})];
 % Compiled standalone dispatcher (src/cli/pseudoct_standalone.m). Its CLI and
-% headless dependencies are compiled in through the same src/ -I set as the payload.
+% headless dependencies are compiled in through the same src/ -I set as the worker.
+% The DICOM export runs in this engine and calls SPM batch reslicing
+% (spm_run_coreg_reslice, in <spm>/config, which calls spm_reslice). The config
+% folder is on the -I path so that call is found statically; the reslice MEX
+% spm_slice_vol is listed with -a because static analysis cannot see MEX calls.
 plan.standalone_args = [{'-m', fullfile(repo, 'src', 'cli', 'pseudoct_standalone.m'), ...
     '-d', fullfile(stage, 'standalone'), '-v'}, ...
-    local_pairs('-I', [src_dirs; {spm; opt.aliasingroot; opt.dicom2niftiroot}])];
+    local_pairs('-I', [src_dirs; {spm; fullfile(spm, 'config'); opt.aliasingroot; opt.dicom2niftiroot}]), ...
+    local_pairs('-a', {fullfile(spm, 'spm_slice_vol.mexa64')})];
 % Every entrypoint and -I/-a input, except the generated cfggen directory.
 all_args = [plan.payload_args, plan.standalone_args];
 inputs = {};
@@ -204,8 +210,11 @@ plan.inputs = unique(inputs);
 end
 
 function local_check_compile_inputs(inputs)
+% exist reports 2 for a file and 3 for a MEX-file on the search path (for
+% example SPM's .mexa64 once its folder is on the path); a directory is 7.
 for kk = 1:numel(inputs)
-    if exist(inputs{kk}, 'file') ~= 2 && exist(inputs{kk}, 'dir') ~= 7
+    file_type = exist(inputs{kk}, 'file');
+    if file_type ~= 2 && file_type ~= 3 && exist(inputs{kk}, 'dir') ~= 7
         error('pseudo_CT:BuildCompileInputMissing', ...
             'mcc input missing before any compiler call: %s', inputs{kk});
     end
@@ -232,13 +241,13 @@ names = [fixed; atlas];
 end
 
 function fs = local_file_set(repo, atlas_dir)
-fs.entrypoints = {'src/science/current/mlsc_current_payload.m'};
+fs.entrypoints = {'src/science/current/pseudoct_worker.m'};
 fs.launchers = {'bin/pseudoct'};
-% The payload runner is shipped per release by the release driver; it stays in the source
+% The worker runner (run_pseudoct_worker.sh) is shipped per release by the release driver; it stays in the source
 % digest so the build provenance still covers it.
-fs.payload_runner = {'scripts/run_mlsc_current_payload.sh'};
+fs.payload_runner = {'scripts/run_pseudoct_worker.sh'};
 fs.src = local_walk(fullfile(repo, 'src'), 'src');
-fs.resources = local_atlas_names(atlas_dir);
+fs.resources = [local_atlas_names(atlas_dir); {'spm_dicom_dict.mat'}];
 all_rels = sort([fs.entrypoints; fs.launchers; fs.payload_runner; fs.src]);
 digest_text = '';
 for kk = 1:numel(all_rels)
@@ -286,7 +295,7 @@ local_write_init_helpers(cfggen);
 plan = local_compile_plan(repo, opt, stage);
 local_compile(plan.payload_args, fullfile(stage, 'mcc-payload.log'));
 local_compile(plan.standalone_args, fullfile(stage, 'mcc-standalone.log'));
-local_require(fullfile(stage, 'payload', 'mlsc_current_payload'), 'compiled payload executable');
+local_require(fullfile(stage, 'payload', 'pseudoct_worker'), 'compiled payload executable');
 local_require(fullfile(stage, 'standalone', 'pseudoct_standalone'), 'compiled standalone dispatcher');
 
 % Interpreted runtime source at the same relative paths as an install root.
@@ -315,7 +324,12 @@ local_require(fullfile(stage, 'src', 'cli', 'pseudoct_headless_cli_r2010b.m'), .
     'packaged headless MATLAB bootstrap');
 
 for kk = 1:numel(fs.resources)
-    copyfile(fullfile(opt.atlasdir, fs.resources{kk}), ...
+    source_dir = opt.atlasdir;
+    if strcmp(fs.resources{kk}, 'spm_dicom_dict.mat')
+        % SPM's own dictionary, copied unchanged from the selected SPM root.
+        source_dir = opt.spmroot;
+    end
+    copyfile(fullfile(source_dir, fs.resources{kk}), ...
         fullfile(stage, 'resources', fs.resources{kk}), 'f');
 end
 
@@ -388,7 +402,7 @@ fprintf('  matlab %s (%s) compiler %s arch %s\n', ...
 fprintf('  source_commit %s dirty=%d\n', report.source_commit, report.source_dirty);
 fprintf('  lock_sha256 %s\n', report.lock_sha256);
 fprintf('  compile_inputs %d present\n', report.compile_input_count);
-fprintf('  compile_targets payload=mlsc_current_payload standalone=pseudoct_standalone\n');
+fprintf('  compile_targets payload=pseudoct_worker standalone=pseudoct_standalone\n');
 fprintf('  file_set entrypoints=%d src=%d launchers=%d resources=%d source_set_sha256=%s\n', ...
     numel(report.entrypoints), report.source_file_count, report.launcher_count, ...
     report.resource_count, report.source_set_sha256);

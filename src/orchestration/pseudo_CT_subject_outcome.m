@@ -26,7 +26,7 @@ classdef pseudo_CT_subject_outcome < handle
             % Optional OUTCOME ('SUCCEEDED', 'FAILED' or 'CANCELLED') appends one
             % native run record, at most once per subject. Callers pass it only
             % after the subject's terminal state is known: for MLSC, the Slurm
-            % job observed terminal (so the remote payload is no longer writing);
+            % job observed terminal (so the remote worker is no longer writing);
             % for Local, the orchestrator is the only writer. Advisory: never throws.
             obj.Closed = true;
             if obj.Recorded || nargin < 2 || isempty(outcome)

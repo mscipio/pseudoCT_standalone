@@ -1,5 +1,9 @@
 function config = local()
-%LOCAL Local profile using the shared compiled payload.
+%LOCAL Local profile: this computer, shared compiled current worker.
+%   CONFIG = LOCAL() returns the canonical 'local' profile struct. Profiles are
+%   discovered from this folder; the selector shows config.presentation fields.
+%   Reads dependency paths only; it does not run processing or touch files.
+%   Minimum supported MATLAB: R2010b.
 
 dependency_paths = pseudo_CT_dependency_paths();
 
@@ -44,7 +48,7 @@ config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'Local MATLAB - This Computer';
 config.presentation.description = ...
-    'Run the pseudoCT workflow locally using the shared compiled science payload.';
+    'Run the pseudoCT workflow on this computer using the shared compiled worker.';
 config.presentation.group = 'recommended';
 config.presentation.recommended = false;
 config.presentation.order = 10;
@@ -60,19 +64,16 @@ config.normalization.cluster = 'No';
 % Remote normalization scratch root; empty for localhost.
 config.normalization.host_folder = '';
 
-% Current compiled prepare/compute artifact contract shared with MLSC.
-% Source-repository profiles retain the existing compiled/current manifest
-% names; installed runtime selection rebases them to the package manifest
-% names. Missing artifacts and integrity mismatches fail closed before local
-% processing.
-artifact_dir_here = dependency_paths.current_root;
-config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
-    'run_mlsc_current_payload.sh');
+% Current compiled prepare/compute artifact contract shared with MLSC. No compiled
+% tree is assumed. The placeholders are never files: installed runtime selection
+% replaces the runner and MATLAB Runtime root and clears both manifest paths
+% (direct mode). A source checkout refuses application runs unless an explicit
+% development artifact root is supplied.
+config.current.runner = 'runtime-selection-required';
+% MATLAB 7.11 (R2010b) installation root; the MCR runtime release is 7.14.
 config.current.mcr_root = '/usr/pubsw/common/matlab/7.11';
-config.current.build_manifest = fullfile(artifact_dir_here, ...
-    'mlsc_current_build.mat');
-config.current.resource_manifest = fullfile(artifact_dir_here, ...
-    'mlsc_current_resources.mat');
+config.current.build_manifest = 'runtime-selection-required';
+config.current.resource_manifest = 'runtime-selection-required';
 config.current.required_outputs = {'att_map.nii'; ...
     'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
 

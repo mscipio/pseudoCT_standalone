@@ -15,22 +15,25 @@
   },
   "canonicalLayout": {
     "external": "external/",
-    "current": "compiled/current/"
+    "current": "compiled/current/ (obsolete historical observation, superseded by dist/ for new packages)"
   },
   "distributionLayout": {
-    "state": "Agreed target only; this task does not assemble, move, rebuild, release, or publicly redistribute a package.",
+    "state": "Descriptive description of the release-driver layout (scripts/release_application.py; docs/releases.md). This lock does not assemble, verify, release or publicly redistribute a package, and public packaging remains blocked by the redistributionGate.",
     "topLevelEntries": [
-      "bin/",
-      "orchestration/",
-      "compiled/current/",
-      "external/",
-      "manifests/",
-      "README.md"
+      "bin/pseudoct",
+      "run_pseudo_CT.m",
+      "frontend/",
+      "runtimes/<LABEL>/payload/ (pseudoct_worker, run_pseudoct_worker.sh)",
+      "runtimes/<LABEL>/standalone/ (pseudoct_standalone)",
+      "resources/",
+      "manifest.json",
+      "SHA256SUMS"
     ],
+    "externalEntriesNote": "external/ is not shipped in the package, with one AMEND-1 exception: the ssh2 transport tree external/ssh2_v2_m1_r5/ is shipped with its required files only (see the ssh2 dependency record). The v3.2.0 release driver does not copy any other external/ content into the distribution. The installed distribution contents are the topLevelEntries above plus that ssh2 subset. Dependency records below name external/ trees in two build-time or source roles. (1) Build-time source dependencies: correct_aliasing, the dicom2nifti and SPM roots, and the SPM overrides are inputs used when the historical builder compiled the obsolete compiled/current observation from a source checkout; the converter and SPM roots also serve interpreted DICOM preparation in a checkout. (2) The SSH2 transport is included in the installed distribution under AMEND-1 as described above. Other external dependency trees remain build-time inputs.",
     "architecture": {
       "interpretedLayer": "One MATLAB orchestration layer shared by GUI and headless CLI; it owns request/result, profile, transport, and workflow coordination.",
-      "currentScience": "compiled/current/ is the shared preparation/computation implementation for the supported local and MLSC profiles; do not package a second interpreted scientific implementation as part of this architecture.",
-      "manifests": "Package-level provenance/dependency manifests belong under manifests/; build/resource manifests required by the existing current runtime contract remain paired with compiled/current/ until an explicitly approved runtime change.",
+      "currentScience": "compiled/current/ is an obsolete historical observation of the shared preparation/computation implementation for the local and MLSC profiles, superseded by dist/ for new packages; do not package a second interpreted scientific implementation as part of this architecture.",
+      "manifests": "Source checkout: the build and resource manifests required by the compiled-current runtime contract (mlsc_current_build.mat and mlsc_current_resources.mat, with their text forms) are paired with the obsolete historical compiled/current/ observation (superseded by dist/ for new packages). Installed release: no build or resource manifest is shipped; installed-direct runs use the packaged resources/ folder and the release catalog manifest.json, and SHA256SUMS is the inventory. Installed-direct identity uses runtime validation and runner identity checks. SHA256SUMS verifies the assembled distribution, including the compiled executables.",
       "developmentSource": "The development checkout remains organized under src/, scripts/, and src/science/overrides/; this target layout is a package projection, not authorization to reorganize development source."
     },
     "externalProcessing": [
@@ -90,7 +93,7 @@
       "canonicalPathPresent": true,
       "availableArtifactPath": "compiled/current/",
       "canonicalTreeSha256": "f55d47937c1c93e4e7f087b5a2d6939bdd23461b87a8204b99830ae8d6cefe68",
-      "note": "The current payload was rebuilt after the T030 architecture changes with MATLAB R2010b / Compiler 4.14, using the install-root-pinned external/correct_aliasing-0.4.0 source. The refreshed payload and build/resource manifest pairs are at compiled/current/."
+      "note": "This is an obsolete historical observation, superseded by dist/ for new packages: the compiled/current/ payload was rebuilt after the T030 architecture changes with MATLAB R2010b / Compiler 4.14, using the install-root-pinned external/correct_aliasing-0.4.0 source. The recorded digest identifies that historical tree only; it is not a runtime default or a source for new packages."
     }
   },
   "dependencies": [
@@ -135,9 +138,9 @@
       },
       "sourceReferences": [
         "src/science/current/pseudo_CT_current_prepare.m: current preparation compile source invokes correct_aliasing",
-        "scripts/build_mlsc_current.m: validates and includes correct_aliasing 0.4.0 as a compile input"
+        "scripts/build_mlsc_current.m (absent from the current tree; historical compile-input reference): validates and includes correct_aliasing 0.4.0 as a compile input"
       ],
-      "distributionDisposition": "The staged external/correct_aliasing-0.4.0/ tree is a pinned development/build input for compiled/current/. Supported local and MLSC profile execution share compiled/current/ and do not add this tree as an interpreted runtime path or distribute a second interpreted scientific implementation. Keep it available in the build environment; unresolved rights continue to block public packaging.",
+      "distributionDisposition": "The staged external/correct_aliasing-0.4.0/ tree is a pinned development/build input for the obsolete historical compiled/current/ observation (superseded by dist/ for new packages). The historical local and MLSC profile execution that shared compiled/current/ did not add this tree as an interpreted runtime path or distribute a second interpreted scientific implementation. Keep it available in the build environment; unresolved rights continue to block public packaging.",
       "matlabCompatibility": {
         "claim": "README and release metadata say MATLAB R2010b (7.11) documented workflows were validated; parser uses inputParser.addParamValue.",
         "observedBuild": "MATLAB 7.11.0.584, R2010b, GLNXA64",
@@ -149,7 +152,7 @@
         "localUse": "staged locally under the user's explicit local-staging clarification",
         "publicRedistribution": "blocked pending rights determination"
       },
-      "currentCompiledArtifactUse": "The rebuilt compiled/current build manifest records aliasing_root as the install-root-resolved external/correct_aliasing-0.4.0 and aliasing_version 0.4.0; the compiler arguments include that same pinned root and do not use v0.3.0 or a mutable latest alias."
+      "currentCompiledArtifactUse": "Obsolete historical observation: the rebuilt compiled/current build manifest records aliasing_root as the install-root-resolved external/correct_aliasing-0.4.0 and aliasing_version 0.4.0; the compiler arguments include that same pinned root and do not use v0.3.0 or a mutable latest alias."
     },
     {
       "id": "dicom2nifti",
@@ -184,10 +187,10 @@
         "external/dicom2nifti-1.2.5/+dicom2nifti/+api/run.m: routes DICOM input to dicom2nifti.core.fromDicom",
         "external/dicom2nifti-1.2.5/+dicom2nifti/+core/fromDicom.m: invokes spm_dicom_headers and spm_dicom_convert",
         "external/correct_aliasing-0.4.0/+alias/+api/loadInput.m: DICOM and compressed/folder input routes use dicom2nifti.api.run",
-        "scripts/build_mlsc_current.m: validates and includes dicom2nifti source as a compile input",
-        "src/io/mMR_nii2mu_dicom_blur_david.m: invokes dcm2nii for DICOM output conversion"
+        "scripts/build_mlsc_current.m (absent from the current tree; historical compile-input reference): validates and includes dicom2nifti source as a compile input",
+        "src/io/pseudo_CT_mmr_nii2mu_dicom.m: invokes dcm2nii for DICOM output conversion"
       ],
-      "distributionDisposition": "Keep the invoked converter under external/dicom2nifti-1.2.5/ when orchestration DICOM input/output conversion is enabled. Direct dcm2nii input preparation runs in the MATLAB interpreter even when later scientific processing is remote or compiled; this runtime dependency is separate from its inclusion as a current-builder compile input. The converter is MATLAB code, not an independently verified system executable.",
+      "distributionDisposition": "Build-time source input and checkout-only interpreted runtime: keep the invoked converter under external/dicom2nifti-1.2.5/ in a source checkout when orchestration DICOM input/output conversion is enabled. The v3.2.0 release driver does not ship external/, so this is not installed-distribution content. Direct dcm2nii input preparation runs in the MATLAB interpreter even when later scientific processing is remote or compiled; this runtime dependency is separate from its inclusion as a current-builder compile input. The converter is MATLAB code, not an independently verified system executable.",
       "dicomMetadataInterface": {
         "selectiveReader": "+dicom2nifti/+dicom/readTags.m parses requested tags to PixelData without full dicominfo for ordinary candidate files.",
         "fallback": "dicominfo(filePath) is conditional on selective parsing failure and allowed only for the representative file; series candidates call readTags(..., false), so they do not fall back.",
@@ -231,19 +234,19 @@
       "compatibility": "SPM8 README says MATLAB 7.1 (R14SP3) onwards; exact workflow compatibility remains dependent on the pinned SPM functions and native MEX architecture.",
       "localUse": "Exact installed tree copied to external/spm8-r6313/ for local use only.",
       "sourceReferences": [
-        "scripts/build_mlsc_current.m: validates SPM roots and includes selected SPM functions/MEX as compile inputs",
+        "scripts/build_mlsc_current.m (absent from the current tree; historical compile-input reference): validates SPM roots and includes selected SPM functions/MEX as compile inputs",
         "external/dicom2nifti-1.2.5/+dicom2nifti/+core/fromDicom.m: directly calls spm_dicom_headers and spm_dicom_convert on the DICOM input route",
         "src/science/current/pseudo_CT_current_prepare.m and src/science/current/pseudo_CT_current_compute.m: current compile sources call SPM functions",
         "src/config/setup_pseudo_CT_paths.m: configures the staged SPM root and override precedence"
       ],
-      "distributionDisposition": "Keep this one external/ tree available to interpreted orchestration wherever DICOM input conversion is enabled: the MATLAB input-preparation route directly calls SPM DICOM functions even when subsequent science is remote or dispatched through compiled/current/. This interpreter runtime role is separate from selected SPM compiler inputs; do not duplicate SPM source inside the compiled scientific payload or add a second interpreted science implementation.",
+      "distributionDisposition": "Build-time source input and checkout-only interpreted runtime: keep this one external/ tree available to interpreted orchestration in a source checkout wherever DICOM input conversion is enabled (external/ is not shipped in the installed distribution): the MATLAB input-preparation route directly calls SPM DICOM functions even when subsequent science is remote or dispatched through the obsolete historical compiled/current observation. This interpreter runtime role is separate from selected SPM compiler inputs; do not duplicate SPM source inside the obsolete historical compiled scientific payload (superseded by dist/ for new packages) or add a second interpreted science implementation.",
       "bundleStatus": "The existing current build metadata shows SPM as a compiler input; its exact coverage remains unasserted. The local external copy is not public redistribution clearance."
     },
     {
       "id": "batch-atlas-shared",
       "version": null,
       "role": [
-        "compiled/current scientific runtime resources consumed through the current resource/job manifest"
+        "resources of the obsolete historical compiled/current observation (superseded by dist/ for new packages), consumed through its resource/job manifest"
       ],
       "origin": {
         "kind": "local shared installation; no release/source provenance found",
@@ -264,8 +267,8 @@
       },
       "compatibility": "The current resource manifest requires named atlas/template resources but fingerprints only their existence, not content.",
       "sourceReferences": [
-        "src/science/current/mlsc_current_payload.m: reads atlas_dir from manifests and checks required atlas/template files before prepare or compute",
-        "scripts/build_mlsc_current.m: defaults AtlasDir to external/Batch_atlas"
+        "src/science/current/pseudoct_worker.m: reads atlas_dir from manifests and checks required atlas/template files before prepare or compute",
+        "scripts/build_mlsc_current.m (absent from the current tree; historical compile-input reference): defaults AtlasDir to external/Batch_atlas"
       ],
       "localUse": "Exact installed tree copied to external/Batch_atlas/ for local use only; provenance and redistribution rights remain unresolved."
     },
@@ -274,7 +277,7 @@
       "version": "MATLAB wrappers identify themselves as version 2.0; embedded Ganymed source headers identify version 2.50",
       "role": [
         "interpreted orchestration runtime SSH2 transport for MLSC",
-        "not part of compiled/current scientific payload"
+        "not part of the obsolete historical compiled/current scientific payload"
       ],
       "origin": {
         "kind": "in-repository source tree; upstream release provenance not verified",
@@ -292,7 +295,7 @@
       "license": {
         "wrapper": "license.txt grants source/binary redistribution subject to stated notice/disclaimer conditions; no SPDX identifier asserted",
         "embeddedGanymedJar": "separate license/provenance for this m1 jar not verified",
-        "publicRedistribution": "blocked pending transitive jar rights review"
+        "publicRedistribution": "authorized for bundling in the installed pseudoCT distribution by AMEND-1 (D-A001, 2026-11-08) for the required MATLAB wrappers, the Ganymed JAR and the two licence notices only; not general public-release clearance, and the embedded Ganymed JAR license/provenance remains independently unverified"
       },
       "transitives": ["ganymed-ssh2-m1 Java JAR", "MATLAB Java runtime"],
       "sourceReferences": [
@@ -300,7 +303,7 @@
         "src/backends/mlsc/mlsc_host_key_trust.m: resolves the SSH2 Ganymed JAR",
         "src/config/setup_pseudo_CT_paths.m: adds the development SSH2 tree to MATLAB path"
       ],
-      "distributionDisposition": "Must be present at external/ssh2_v2_m1_r5/ in the final package; the development source has been relocated here as part of the repository reorganization.",
+      "distributionDisposition": "Shipped in the installed distribution at external/ssh2_v2_m1_r5/ under AMEND-1 (D-A001): the top-level MATLAB wrappers, ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar and the two licence notices (license.txt and ganymed-ssh2-m1-source/LICENSE.txt). Examples, javadoc, Java sources and HISTORY/README/FAQ are not shipped. The allowlist is scripts/release_application.py SSH2_FILES. The MATLAB Java runtime is still a separate external dependency.",
       "compatibility": "The source tree is present locally; supported Java/MATLAB and remote SSH endpoint compatibility were not exercised."
     },
     {
@@ -324,12 +327,12 @@
         "fileNames": ["spm_vol_nifti.m", "spm_preproc_write8.m", "spm_dicom_convert.m"]
       },
       "sourceReferences": [
-        "scripts/build_mlsc_current.m: requires all three files and supplies src/science/overrides/ through -I and -a inputs",
+        "scripts/build_mlsc_current.m (absent from the current tree; historical compile-input reference): requires all three files and supplies src/science/overrides/ through -I and -a inputs",
         "src/config/setup_pseudo_CT_paths.m: validates, adds src/science/overrides/ before the SPM path, and confirms override resolution",
         "external/dicom2nifti-1.2.5/+dicom2nifti/+core/fromDicom.m calls spm_dicom_convert; +dicom2nifti/+config/load.m and +dicom2nifti/+api/run.m select/add the profile SPM root at path begin for the DICOM route, shadowing the setup-added src/science/overrides/ copy",
         "src/science/current/pseudo_CT_current_prepare.m and src/science/current/pseudo_CT_current_compute.m: invoke SPM operations on the interpreted source path"
       ],
-      "distributionDisposition": "These are scientific source overrides, not an independent SPM runtime package. The orchestration setup validates and adds all three before SPM, but the DICOM API path mutation adds the selected profile SPM root at path begin, so configured SPM8 spm_dicom_convert is effective during the converter route. The inspected alternate spm_dicom_convert implementation was byte-identical to src/science/overrides/spm_dicom_convert.m; spm8-r6313 differs only in write_volume's helper signature/comment while retaining the same Temp_spm.nii standard-volume output and out.files contract consumed by dicom2nifti 1.2.5. Full conversion remains unverified, so no runtime selection change is justified. The converter call chain does not establish that spm_vol_nifti.m or spm_preproc_write8.m are needed for that conversion; retain all three where the existing setup/source workflow requires them and as builder inputs. These runtime roles are separate from the shared compiled-current payload; do not duplicate interpreted science outside compiled/current/.",
+      "distributionDisposition": "These are scientific source overrides, not an independent SPM runtime package. The orchestration setup validates and adds all three before SPM, but the DICOM API path mutation adds the selected profile SPM root at path begin, so configured SPM8 spm_dicom_convert is effective during the converter route. The inspected alternate spm_dicom_convert implementation was byte-identical to src/science/overrides/spm_dicom_convert.m; spm8-r6313 differs only in write_volume's helper signature/comment while retaining the same Temp_spm.nii standard-volume output and out.files contract consumed by dicom2nifti 1.2.5. Full conversion remains unverified, so no runtime selection change is justified. The converter call chain does not establish that spm_vol_nifti.m or spm_preproc_write8.m are needed for that conversion; retain all three where the existing setup/source workflow requires them and as builder inputs. These runtime roles are separate from the obsolete historical compiled-current payload (superseded by dist/ for new packages); do not duplicate interpreted science outside compiled/current/.",
       "license": {
         "state": "Override-source provenance and applicable SPM/third-party license and notice terms are not independently established",
         "publicRedistribution": "blocked until the full package provenance/license review is cleared"
@@ -358,7 +361,7 @@
       "resourceManifestTextSha256": "6c525c6a736e4d6318f7a34f1ac819b32af26052895d0121254085c0685b1084",
       "compilerArgumentsSha256": "87a498f12e964b577f535b11ec74a16f91ba3a5903f20c895819ba0ea2915aa7",
       "recordedAliasingBuildInput": "correct_aliasing 0.4.0; explicitly resolved from the install-root external/correct_aliasing-0.4.0 tree",
-      "notes": "Rebuilt only compiled/current using MATLAB 7.11.0.584 (R2010b), MATLAB Compiler 4.14, and the pinned external/correct_aliasing-0.4.0 source. The manifest records the exact dependency root/version and MCR 7.14 runtime identity. Updated executable, runner, build/resource MAT and text manifest checksums are recorded here; The local and MLSC profiles share identical runner/manifests. Safe invalid-phase runner contract smoke passed before any manifest loading or science. No scientific run was performed; this does not establish successful image processing or complete dependency closure."
+      "notes": "Obsolete historical observation (superseded by dist/ for new packages). Rebuilt only compiled/current using MATLAB 7.11.0.584 (R2010b), MATLAB Compiler 4.14, and the pinned external/correct_aliasing-0.4.0 source. The manifest records the exact dependency root/version and MCR 7.14 runtime identity. Updated executable, runner, build/resource MAT and text manifest checksums are recorded here; The local and MLSC profiles share identical runner/manifests. Attribution after the v3.2.0 rename (no hash changed): the recorded payloadSha256 and runnerSha256 describe the pre-rename compiled files (mlsc_current_payload and run_mlsc_current_payload.sh) and are not evidence for pseudoct_worker or run_pseudoct_worker.sh; they must be re-attributed after an authorized rebuild. Safe invalid-phase runner contract smoke passed before any manifest loading or science. No scientific run was performed; this does not establish successful image processing or complete dependency closure."
     }
   },
   "externalInfrastructure": [
@@ -391,7 +394,7 @@
       "id": "matlab-compiler",
       "role": "compile-time only for the current builder; not a source MATLAB runtime or the MCR runtime",
       "identity": "MATLAB Compiler 4.14 under MATLAB 7.11.0.584 (R2010b), 64-bit glnxa64, reported by the executing build process.",
-      "availability": "MATLAB Compiler license check passed and mcc successfully rebuilt compiled/current; the verified current runner also started the compiled payload and rejected a deliberately invalid phase before manifest access or scientific processing.",
+      "availability": "MATLAB Compiler license check passed and mcc successfully rebuilt the obsolete historical compiled/current observation; the verified current runner also started the compiled payload and rejected a deliberately invalid phase before manifest access or scientific processing.",
       "licenseAndDistribution": "Proprietary MathWorks MATLAB Compiler product; external, not bundled. Compiler license entitlement is not independently verified.",
       "gate": "This evidence applies only to the completed R2010b / Compiler 4.14 current rebuild. Any different MATLAB release/compiler remains unverified and requires its own approved build evidence."
     },
@@ -407,7 +410,7 @@
     },
     {
       "id": "mcr-current",
-      "role": "runtime for compiled/current",
+      "role": "runtime for the obsolete historical compiled/current observation (superseded by dist/ for new packages)",
       "version": "7.14",
       "origin": "/usr/pubsw/common/matlab/7.14 (version-labelled runtime candidate present; no MCR package archive checksum recorded)",
       "availability": "The current profile's configured /usr/pubsw/common/matlab/7.11 root passed manifest identity validation; its runtime library resolves to MCR 7.14, and the compiled runner started successfully from that root for the early invalid-phase contract smoke. Scientific execution was not performed.",
@@ -451,7 +454,7 @@
       "id": "tcsh",
       "role": "shell interface for source-prefixed FreeSurfer normalization environment commands; separate from MATLAB, Compiler, and MCR",
       "version": null,
-      "commandInterface": "Local and MLSC normalization construct `tcsh -f -c \"setenv LD_LIBRARY_PATH <path>:$LD_LIBRARY_PATH; source <environment-script>; <normalization-command>\"` when source_command begins with `source` (src/backends/shared/run_normalization_cmd.m).",
+      "commandInterface": "Local and MLSC normalization construct `tcsh -f -c \"setenv LD_LIBRARY_PATH <path>:$LD_LIBRARY_PATH; source <environment-script>; <normalization-command>\"` when source_command begins with `source` (src/backends/shared/pseudo_CT_run_normalization_cmd.m).",
       "availability": "Local executable found at /usr/local/bin/tcsh by PATH lookup only; version was not queried and no tcsh command was invoked. Remote shell/version is unknown.",
       "gate": "Before local normalization or MLSC execution, verify local/remote tcsh version and FreeSurfer environment behavior without running a science job.",
       "licenseAndDistribution": "external system shell; not staged"
@@ -461,9 +464,9 @@
     "correct_aliasing v0.4.0 and dicom2nifti v1.2.5 have no source-tree license files; user permits local staging only, public redistribution remains unresolved.",
     "The staged SPM8 r6313 and v4667 trees declare GPLv2-or-later, but nested third-party component terms/notices and a complete transitive redistribution review are outstanding.",
     "The shared Batch_atlas tree is an exact local copy, but its version/provenance and redistribution rights remain unknown; it is about 879 MB.",
-    "The rebuilt compiled/current payload records pinned correct_aliasing v0.4.0 and passed an invalid-phase runner contract smoke; successful image correction/computation and complete runtime dependency closure remain unverified.",
+    "The obsolete historical compiled/current payload (superseded by dist/ for new packages) records pinned correct_aliasing v0.4.0 and passed an invalid-phase runner contract smoke; successful image correction/computation and complete runtime dependency closure remain unverified.",
     "Full dicom2nifti conversion on MATLAB R2010b is explicitly unverified by its README; the v0.4.0 smoke proves only safe entrypoint parsing/failure handling, not successful science or conversion.",
-    "The bundled current ssh2 Ganymed m1 JAR lacks independently verified license/provenance; it blocks public packaging of that transport bundle.",
+    "The bundled current ssh2 Ganymed m1 JAR lacks independently verified license/provenance. Its redistribution inside the installed pseudoCT distribution is authorized by AMEND-1 (D-A001), but that is not independent provenance verification or public-release clearance of the transport bundle.",
     "MATLAB interpreter, Java runtime, runtime toolboxes, MATLAB Compiler, build toolboxes, and compiled MCR are separate dependencies. MATLAB R2010b / Compiler 4.14 and build-time Compiler/Image/Statistics license checks were exercised; Java and separate interpreter runtime toolbox behavior remain unverified. DICOM conversion conditionally calls Image Processing Toolbox dicominfo only when selective parsing of the representative file fails.",
     "Local tcsh was found by PATH lookup but its version/behavior was not run; remote MLSC job-node shell compatibility remains unknown.",
     "The Slurm command contract is recorded, but local sbatch/squeue/sacct/scancel/sshare commands were absent from PATH and remote Slurm version/availability was not checked. Remote use remains gated; no remote operation or job was performed."
@@ -492,7 +495,7 @@
     "t032CurrentRebuild": {
       "result": "PASS",
       "buildEnvironment": "MATLAB 7.11.0.584 (R2010b), MATLAB Compiler 4.14, glnxa64; MATLAB_PREFDIR and TMPDIR were under scratch.",
-      "buildCommand": "scripts/build_mlsc_current.m with explicit OutputDir under scratch and pinned SpmRoot, AtlasDir, AliasingRoot=external/correct_aliasing-0.4.0, and McrRoot=/usr/pubsw/common/matlab/7.11",
+      "buildCommand": "scripts/build_mlsc_current.m (absent from the current tree; historical build command) with explicit OutputDir under scratch and pinned SpmRoot, AtlasDir, AliasingRoot=external/correct_aliasing-0.4.0, and McrRoot=/usr/pubsw/common/matlab/7.11",
       "buildLog": "scratch/2026-10-29/201331-t032-current-rebuild/matlab-build.log",
       "pinnedAliasingInput": "MCC arguments and build manifest resolve to the install-root external/correct_aliasing-0.4.0 tree, version 0.4.0; source-tree sha256-tree-v1 matched dependencies.lock.json. No v0.3.0 or latest alias was used.",
       "currentArtifacts": {
@@ -514,7 +517,7 @@
     "t020LocalDependencyStaging": {
       "result": "PASS",
       "evidenceDirectory": "scratch/2026-10-29/173010-t020-root-lock-remediation/",
-      "copyVerification": "All staged root trees match the installed source tree digests; compiled/current retains its pre-existing canonical tree SHA-256.",
+      "copyVerification": "All staged root trees match the installed source tree digests; the obsolete historical compiled/current observation retains its pre-existing recorded tree SHA-256.",
       "rootResolutionTest": "MATLAB R2010b 7.11.0.584 test_dependency_paths passed with MATLAB_PREFDIR and TMPDIR under the evidence directory.",
       "provenanceAndRights": "Installed paths and hash evidence are recorded separately from license status; unresolved rights remain blocked for public redistribution."
     },

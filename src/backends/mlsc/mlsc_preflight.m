@@ -1,22 +1,29 @@
 function report = mlsc_preflight(subject, config, runtime)
-%MLSC_PREFLIGHT Validate one MLSC shared-filesystem subject before submit.
-%   REPORT = MLSC_PREFLIGHT(SUBJECT, CONFIG, RUNTIME) validates the selected
-%   MLSC resources, the shared subject input/temp paths, and any transient
-%   submission values.  It performs no network or scheduler operation.
+%MLSC_PREFLIGHT Check one MLSC shared-filesystem subject before submit.
+%   REPORT = MLSC_PREFLIGHT(SUBJECT, CONFIG, RUNTIME) checks the selected MLSC
+%   artifact and resources, the shared input and temporary folder, and the
+%   transient submission values. It makes no network or scheduler call. It
+%   creates and deletes one probe file in the shared temporary folder to test
+%   writability.
 %
-%   SUBJECT must identify the input already written by MATLAB in the existing
-%   shared subject temporary directory with fields SHARED_INPUT and
-%   SHARED_TEMP.  SEED_NII/TEMP_DIR are accepted as aliases for the existing
-%   orchestration seam.  RUNTIME may contain ACCOUNT, SCRIPT_PATH, and
-%   JOB_NAME; none of these values are persisted by this function.
+%   SUBJECT is a struct with SHARED_INPUT (the NIfTI already written in the
+%   shared subject folder) and SHARED_TEMP (that folder). SEED_NII and TEMP_DIR
+%   are accepted as aliases for the orchestration seam. RUNTIME may hold
+%   ACCOUNT, SCRIPT_PATH, JOB_NAME and SUBMISSION_CORRELATION_ID. These values
+%   are validated and never stored by this function. Authentication material
+%   is rejected.
 %
-%   The supported MLSC profile uses the pinned current payload.
-%   CONFIG.mlsc carries scheduler/host/shell/FreeSurfer fields only and
-%   CONFIG.current carries the pinned artifact contract (runner, pinned
-%   MCR_ROOT /usr/pubsw/common/matlab/26.1, build/resource manifest paths).
-%   No catalog, no resolver, no dynamic discovery, no MCR 7.11 fallback.
+%   REPORT is a struct with schema 'pseudo-CT.mlsc-preflight/v1', ok,
+%   shared_input_readable, shared_temp_writable, check_aliasing, input_name,
+%   normalized_name, needs_normalization and secure_transport_required.
 %
-%   Minimum supported MATLAB: R2010b.
+%   The supported MLSC profile uses the pinned current artifact. CONFIG.mlsc
+%   holds scheduler/host/shell/FreeSurfer fields. CONFIG.current holds the
+%   runner, the MATLAB 7.11 mcr_root (the MCR runtime is 7.14) and the build
+%   and resource manifest paths. There is no catalog, resolver, dynamic
+%   discovery or MCR fallback.
+%   Errors use the pseudo_CT:MLSCPreflight identifier.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11).
 
 if nargin < 2 || ~isstruct(subject) || ~isstruct(config)
     error('pseudo_CT:MLSCPreflight', ...

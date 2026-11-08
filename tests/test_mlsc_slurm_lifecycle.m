@@ -1,16 +1,16 @@
 function test_mlsc_slurm_lifecycle()
 %TEST_MLSC_SLURM_LIFECYCLE Current MLSC submit/monitor/terminal contract.
-%   Uses the installed current artifact with synthetic outputs and callbacks;
-%   no SSH, scheduler command, subject data, or scientific processing runs.
+%   Uses a synthetic installed-direct package built under scratch (placeholder
+%   runner and Runtime tree, packaged resource names; nothing is executed), with
+%   synthetic outputs and callbacks. No source artifact, SSH, scheduler command,
+%   subject data, or scientific processing runs. The repository SPM tree is used
+%   only to write the synthetic att_map fixture.
 
 root_dir = fileparts(fileparts(mfilename('fullpath')));
 old_path = path();
 addpath(genpath(fullfile(root_dir, 'src')), '-begin');
 cleanup_path = onCleanup(@() path(old_path)); %#ok<NASGU>
-
-config = pseudo_CT_load_profile('mlsc');
-dependency_paths = pseudo_CT_dependency_paths();
-addpath(dependency_paths.spm_root, '-begin');
+addpath(fullfile(root_dir, 'external', 'spm8-r6313'), '-begin');
 
 scratch_root = getenv('PSEUDOCT_TEST_SCRATCH');
 if isempty(scratch_root)
@@ -23,6 +23,27 @@ end
 test_root = tempname(scratch_root);
 mkdir(test_root);
 cleanup_root = onCleanup(@() local_cleanup(test_root)); %#ok<NASGU>
+
+package = local_installed_fixture(test_root);
+env_names = {'PSEUDOCT_INSTALL_ROOT'; 'PSEUDOCT_RUNTIME_RELEASE'; ...
+    'PSEUDOCT_RUNTIME_MCR_ROOT'; 'PSEUDOCT_RUNTIME_MCR_VERSION'};
+old_env = cell(size(env_names));
+for ii = 1:length(env_names)
+    old_env{ii} = getenv(env_names{ii});
+end
+cleanup_env = onCleanup(@() local_restore_env(env_names, old_env)); %#ok<NASGU>
+setenv('PSEUDOCT_INSTALL_ROOT', package.root);
+setenv('PSEUDOCT_RUNTIME_RELEASE', 'R2010b');
+setenv('PSEUDOCT_RUNTIME_MCR_ROOT', package.mcr);
+setenv('PSEUDOCT_RUNTIME_MCR_VERSION', '7.14');
+% Installed direct mode: the runner and Runtime come from the selected package;
+% both manifest paths are cleared and the packaged resources are the atlas.
+config = pseudo_CT_load_profile('mlsc');
+config.current.runner = package.runner;
+config.current.mcr_root = package.mcr;
+config.current.build_manifest = '';
+config.current.resource_manifest = '';
+config.atlas_root = package.resources;
 
 active_scenario = '';
 active_shared_temp = '';
@@ -313,5 +334,48 @@ end
 function local_cleanup(directory)
 if exist(directory, 'dir') == 7
     rmdir(directory, 's');
+end
+end
+
+function package = local_installed_fixture(test_root)
+%LOCAL_INSTALLED_FIXTURE Synthetic installed-direct package; placeholder files only.
+fix = fullfile(test_root, 'installed');
+payload = fullfile(fix, 'runtimes', 'R2010b', 'payload');
+package = struct('root', fix, 'mcr', fullfile(fix, 'mcr'), ...
+    'runner', fullfile(payload, 'run_pseudoct_worker.sh'), ...
+    'resources', fullfile(fix, 'resources'));
+local_make_dir(fullfile(fix, 'bin'));
+local_make_dir(payload);
+local_make_dir(fullfile(fix, 'mcr', 'runtime', 'glnxa64'));
+local_make_dir(fullfile(fix, 'mcr', 'toolbox', 'compiler'));
+local_make_dir(package.resources);
+local_write(fullfile(fix, 'bin', 'pseudoct'), sprintf('#!/bin/sh\n'));
+local_write(fullfile(fix, 'manifest.json'), sprintf('{}\n'));
+local_write(package.runner, sprintf('#!/bin/sh\n# Synthetic runner fixture; never executed.\n'));
+local_write(fullfile(payload, 'pseudoct_worker'), ...
+    sprintf('Synthetic payload fixture; never executed.\n'));
+local_write(fullfile(fix, 'mcr', 'runtime', 'glnxa64', 'libmwmclmcrrt.so.7.14'), ...
+    sprintf('synthetic\n'));
+local_write(fullfile(fix, 'mcr', 'toolbox', 'compiler', 'mcrversion.ver'), ...
+    sprintf('7.14\n'));
+names = {'ch2.nii'; 'new_segment_batch.mat'; ...
+    'dartel_existing_template_batch.mat'; 'create_inverse_warped_batch.mat'; ...
+    'Template_1.nii'; 'Template_2.nii'; 'Template_3.nii'; ...
+    'Template_4.nii'; 'Template_5.nii'; 'Template_6.nii'; 'TPM.nii'; ...
+    'Fixture_Atlas.nii'};
+for ii = 1:length(names)
+    local_write(fullfile(package.resources, names{ii}), sprintf('synthetic %d\n', ii));
+end
+end
+
+function local_restore_env(names, values)
+for ii = 1:length(names)
+    setenv(names{ii}, values{ii});
+end
+end
+
+function local_make_dir(directory)
+if exist(directory, 'dir') ~= 7
+    mkdir(directory);
 end
 end

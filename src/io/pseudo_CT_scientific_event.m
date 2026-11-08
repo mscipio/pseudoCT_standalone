@@ -10,7 +10,9 @@ function ok = pseudo_CT_scientific_event(target, rec)
 %     status           'STARTED', 'COMPLETED', 'FAILED' or '' (stage records)
 %     outcome          'SUCCEEDED', 'FAILED', 'CANCELLED' (run records only)
 %     message          short human text (redacted, truncated to 240 chars)
-%     source           'local-orchestrator', 'payload' or 'mlsc-lifecycle'
+%     source           'local-orchestrator', 'payload' (the compiled
+%                      pseudoct_worker, a fixed record-source token) or
+%                      'mlsc-lifecycle'
 %     job_id           scheduler job number digits, or ''
 %     error_identifier, error_message   error details when applicable
 %
@@ -26,8 +28,8 @@ function ok = pseudo_CT_scientific_event(target, rec)
 %   before the new record, so every record starts on its own line; the closed
 %   fragment keeps its sequence slot and is skipped by readers.
 %
-%   Single writer: exactly one process appends to a run file at a time (see
-%   the writer ownership contract in the T004 evidence). No lock is taken.
+%   Single writer: exactly one process appends to a run file at a time. No
+%   lock is taken.
 %
 %   Advisory I/O: nothing here throws. An invalid request or failed write
 %   returns OK=false and warns once per MATLAB session; the scientific caller

@@ -1,6 +1,14 @@
 function line = pseudo_CT_output(level, context, format_string, varargin)
-%PSEUDO_CT_OUTPUT Write one standardized event to console and run logs.
-%   Both console and log lines use second-resolution timestamps.
+%PSEUDO_CT_OUTPUT Write one standardized event to the console and the run log.
+%   LINE = PSEUDO_CT_OUTPUT(LEVEL, CONTEXT, FORMAT_STRING, ARG1, ...)
+%   LEVEL is 'INFO', 'WARN', 'ERROR' or 'SUCCESS' (case-insensitive). CONTEXT
+%   is a logging struct: log_file or log_files name the run log, and console_*
+%   fields control the console view. FORMAT_STRING and ARG1, ... are passed to
+%   sprintf. LINE is the formatted text, with a second-resolution timestamp.
+%   The console receives the line when the console view shows it. The run log
+%   receives it whenever a log file is set.
+%   Side effects: prints to the console and appends to the run log file(s). If
+%   a log cannot be written, one warning is emitted per MATLAB session.
 %   Minimum supported MATLAB: R2010b.
 
 persistent log_warning_emitted;
@@ -145,7 +153,7 @@ end
 
 function context = local_public_stage_context(context)
 % Apply the shared policy map to context tags only. MESSAGE remains the
-% original detailed-log payload; console sanitization is a separate view.
+% original detailed-log record; console sanitization is a separate view.
 if ~isstruct(context) || ~isscalar(context) || ...
         (isfield(context, 'workflow_event') && ...
         isequal(context.workflow_event, true)) || ...

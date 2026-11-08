@@ -1,9 +1,17 @@
-% Date: 07/15/2010;
-% Name: CT_2_att_map.m;
-% Function to convert a CT image into an attenuation map, following the Bai
-% et al. approache (2003) and Burger et al (2002) for the GE!
-
-function [att_map] = CT_2_att_map(CT, varargin)
+function [att_map] = pseudo_CT_ct_to_att_map(CT, varargin)
+%PSEUDO_CT_CT_TO_ATT_MAP Convert a CT volume into an attenuation map.
+%   ATT_MAP = PSEUDO_CT_CT_TO_ATT_MAP(CT, KVP)
+%   CT is a numeric CT volume in Hounsfield units, or a char path to a NIfTI
+%   file (read with SPM). KVP selects the conversion: 100, 120, 130 or 140 for
+%   the positive-kVp formulas, or -1 (GE, the default), -80, -100, -110, -120,
+%   -130 or -140 for the Siemens-type formulas. Other KVP values display a
+%   message and return an all-zero map.
+%   ATT_MAP has the size of CT. Water is 0.096 in the output units (cm^-1).
+%   Based on the Bai et al. (2003) and Burger et al. (2002) approaches for GE.
+%   The no-argument form calls read_raw_data, which is not part of this
+%   repository; do not rely on it.
+%   Side effects: none. Errors: none raised by this function.
+%   Originally dated 07/15/2010. Minimum supported MATLAB: R2010b.
 
 if nargin == 0
     CT = read_raw_data(0);

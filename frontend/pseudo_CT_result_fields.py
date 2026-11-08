@@ -1,7 +1,10 @@
 """Print key=value lines for the last launcher result record (type "result").
 
-Used by pseudo_CT_launch_request('invoke'): the launcher writes one JSON record
-per invocation with --format jsonl. Exit 3 when no result record is present.
+Usage: pseudo_CT_result_fields.py OUTPUT_FILE
+
+Used by pseudo_CT_launch_request('invoke') on the stdout of `bin/pseudoct run ...
+--format jsonl`; the last result record in the file wins. Exit 3 when no result
+record is present.
 """
 import json
 import sys
@@ -12,6 +15,7 @@ FIELDS = ("outcome", "exit_code", "submission_status", "authentication_status",
 
 
 def clean(value):
+    """Return VALUE as one line: None becomes "", lists are space-joined, whitespace collapses."""
     if value is None:
         return ""
     if isinstance(value, list):
@@ -20,6 +24,7 @@ def clean(value):
 
 
 def main():
+    """Print the FIELDS of the last result record; exit 3 when there is none."""
     record = None
     with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
         for line in handle:

@@ -1,11 +1,17 @@
-% Date: 02/18/2013;
-% Name: head_mask_mprage.m;
-% Program to generate a head_mask based on the UTE1 images.
-% New version, from original head_mask.m.  This time we also perform the
-% filling of holes in the 2nd dimension (which seems to be Axial in
-% reality!).
-
-function [Pf, head_mask] = head_mask_mprage(varargin)
+function [Pf, head_mask] = pseudo_CT_head_mask_mprage(varargin)
+%PSEUDO_CT_HEAD_MASK_MPRAGE Create a head mask from an MR volume.
+%   [PF, HEAD_MASK] = PSEUDO_CT_HEAD_MASK_MPRAGE(IMAGE, THRESHOLD)
+%   IMAGE is a char path to a NIfTI file or a numeric volume. THRESHOLD is
+%   optional (default 20): voxels above it are head candidates. Holes are
+%   filled in all three planes, and the mask is eroded with a 7x7x7 cube.
+%   HEAD_MASK is the logical head mask, the same size as the input volume.
+%   PF is the path of the written Atlas_head_mask.nii (saved beside a file input
+%   as uint8), or '' for a numeric input.
+%   The no-argument form opens an SPM image picker and is for interactive use
+%   only; the pipeline always passes IMAGE.
+%   Side effects: writes Atlas_head_mask.nii beside a file input. Errors: none
+%   raised by this function; SPM errors propagate.
+%   Originally dated 02/18/2013. Minimum supported MATLAB: R2010b.
 
 Pf = '';
 head_mask = [];

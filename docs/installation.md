@@ -1,88 +1,123 @@
 # Installation and requirements
 
+This page owns installation, MATLAB and MATLAB Runtime requirements, external
+dependencies, the supported profiles and the build entry point. CLI and API
+usage is in [Headless API and CLI](headless-cli.md); packaging, runtime identity
+and layout are in [Release catalog and layout](releases.md); method and evidence
+are in [Scientific notes](scientific-notes.md). Researcher workflow and QC are in
+the [PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/).
+
 ## Martinos deployment
 
 Use the centrally provisioned installation at
-`/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/`. Add its installation
-root to the MATLAB path and run the GUI entry point:
+`/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/`. Add its installation root to
+the MATLAB path and launch the window:
 
 ```matlab
 addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-latest')
 run_pseudo_CT
 ```
 
-Keep MATLAB open while a run is active and until MLSC monitoring and local
-finalization complete. The [PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/)
-covers subject layout, input selection, workflow, outputs, and QC.
+Keep MATLAB open while a request is running and, for MLSC, until monitoring and
+local finalization complete. See [Validate and submit](headless-cli.md#validate-and-submit)
+for the Validate and Submit gate.
 
 ## External installation
 
-Install the standalone distribution for which you have been given access, then
-add its installation root to MATLAB's path and run `run_pseudo_CT`. The
-standalone code is not a self-contained scientific environment. It requires
-MATLAB R2010b-compatible operation and site-appropriate processing resources;
-do not invent fallback resource paths. Configure supported resources in the
-selected profile under `src/config/profiles/` when an external installation
-requires different paths.
+Install the standalone distribution for which you have been given access, add its
+installation root to MATLAB's path and run `run_pseudo_CT`. The standalone code is
+not a self-contained scientific environment: it needs site-appropriate processing
+resources. Do not invent fallback resource paths. When an installation needs
+different paths, configure them in the selected profile under `src/config/profiles/`.
 
-The runtime depends on the following resources and services, as applicable to
-the selected profile and input:
+### MATLAB and MATLAB Runtime requirements
 
-- SPM8 and the pseudoCT atlas images/batch templates.
+- **Source checkout (MATLAB interpreter):** R2010b-compatible MATLAB, the
+  supported minimum for this source (MATLAB 7.11).
+- **Installed distribution (MATLAB Runtime):** each installed release runs on its
+  own MATLAB Runtime (MCR), not on the interpreter. The default release, R2010b,
+  was built with MATLAB 7.11 (build provenance) and runs on MATLAB Runtime **7.14**.
+  The other labels (R2014a through R2026a) and their MCR versions are listed in
+  [Supported exact release labels](releases.md#supported-exact-release-labels),
+  which mirrors `config/releases.json`.
+- The MATLAB Runtime root is the catalog location `/usr/pubsw/common/matlab/<D>` of the
+  selected release, where `<D>` is the first two dotted components of its `matlab_version`
+  (for example `9.6` for `9.6.0.1072779`); `--mcr-root DIR` selects another installation. No environment
+  variable or folder picker is needed, and identity is always checked against the catalog.
+  See [Release selection](releases.md#selecting-a-release).
+
+### Dependencies
+
+The runtime depends on the following resources and services, as applicable to the
+selected profile and input:
+
+- SPM8 and the pseudoCT atlas images and batch templates.
 - The DICOM-to-NIfTI converter for DICOM MPRAGE inputs.
-- The configured aliasing/recentering tool when those operations are enabled.
+- The configured aliasing and recentering tool, when those operations are enabled.
 - FreeSurfer normalization tools and their site environment.
-- For MLSC profiles, access to the configured shared filesystem, supported
-  cluster services, and a valid MLSC account. MATLAB remains open during
-  monitoring and output verification.
-- MATLAB/Java and the compatible compiled runtime used by the installed
-  scientific payload.
+- For MLSC profiles: access to the configured shared filesystem, the supported
+  cluster services and a valid MLSC account.
+- MATLAB/Java and the compatible compiled runtime used by the installed shared
+  compiled worker.
 
-Some dependency copies may be present in a development checkout. Their
-presence and recorded hashes do not establish complete provenance,
-compatibility, or redistribution rights. Preserve the supplied licenses and
-notices; public packaging remains subject to dependency-specific licensing and
-redistribution review. See [`dependencies.lock.json`](../dependencies.lock.json)
-for the recorded dependency boundary and integrity evidence.
+A development checkout may contain dependency copies. Their presence and recorded
+hashes do not establish provenance, compatibility or redistribution rights; see
+[`dependencies.lock.json`](../dependencies.lock.json) and the
+[publication status](releases.md#publication) in the release documentation.
 
 ## Supported profiles
+
+Only these four canonical profile keys are supported by the selector, the CLI and
+the API.
 
 | Canonical profile | Execution | Reference policy | Output policy |
 |---|---|---|---|
 | `local` | Local MATLAB | MPRAGE plus UMAP | NIfTI and DICOM |
-| `mlsc` | MLSC | MPRAGE plus UMAP | NIfTI and DICOM |
+| `mlsc` | MLSC (Slurm) | MPRAGE plus UMAP | NIfTI and DICOM |
 | `local-mprage-only` | Local MATLAB | MPRAGE only | NIfTI only |
-| `mlsc-mprage-only` | MLSC | MPRAGE only | NIfTI only |
+| `mlsc-mprage-only` | MLSC (Slurm) | MPRAGE only | NIfTI only |
 
-The selector and APIs expose only these four profiles. The MPRAGE-only choices
-do not require a UMAP and do not create DICOM output. Missing or invalid MLSC
-artifact requirements fail closed; no alternate science implementation is
-selected.
+The MPRAGE-only profiles do not require a UMAP and do not create DICOM output.
+`local` and `mlsc` run the same shared compiled worker; the profile chooses the
+execution location and the input/output policy, not a different algorithm. Missing
+or invalid MLSC artifact requirements fail closed.
+
+Profile defaults (source of truth: `src/config/profiles/*.m` and
+`src/config/pseudo_CT_profile_registry.m`):
+
+| Setting | Default |
+|---|---|
+| Nose/back aliasing correction | On (`aliasing_default = 1`); override with `--correct-aliasing`. |
+| Recentering before normalization | `Yes`; override with `--recenter-before-normalization`. |
+| Zero background | `No`. |
+| Bone-segmentation cleanup | On. |
+| Cleanup of intermediates after success | On (`cleanup_on_success = true`). |
+| PCA implementations, in order | `callable_pca`, then `repo_legacy`. |
+| MLSC Slurm request | 1 node, 1 task, 4 CPUs, 8 GB memory, 02:00:00 time limit. |
+
+Local profiles run on this computer. MLSC profiles submit to Slurm after a
+successful validation of the same inputs (see [Validate and submit](headless-cli.md#validate-and-submit))
+and require a valid account, configured host and shared filesystem. MLSC submit is
+implemented and offline-tested, but it has **not** been independently verified
+against a live scheduler; see [Verification status](releases.md#verification-status).
 
 ## Interfaces and files
 
-The supported entry points are the MATLAB GUI/scripting dispatcher
-`run_pseudo_CT`, the MATLAB headless MAT v5 API `pseudo_CT_headless`, and the
-terminal CLI `bin/pseudoct`. See [Headless CLI](headless-cli.md) for API
-schemas, CLI options, credential handling, and exit semantics.
+The supported entry points are the MATLAB window and scripting entry point
+`run_pseudo_CT`, the MATLAB headless API `pseudo_CT_headless` and the terminal CLI
+`bin/pseudoct`. See [Headless API and CLI](headless-cli.md) for schemas, options,
+logs and exit codes.
 
-MPRAGE and standard-profile UMAP inputs may be DICOM or NIfTI where supported
-by the selected workflow. Standard outputs are written under
-`<subject>/MR_PET/`; DICOM output is written under
-`<subject>/MR/pseudo_muMAP/`. MPRAGE-only output is NIfTI-only. Inspect the QC
-image and final attenuation map before use.
-
-For the scientific method, historical comparisons, and evidence limitations,
-see [Scientific notes](scientific-notes.md). No new scientific validation or
-deployment is implied by these installation instructions.
+Standard outputs are written under `<subject>/MR_PET/`; DICOM output is written under
+`<subject>/MR/pseudo_muMAP/`. MPRAGE-only output is NIfTI-only. Inspect the QC image
+and the final attenuation map before use.
 
 ## Build and packaging
 
-`scripts/build_application.m` is the single build entry point. The MATLAB
-release is an explicit argument with no default, and the procedure contains no
-supported-release table. The executing MATLAB must report that same release.
-Run it from MATLAB with `<release>` set to the release you intend to build,
-for example `R2010b` for MATLAB 7.11:
+`scripts/build_application.m` is the single build entry point. The MATLAB release is
+an explicit argument with no default, and the procedure contains no supported-release
+table. The executing MATLAB must report that same release. Run it from MATLAB, with
+`<release>` set to the release you intend to build (for example `R2010b` for MATLAB 7.11):
 
 ```matlab
 cd('<repo-root>')
@@ -101,20 +136,20 @@ build_application('<release>', 'Mode', 'build', ...
 verify_application_package('<output-root>/<release>')
 ```
 
-`<output-root>` must be outside `src/`, `external/` and `compiled/`, and a build
-refuses a dirty git tree, so commit before building. The build compiles exactly two
-targets: the headless engine `standalone/pseudoct_standalone` and the science worker
-`payload/mlsc_current_payload`. Distribution assembly is
-`scripts/release_application.py` (see [Release catalog and layout](releases.md)):
-it runs `build_application` once per selected release and writes
-`pseudoct-<version>/` with `bin/pseudoct`, `run_pseudo_CT.m`, `frontend/`,
-`runtimes/<LABEL>/`, `resources/`, `manifest.json` and `SHA256SUMS`. It contains no
-`src/`, `external/` or GUI executable; `--verify <dir>` checks it. An independent check
-of the `build_application` package is
-`cd <output-root>/<release> && sha256sum -c SHA256SUMS`.
+`<output-root>` must be outside `src/`, `external/` and `compiled/`. A build refuses a
+dirty git tree by design; commit or clean the tree before building. The build compiles
+exactly two targets: the headless engine `standalone/pseudoct_standalone` and the science
+worker `payload/pseudoct_worker`.
 
-Compile support is unverified. The procedure has not been run as a real build
-for any release, and the compiled application, runtime behavior, launchers and
-deployment are unverified until a real build is run and tested. Dependency
-tree digests are checked by `tests/test_dependency_lock.py`, not by the build
-preflight.
+Distribution assembly is `scripts/release_application.py` (see
+[Release catalog and layout](releases.md)). It runs `build_application` once per selected
+release and writes `pseudoct-<version>/`. The package contains no `src/` or GUI
+executable. Its only `external/` content is `external/ssh2_v2_m1_r5/` (SSH2 MATLAB files,
+the Ganymed jar and licence notices); `--verify <dir>` checks it. Python bytecode (`*.pyc`, `*.pyo`) in
+`frontend/` is excluded from the frontend inventory, so a checkout that has it still
+passes.
+
+**Verification status.** The build procedure has not been run as a real build for any
+release in this audit. The executables under `compiled/` predate the v3.2.0 renames, and
+no package has been assembled or verified for this version. See
+[Verification status](releases.md#verification-status).

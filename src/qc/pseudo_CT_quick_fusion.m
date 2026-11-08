@@ -1,21 +1,17 @@
-% Date: Jun/25/2016;
-% Name: quick_fusion_pseudo_ct.m;
-% Function to quickly display the 3 middle planes (Axial, Coronal and
-% Sagital) with the fused view of the MR and Pseudo-CT images;
-
-function composite = quick_fusion_pseudo_ct(pat_folder, colormap_mat)
-%QUICK_FUSION_PSEUDO_CT Fused MR/pseudo-CT validation composite (T003 headless seam).
-%   COMPOSITE = QUICK_FUSION_PSEUDO_CT(PAT_FOLDER) uses the default
-%   colormap exactly: the QC colormap is the bundled
-%   hot_map_mpitool_1024.mat beside this source, and the rendered composite
-%   is unchanged.
-%   COMPOSITE = QUICK_FUSION_PSEUDO_CT(PAT_FOLDER, COLORMAP_MAT) uses an
-%   explicit headless resource location instead of assuming a loose MAT
-%   beside source. COLORMAP_MAT must be an existing .mat file containing a
-%   non-empty numeric my_hot_map_1024; anything else fails closed.
-%   Empty/missing COLORMAP_MAT selects the default colormap.
-%
-%   Minimum supported MATLAB: R2010b.
+function composite = pseudo_CT_quick_fusion(pat_folder, colormap_mat)
+%PSEUDO_CT_QUICK_FUSION Build a fused MR/pseudo-CT validation composite.
+%   COMPOSITE = PSEUDO_CT_QUICK_FUSION(PAT_FOLDER) uses the bundled QC colormap
+%   hot_map_mpitool_1024.mat beside this file.
+%   COMPOSITE = PSEUDO_CT_QUICK_FUSION(PAT_FOLDER, COLORMAP_MAT) uses an explicit
+%   .mat file instead. It must exist and contain a non-empty numeric
+%   my_hot_map_1024; anything else fails closed. An empty COLORMAP_MAT selects
+%   the bundled colormap.
+%   The composite overlays the pseudo-CT on the MR for the three middle planes
+%   (axial, coronal, sagittal) and their maximum-intensity projections, using
+%   pseudo_CT_overlay2. It is called by the current compute phase
+%   (pseudo_CT_current_compute) to make the validation image.
+%   Side effects: reads the NIfTI files in PAT_FOLDER. Minimum supported MATLAB:
+%   R2010b. Originally dated 06/25/2016.
 
 pct = 0.5; % Fusion overlay power!
 tool_dir = fileparts(mfilename('fullpath'));
@@ -85,12 +81,12 @@ mip_ax_ct = rot90(squeeze(max(ct_im, [], 2)));
 mip_sag_mr = (squeeze(max(mr_im, [], 1)));
 mip_sag_ct = (squeeze(max(ct_im, [], 1)));
 
-sag = toverlay2(sag_mr, sag_ct/max(sag_ct(:)), pct, 0, map);
-ax = toverlay2(ax_mr, ax_ct/max(ax_ct(:)), pct, 0, map);
-cor = toverlay2(cor_mr, cor_ct/max(cor_ct(:)), pct, 0, map);
-mip_sag = toverlay2(mip_sag_mr, mip_sag_ct/max(mip_sag_ct(:)), pct, 0, map);
-mip_ax = toverlay2(mip_ax_mr, mip_ax_ct/max(mip_ax_ct(:)), pct, 0, map);
-mip_cor = toverlay2(mip_cor_mr, mip_cor_ct/max(mip_cor_ct(:)), pct, 0, map);
+sag = pseudo_CT_overlay2(sag_mr, sag_ct/max(sag_ct(:)), pct, 0, map);
+ax = pseudo_CT_overlay2(ax_mr, ax_ct/max(ax_ct(:)), pct, 0, map);
+cor = pseudo_CT_overlay2(cor_mr, cor_ct/max(cor_ct(:)), pct, 0, map);
+mip_sag = pseudo_CT_overlay2(mip_sag_mr, mip_sag_ct/max(mip_sag_ct(:)), pct, 0, map);
+mip_ax = pseudo_CT_overlay2(mip_ax_mr, mip_ax_ct/max(mip_ax_ct(:)), pct, 0, map);
+mip_cor = pseudo_CT_overlay2(mip_cor_mr, mip_cor_ct/max(mip_cor_ct(:)), pct, 0, map);
 
 %zz = zeros(size(ax, 1), size(sag, 2), 3);
 

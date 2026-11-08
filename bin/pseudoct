@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # pseudoct: the single public launcher for pseudoCT.
 #
-# Repository checkout (src/ present, no runtimes/): the licensed MATLAB CLI.
-# Installed distribution (runtimes/ present, no src/): compiled release selection
-# and dispatch through the MATLAB Runtime of the selected release.
+# Repository checkout (src/ present): the licensed MATLAB CLI, for development only.
+# Installed distribution (no src/, runtimes/ required): compiled release selection
+# and dispatch through the MATLAB Runtime of the selected release. An installed tree
+# never runs the MATLAB CLI, and an incomplete one fails closed.
 #
 #   pseudoct run      [--mcr LABEL] [--mcr-root DIR] validate|run <CLI options>
 #   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
@@ -11,6 +12,7 @@
 #   pseudoct --list-releases | --help
 set -u
 
+# Exit statuses listed in --help, including 70 for MATLAB dispatch or runtime failures.
 EXIT_USAGE=64
 EXIT_VALIDATION=65
 EXIT_AUTH=66
@@ -23,8 +25,8 @@ operation_phase=not_started
 usage() {
     cat <<'USAGE'
 Usage:
-  pseudoct run      validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
-  pseudoct run      run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [options]
+  pseudoct run      validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
+  pseudoct run      run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
   pseudoct --list-releases
@@ -37,9 +39,10 @@ Operations:
   --list-releases     Print one line per installed release: label, MCR, default marker.
 
 Release selection (installed distribution): --mcr LABEL selects the release (default:
-the catalog default, R2010b). The MATLAB Runtime root is taken from, in order:
---mcr-root DIR, PSEUDOCT_MCR_ROOT_<LABEL>, PSEUDOCT_MCR_ROOT. The runtime identity is
-always validated against the catalog.
+the catalog default, R2010b). The MATLAB Runtime root is the catalog location
+/usr/pubsw/common/matlab/<D> of that release, where D is the first two dotted components
+of its matlab_version (9.6.0.1072779 -> 9.6), unless --mcr-root DIR names another
+installation. The runtime identity is always validated against the catalog.
 
 Options (run validate|run):
   --profile NAME                  Canonical supported profile (required)
@@ -48,7 +51,7 @@ Options (run validate|run):
   --correct-aliasing yes|no       Override profile default
   --recenter-before-normalization yes|no
   --cleanup-on-success yes|no
-  --current-artifact-root PATH    Pinned compiled-artifact validation override
+  --current-artifact-root PATH    Development-only override; MLSC profiles only
   --group-account ACCOUNT        MLSC account selection for run
   --host-key-file FILE            Optional MLSC strict host-key input
   --credential-handoff FILE       Existing authorized single-use handoff
@@ -57,10 +60,12 @@ Options (run validate|run):
 
 Exit codes: 0 validated/completed, 64 usage/config, 65 invalid request,
 66 authentication, 67 submission failure, 68 scientific failure/unverified,
-69 launcher/runtime failure.
+69 launcher/runtime failure, 70 MATLAB dispatch or runtime failure.
 USAGE
 }
 
+# Fail with CODE: print MESSAGE to stderr and exit. With --format jsonl the failure is also
+# written to stdout as one result record; an empty error_class (third argument) defaults from CODE.
 error_record() {
     code=$1
     message=$2
@@ -107,6 +112,7 @@ PY
 }
 
 
+# Print MESSAGE to stderr and exit with CODE, without a result record.
 fail_op() {
     printf 'pseudoct: %s\n' "$1" >&2
     exit "$2"
@@ -124,9 +130,14 @@ bin_dir=$(CDPATH= cd -P -- "$(dirname -- "$self_path")" && pwd -P) ||
 root_dir=$(CDPATH= cd -P -- "$bin_dir/.." && pwd -P) ||
     fail_op 'cannot resolve the installation root' 69
 self=$bin_dir/$(basename -- "$self_path")
+# The installed layout is the tree without src/. It must carry runtimes/; a missing
+# runtimes/ is an incomplete installation that fails closed, never a source checkout.
 installed=0
-if [ -d "$root_dir/runtimes" ] && [ ! -e "$root_dir/src" ]; then
+if [ ! -e "$root_dir/src" ]; then
     installed=1
+    if [ ! -d "$root_dir/runtimes" ]; then
+        fail_op 'this pseudoCT installation is incomplete (runtimes/ is missing); reinstall the pseudoCT distribution' "$EXIT_RUNTIME"
+    fi
 fi
 if [ "$installed" -eq 1 ]; then
     catalog=$root_dir/manifest.json
@@ -138,15 +149,19 @@ else
     catalog_mode=catalog
 fi
 
+# Parent of the catalog MATLAB Runtime locations <base>/<D>, where D is the first two dotted
+# components of a release's matlab_version (9.6.0.1072779 -> 9.6, 7.11 -> 7.11). Fixed.
+catalog_mcr_base=/usr/pubsw/common/matlab
+
 # Artifacts every installed release must provide (kept in step with the driver).
-RELEASE_ARTIFACTS='payload/mlsc_current_payload payload/run_mlsc_current_payload.sh standalone/pseudoct_standalone'
+RELEASE_ARTIFACTS='payload/pseudoct_worker payload/run_pseudoct_worker.sh standalone/pseudoct_standalone'
 
 # Catalog reader: list | default | resolve LABEL. Installed mode lists complete releases only.
 CATALOG_PY='
 import json, os, re, shlex, sys
 path, key, command, label, root, mode = sys.argv[1:7]
-REQUIRED = ["payload/mlsc_current_payload",
-            "payload/run_mlsc_current_payload.sh", "standalone/pseudoct_standalone"]
+REQUIRED = ["payload/pseudoct_worker",
+            "payload/run_pseudoct_worker.sh", "standalone/pseudoct_standalone"]
 def fail(message, code):
     sys.stderr.write("pseudoct: " + message + "\n")
     sys.exit(code)
@@ -192,10 +207,13 @@ else:
         fail("unknown or missing release label %r; supported: %s"
              % (label, ", ".join(labels)), 2)
     entry = match[0]
+    print("CAT_MATLAB_VERSION=" + shlex.quote(entry["matlab_version"]))
     print("CAT_MCR_VERSION=" + shlex.quote(entry["mcr_version"]))
     print("CAT_ARCH=" + shlex.quote(entry["architecture"]))
     print("CAT_VERSION_FILE=" + shlex.quote(entry["runtime_identity"]["mcr_version_file"]))
     print("CAT_LIBRARY=" + shlex.quote(entry["runtime_identity"]["library"]))
+    dirname = re.fullmatch(r"([0-9]+)\.([0-9]+)(\.[0-9]+)*", entry["matlab_version"])
+    print("CAT_MCR_DIR=" + shlex.quote(dirname.group(1) + "." + dirname.group(2) if dirname else ""))
 '
 
 catalog_query() {
@@ -208,6 +226,7 @@ quoted() {
     printf "'%s'" "$q"
 }
 
+# Usage check: called as need_value OPTION "$@"; fails unless a value follows the option.
 need_value() {
     [ "$#" -ge 2 ] || error_record "$EXIT_USAGE" "An option is missing its value."
 }
@@ -222,10 +241,11 @@ require_installed() {
         fail_op "$1 requires an installed pseudoCT distribution (runtimes/ beside bin/)" "$EXIT_USAGE"
 }
 
-# Shared selection: LABEL HAVE_ROOT ROOT_ARG RELATIVE_EXECUTABLE. Sets SEL_EXE, SEL_RUNNER,
-# SEL_MCR_ROOT and SEL_LD_PATH. Returns 64 (unknown label or bad root option) or 69
-# (incomplete release, missing or mismatched MATLAB Runtime). The runtime identity
-# (library and mcrversion.ver) is always checked against the catalog.
+# Shared selection: LABEL HAVE_ROOT ROOT_ARG RELATIVE_EXECUTABLE. Sets SEL_RELEASE, SEL_EXE,
+# SEL_RUNNER, SEL_MCR_ROOT and SEL_LD_PATH, or SEL_ERROR (message for the caller). Returns 64
+# (unknown label or bad root option) or 69 (incomplete release, unsupported architecture,
+# missing or mismatched MATLAB Runtime). The runtime identity (library and mcrversion.ver)
+# is always checked against the catalog.
 select_release() {
     sel_label=$1
     sel_have_root=$2
@@ -247,36 +267,43 @@ select_release() {
             return "$EXIT_RUNTIME"
         fi
     done
+    # Root: --mcr-root when given, else the catalog location <base>/<D> of this release
+    # (D: first two dotted components of matlab_version). No environment variable takes
+    # part in discovery; the candidate is always identity-validated below.
     if [ "$sel_have_root" -eq 1 ]; then
         [ -n "$sel_root_arg" ] || { SEL_ERROR='--mcr-root requires a directory'; return "$EXIT_USAGE"; }
         selected=$sel_root_arg
+        where='(--mcr-root)'
     else
-        eval "per_label=\${PSEUDOCT_MCR_ROOT_${sel_label}-}"
-        if [ -n "$per_label" ]; then
-            selected=$per_label
-        elif [ -n "${PSEUDOCT_MCR_ROOT-}" ]; then
-            selected=$PSEUDOCT_MCR_ROOT
-        else
-            SEL_ERROR="no MATLAB Runtime root for $sel_label: pass --mcr-root, or set PSEUDOCT_MCR_ROOT_$sel_label or PSEUDOCT_MCR_ROOT"
-            return "$EXIT_RUNTIME"
-        fi
+        case "$CAT_MCR_DIR" in
+            ''|*/*|.|..) SEL_ERROR="$sel_label: matlab_version $CAT_MATLAB_VERSION does not name a runtime directory; pass --mcr-root DIR"; return "$EXIT_RUNTIME" ;;
+        esac
+        selected=$catalog_mcr_base/$CAT_MCR_DIR
+        where="(catalog location for matlab_version $CAT_MATLAB_VERSION; pass --mcr-root DIR to select another installation)"
+        [ -d "$selected" ] ||
+            { SEL_ERROR="no MATLAB Runtime root for $sel_label: the catalog location $selected is not a directory; pass --mcr-root DIR to select another installation"; return "$EXIT_RUNTIME"; }
     fi
     mcr_abs=$(CDPATH= cd -P -- "$selected" 2>/dev/null && pwd -P) ||
-        { SEL_ERROR="MATLAB Runtime root is not a directory: $selected"; return "$EXIT_RUNTIME"; }
+        { SEL_ERROR="MATLAB Runtime root is not a directory: $selected $where"; return "$EXIT_RUNTIME"; }
     library=$mcr_abs/runtime/$CAT_ARCH/$CAT_LIBRARY
     [ -f "$library" ] ||
-        { SEL_ERROR="$sel_label: runtime library $CAT_LIBRARY not found under $mcr_abs"; return "$EXIT_RUNTIME"; }
+        { SEL_ERROR="$sel_label: runtime library $CAT_LIBRARY not found under $mcr_abs $where"; return "$EXIT_RUNTIME"; }
     version_file=$mcr_abs/$CAT_VERSION_FILE
     [ -f "$version_file" ] ||
-        { SEL_ERROR="$sel_label: $CAT_VERSION_FILE not found under $mcr_abs"; return "$EXIT_RUNTIME"; }
+        { SEL_ERROR="$sel_label: $CAT_VERSION_FILE not found under $mcr_abs $where"; return "$EXIT_RUNTIME"; }
     found=$(head -n 1 "$version_file" | tr -d '\r' | sed 's/[[:space:]]*$//')
     [ "$found" = "$CAT_MCR_VERSION" ] ||
-        { SEL_ERROR="MATLAB Runtime at $mcr_abs reports MCR '$found'; $sel_label requires '$CAT_MCR_VERSION'"; return "$EXIT_RUNTIME"; }
+        { SEL_ERROR="MATLAB Runtime at $mcr_abs $where reports MCR '$found'; $sel_label requires '$CAT_MCR_VERSION'"; return "$EXIT_RUNTIME"; }
     SEL_RELEASE=$sel_label
     SEL_EXE=$release_dir/$sel_rel
-    SEL_RUNNER=$release_dir/payload/run_mlsc_current_payload.sh
+    SEL_RUNNER=$release_dir/payload/run_pseudoct_worker.sh
     SEL_MCR_ROOT=$mcr_abs
     SEL_LD_PATH=$mcr_abs/runtime/glnxa64:$mcr_abs/bin/glnxa64:$mcr_abs/sys/os/glnxa64
+    # MCR 7.14 libjvm.so lives under sys/java/.../amd64/server: add the Runtime's Java
+    # directories only when present (the compiled engines do not use -nojvm).
+    for jre_dir in "$mcr_abs/sys/java/jre/glnxa64/jre/lib/amd64" "$mcr_abs/sys/java/jre/glnxa64/jre/lib/amd64/server"; do
+        if [ -d "$jre_dir" ]; then SEL_LD_PATH=$SEL_LD_PATH:$jre_dir; fi
+    done
     return 0
 }
 
@@ -337,6 +364,7 @@ selection_label() {
     fi
 }
 
+# resolve: print sourceable PSEUDOCT_* lines for the selected installed release.
 op_resolve() {
     parse_selection "$@"
     [ "${#REST_ARGS[@]}" -eq 0 ] || fail_op 'resolve takes only --mcr and --mcr-root' "$EXIT_USAGE"
@@ -353,6 +381,8 @@ op_resolve() {
     exit 0
 }
 
+# headless REQUEST.mat RESULT.mat: check the request and result paths, select the release
+# (installed) or the MATLAB bootstrap (repository), and run one headless request.
 op_headless() {
     parse_selection "$@"
     [ "${#REST_ARGS[@]}" -eq 2 ] ||
@@ -468,6 +498,8 @@ MATLAB
     esac
 }
 
+# run validate|run: validate the job and, for run, submit the validated result. Remote
+# profiles need a terminal prompt or a --credential-handoff for the submit phase.
 op_run() {
     parse_selection "$@"
     set -- ${REST_ARGS[@]+"${REST_ARGS[@]}"}
@@ -563,7 +595,7 @@ op_run() {
         error_record "$EXIT_USAGE" 'MPRAGE-only profiles do not accept --umap.'
     fi
     if [ -n "$artifact_root" ]; then
-        case "$profile" in mlsc|mlsc-mprage-only|local|local-mprage-only) ;; *) error_record "$EXIT_USAGE" '--current-artifact-root requires a supported profile.' ;; esac
+        case "$profile" in mlsc|mlsc-mprage-only) ;; *) error_record "$EXIT_USAGE" '--current-artifact-root is a development-only override accepted only for the mlsc and mlsc-mprage-only profiles.' ;; esac
     fi
     if [ -n "$group_account" ] && [ "$backend" != mlsc ]; then
         error_record "$EXIT_USAGE" '--group-account is available only for MLSC profiles.'
@@ -805,6 +837,9 @@ if [ ! -x "$matlab_bin" ]; then
 fi
 fi
 
+# matlab_support MODE REQUEST RESULT SUMMARY ACTION (unused arguments empty): run the CLI bridge
+# in MODE from tmp_dir, with the installed standalone or the repository MATLAB. Output goes to
+# tmp_dir/matlab-diagnostics-support-MODE.log; the bridge status is returned.
 matlab_support() {
     support_mode=$1
     (
@@ -845,6 +880,10 @@ MATLAB
     )
 }
 
+# run_headless PHASE REQUEST RESULT: run one headless phase by re-invoking this launcher's
+# headless operation. Its stdout and stderr go through the presenter filter below, raw output
+# is captured in tmp_dir/matlab-diagnostics-PHASE.log, and the child status is returned
+# (69 if the transport itself fails).
 run_headless() {
     phase=$1
     request_path=$2
@@ -919,9 +958,9 @@ def strip_prompts(text):
     return candidate
 
 def sanitize_message(text):
-    # Keep this in lockstep with local_sanitize_message in the shared MATLAB
-    # formatter. Structured callers sanitize only message fields; preserve
-    # stage markers in free text from generic slash-path redaction.
+    # Mirrors pseudo_CT_sanitize_message (src/io/pseudo_CT_sanitize_message.m); keep the two
+    # in step. Structured callers sanitize only message fields; stage markers in free text
+    # are preserved through generic slash-path redaction.
     def short_hash(value):
         hash_value = 5381
         for character in value:
@@ -1049,7 +1088,7 @@ def write_line(channel, raw, diagnostics):
     if channel == "stdout" and BARE_COMPILED_MARKER.search(candidate) and \
             not candidate.lstrip().startswith("{") and \
             not table_row_stage(candidate.rstrip("\r\n")):
-        # Compiled-runner [N/8] and SPM batch markers are log-only: they are
+        # Compiled-runner and SPM batch [n/m] markers are log-only: they are
         # not orchestration stages and never appear in public output. Public
         # presenter table rows and JSON progress records are exempt.
         diagnostics.write("[stdout compiled marker] " + text)

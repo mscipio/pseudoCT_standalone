@@ -1,8 +1,17 @@
 function result = pseudo_CT_headless(request_path, result_path)
-%PSEUDO_CT_HEADLESS Execute one versioned MATLAB v5 headless request.
-%   VALIDATE is local-only. SUBMIT accepts a previously resolved job; remote
-%   profiles consume a secure, single-use credential handoff here, while local
-%   profiles submit without authentication or scheduler credentials.
+%PSEUDO_CT_HEADLESS Run one v2 headless request and write its result MAT file.
+%   RESULT = PSEUDO_CT_HEADLESS(REQUEST_PATH, RESULT_PATH)
+%   REQUEST_PATH is a v2 request MAT file (schema pseudoCT.headless-request/v2).
+%   RESULT is the v2 result struct (schema pseudoCT.headless-result/v2), which is
+%   also saved to RESULT_PATH as MAT-file version 6, variable 'result'.
+%   The action is 'validate' or 'submit'. VALIDATE is local-only. SUBMIT accepts a
+%   previously resolved job: remote profiles consume a secure, single-use
+%   credential handoff here, and local profiles submit without authentication.
+%   On failure, a pseudoct-headless-diagnostics.txt file is written beside
+%   RESULT_PATH, and RESULT carries status 'failed' with a fixed error_code.
+%   Side effects: reads REQUEST_PATH, writes RESULT_PATH and, on failure, the
+%   diagnostics file; runs the requested validate or submit action.
+%   Errors: pseudo_CT:HeadlessPaths when a path argument is missing or invalid.
 %   Minimum supported MATLAB: R2010b.
 
 result = local_empty_result();
@@ -154,6 +163,13 @@ local_optional_text(request.group_account, 'group_account');
 local_optional_text(request.credential_handoff, 'credential_handoff');
 local_optional_text(request.host_key_file, 'host_key_file');
 local_optional_text(request.current_artifact_root, 'current_artifact_root');
+% The artifact-root override is development-only: MLSC profiles only (same rule as the
+% CLI and the frontend). Local profiles reject it with the shared identifier.
+if ~isempty(request.current_artifact_root) && local_is_local_profile(request.profile)
+    error('run_pseudo_CT:InvalidMlscCurrentOverride', ['current_artifact_root is a ' ...
+        'development-only override accepted only for the mlsc and mlsc-mprage-only ' ...
+        'profiles; a local profile is incompatible.']);
+end
 if ~isstruct(request.output_config) || numel(request.output_config) ~= 1 || ...
         ~isstruct(request.options) || numel(request.options) ~= 1
     error('pseudo_CT:HeadlessRequest', 'Request output/options fields are invalid.');

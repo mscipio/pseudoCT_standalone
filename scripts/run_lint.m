@@ -1,4 +1,11 @@
 function run_lint()
+%RUN_LINT Developer-only MLINT pass over src/ and src/science/overrides.
+%   RUN_LINT() runs MLINT on every .m file under src/ (recursive) and prints
+%   each issue with its line and column. It writes no files.
+%   Developer tool only, not part of the offline R2010b test suite. It uses
+%   recursive dir('**') and the .folder field of dir output, which R2010b
+%   does not provide, so run it in a newer MATLAB release. It is not
+%   R2010b-compatible.
 
 root_dir = fileparts(fileparts(mfilename('fullpath')));
 

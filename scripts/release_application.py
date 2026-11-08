@@ -9,25 +9,28 @@ assembles one distribution directory from the verified build output only:
       bin/pseudoct                                  (the public launcher, copied)
       run_pseudo_CT.m                               (MATLAB frontend, copied)
       frontend/<allowlisted files>                  (MATLAB frontend, copied verbatim)
-      runtimes/<LABEL>/payload/mlsc_current_payload (compiled science worker)
-      runtimes/<LABEL>/payload/run_mlsc_current_payload.sh  (runner, copied)
-      runtimes/<LABEL>/payload/build_manifest.mat   (package-manifests output)
-      runtimes/<LABEL>/payload/resource_manifest.mat (package-manifests output)
+      help/index.html, help/style.css               (help documents from docs/help/;
+                                                     docs/help/assets/ is never shipped)
+      external/ssh2_v2_m1_r5/<SSH2_FILES>           (MATLAB SSH2 transport: wrappers,
+                                                     Ganymed JAR, licence notices)
+      runtimes/<LABEL>/payload/pseudoct_worker (compiled science worker)
+      runtimes/<LABEL>/payload/run_pseudoct_worker.sh  (runner, copied)
       runtimes/<LABEL>/standalone/pseudoct_standalone (compiled headless engine)
       resources/                                    (atlas and template files)
       manifest.json                                 (catalog copy read by bin/pseudoct)
       SHA256SUMS                                    (inventory, includes the manifest)
 
-No src/, external/ or repository science source is shipped; --verify refuses any
-file outside this allowlist. Publication is non-overwriting and takes an exclusive
-lock file in the output directory.
+No src/ tree, science source or other external/ content is shipped, except the frontend
+files copied from src/ (FRONTEND_FROM_SRC) and the SSH2 transport files (SSH2_FILES).
+--verify refuses any file outside this allowlist.
+Publication is non-overwriting and takes an exclusive lock file in the output directory.
 
-Environment (set before running; passed through to MATLAB and to package-manifests):
+Environment (set before running; passed through to MATLAB):
   TMPDIR, MATLAB_PREFDIR, MCR_CACHE_ROOT    keep these short (see docs/releases.md).
 
 Usage:
   release_application.py --version V [--releases R2010b,R2014b,...]
-      --matlab-root LABEL=PATH [--matlab-root LABEL=PATH ...] [--output DIR]
+      --matlab-root LABEL=PATH [--matlab-root LABEL=PATH ...] [--output DIR] [--dry-run]
   release_application.py --list-releases
   release_application.py --verify DIR
 
@@ -63,16 +66,13 @@ LOCK_NAME = '.pseudoct-release.lock'
 MAX_STAGE_PATH = 240
 
 # The two compiled executables of every release (build_application.m targets).
-BUILDER_TARGETS = ('payload/mlsc_current_payload', 'standalone/pseudoct_standalone')
+BUILDER_TARGETS = ('payload/pseudoct_worker', 'standalone/pseudoct_standalone')
 BUILDER_FIELDS = ('release', 'matlab_release', 'arch', 'compiler', 'source_commit',
                   'source_dirty', 'source_set_sha256', 'lock_sha256')
 BUILDER_SCRIPT = os.path.join(REPO_ROOT, 'scripts', 'build_application.m')
-RUNNER_REL = 'payload/run_mlsc_current_payload.sh'
-RUNNER_SOURCE = os.path.join(REPO_ROOT, 'scripts', 'run_mlsc_current_payload.sh')
-PACKAGE_MANIFEST_MODE = 'package-manifests'
-PACKAGE_MANIFESTS = ('build_manifest.mat', 'resource_manifest.mat')
-RUNTIME_FILES = BUILDER_TARGETS + (RUNNER_REL,) + tuple(
-    'payload/' + name for name in PACKAGE_MANIFESTS)
+RUNNER_REL = 'payload/run_pseudoct_worker.sh'
+RUNNER_SOURCE = os.path.join(REPO_ROOT, 'scripts', 'run_pseudoct_worker.sh')
+RUNTIME_FILES = BUILDER_TARGETS + (RUNNER_REL,)
 
 LAUNCHER_REL = 'bin/pseudoct'
 LAUNCHER_SOURCE = os.path.join(REPO_ROOT, 'bin', 'pseudoct')
@@ -91,7 +91,7 @@ FRONTEND_OWN = (
     'pseudo_CT_result_fields.py', 'pseudo_CT_select_file.m')
 FRONTEND_FROM_SRC = {
     'pseudo_CT_credentials.m': os.path.join(REPO_ROOT, 'src', 'api', 'pseudo_CT_credentials.m'),
-    'passwordEntryDialog.m': os.path.join(REPO_ROOT, 'src', 'gui', 'passwordEntryDialog.m'),
+    'pseudo_CT_password_entry_dialog.m': os.path.join(REPO_ROOT, 'src', 'gui', 'pseudo_CT_password_entry_dialog.m'),
     'passwordTools/LICENSE': os.path.join(REPO_ROOT, 'src', 'gui', 'passwordTools', 'LICENSE'),
     'passwordTools/strencrypt.m': os.path.join(REPO_ROOT, 'src', 'gui', 'passwordTools', 'strencrypt.m'),
     'passwordTools/uilogin.m': os.path.join(REPO_ROOT, 'src', 'gui', 'passwordTools', 'uilogin.m'),
@@ -99,16 +99,58 @@ FRONTEND_FROM_SRC = {
 }
 # Every shipped frontend file, relative to frontend/ in the package.
 FRONTEND_FILES = tuple(sorted(set(FRONTEND_OWN) | set(FRONTEND_FROM_SRC)))
+# Python bytecode left in frontend/ is not an inventory entry (see frontend_files_on_disk).
+# Nothing else is skipped.
+FRONTEND_BYTECODE_SUFFIXES = ('.pyc', '.pyo')
 
 
 def frontend_source(rel):
     """Repository file that supplies one shipped frontend file."""
     return FRONTEND_FROM_SRC.get(rel) or os.path.join(FRONTEND_DIR, *rel.split('/'))
-# Atlas and template files build_application.m copies from the atlas directory.
+
+
+# Help documents shipped under help/ in the package, copied from docs/help/. Exactly these
+# two files: the screenshots under docs/help/assets/ are never shipped.
+HELP_DIR = os.path.join(REPO_ROOT, 'docs', 'help')
+HELP_FILES = ('index.html', 'style.css')
+# Bundled MATLAB SSH2 transport (AMEND-1, D-A001). Paths are relative to SSH2_SOURCE_ROOT and
+# are shipped at the same relative path under external/ssh2_v2_m1_r5/ in the package, which is
+# where pseudo_CT_dependency_paths and setup_pseudo_CT_paths look. Shipped: every top-level
+# MATLAB wrapper (not examples/), the Ganymed JAR that ssh2_setup.m adds to the Java path, and
+# the two licence notices. Not shipped: examples, javadoc, Java sources, HISTORY, README, FAQ.
+SSH2_ROOT_REL = 'external/ssh2_v2_m1_r5'
+SSH2_SOURCE_ROOT = os.path.join(REPO_ROOT, *SSH2_ROOT_REL.split('/'))
+SSH2_FILES = (
+    'license.txt',
+    'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar',
+    'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1-source/LICENSE.txt',
+    'ssh2_v2_m1_r5/scp.m',
+    'ssh2_v2_m1_r5/scp_get.m',
+    'ssh2_v2_m1_r5/scp_put.m',
+    'ssh2_v2_m1_r5/scp_simple_get.m',
+    'ssh2_v2_m1_r5/scp_simple_put.m',
+    'ssh2_v2_m1_r5/sftp.m',
+    'ssh2_v2_m1_r5/sftp_get.m',
+    'ssh2_v2_m1_r5/sftp_put.m',
+    'ssh2_v2_m1_r5/sftp_simple_get.m',
+    'ssh2_v2_m1_r5/sftp_simple_put.m',
+    'ssh2_v2_m1_r5/ssh2.m',
+    'ssh2_v2_m1_r5/ssh2_close.m',
+    'ssh2_v2_m1_r5/ssh2_command.m',
+    'ssh2_v2_m1_r5/ssh2_command_response.m',
+    'ssh2_v2_m1_r5/ssh2_config.m',
+    'ssh2_v2_m1_r5/ssh2_config_publickey.m',
+    'ssh2_v2_m1_r5/ssh2_main.m',
+    'ssh2_v2_m1_r5/ssh2_setup.m',
+    'ssh2_v2_m1_r5/ssh2_simple_command.m',
+)
+# Atlas and template files build_application.m copies from the atlas directory, and
+# SPM's DICOM dictionary copied unchanged from the SPM root.
 RESOURCE_REQUIRED = (
     'ch2.nii', 'new_segment_batch.mat', 'dartel_existing_template_batch.mat',
     'create_inverse_warped_batch.mat', 'Template_1.nii', 'Template_2.nii',
-    'Template_3.nii', 'Template_4.nii', 'Template_5.nii', 'Template_6.nii', 'TPM.nii')
+    'Template_3.nii', 'Template_4.nii', 'Template_5.nii', 'Template_6.nii', 'TPM.nii',
+    'spm_dicom_dict.mat')
 RESOURCE_ATLAS_PATTERN = '*Atlas*.nii'
 FORBIDDEN_PARTS = frozenset(['src', 'external', 'tests', 'scripts', 'config', 'compiled',
                              'build', 'cfggen', '.git', '.partial', 'app'])
@@ -233,19 +275,28 @@ def check_matlab_root(entry, root):
 
 
 def frontend_files_on_disk():
-    """Relative paths of every regular file under the repository frontend/ directory."""
+    """Relative paths of the files under frontend/ that the allowlist applies to.
+
+    Python bytecode (*.pyc, *.pyo, including those in __pycache__/) is not frontend
+    content: it is generated, git ignores it, and it is never shipped. Only that bytecode
+    is skipped. Every other file counts, even one inside __pycache__/, so an unexpected
+    real file still fails check_sources."""
     found = set()
     for dirpath, _dirnames, filenames in os.walk(FRONTEND_DIR):
         for name in filenames:
+            if name.endswith(FRONTEND_BYTECODE_SUFFIXES):
+                continue
             rel = os.path.relpath(os.path.join(dirpath, name), FRONTEND_DIR)
             found.add(rel.replace(os.sep, '/'))
     return found
 
 
 def check_sources():
-    """Launcher, runner, entry point and the exact frontend allowlist must exist."""
+    """Raise unless the launcher, runner, entry point, build script and copied sources exist
+    and frontend/ holds exactly the FRONTEND_OWN files."""
     for path in (LAUNCHER_SOURCE, RUNNER_SOURCE, FRONTEND_ENTRY_SOURCE, BUILDER_SCRIPT,
-                 *FRONTEND_FROM_SRC.values()):
+                 *FRONTEND_FROM_SRC.values(), *[os.path.join(HELP_DIR, name) for name in HELP_FILES],
+                 *[os.path.join(SSH2_SOURCE_ROOT, *rel.split('/')) for rel in SSH2_FILES]):
         if not os.path.isfile(path):
             raise ReleaseError('required source missing from repository: %s'
                                % os.path.relpath(path, REPO_ROOT))
@@ -345,44 +396,6 @@ def copy_file(src, dst, mode):
     os.chmod(dst, mode)
 
 
-def run_package_manifests(entry, mcr_root, pkg, stage_dir):
-    """Run runtimes/<LABEL>/standalone/pseudoct_standalone in package-manifests mode under
-    that release's MATLAB Runtime. It writes the two manifests into the payload directory;
-    they must not encode the staging path."""
-    label = entry['label']
-    arch = entry['architecture']
-    rel_dir = os.path.join(pkg, 'runtimes', label)
-    payload = os.path.join(rel_dir, 'payload')
-    exe = os.path.join(rel_dir, 'standalone', 'pseudoct_standalone')
-    resources = os.path.join(pkg, 'resources')
-    library_path = ':'.join(os.path.join(mcr_root, *part.split('/')) for part in (
-        'runtime/' + arch, 'bin/' + arch, 'sys/os/' + arch))
-    env = dict(os.environ)
-    env['LD_LIBRARY_PATH'] = library_path
-    env['PSEUDOCT_RUNTIME_RELEASE'] = label
-    env['PSEUDOCT_RUNTIME_MCR_VERSION'] = entry['mcr_version']
-    env['PSEUDOCT_INSTALL_ROOT'] = pkg
-    argv = [exe, PACKAGE_MANIFEST_MODE, payload, resources, payload]
-    try:
-        proc = subprocess.run(argv, env=env, cwd=stage_dir,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    except OSError as exc:
-        raise ReleaseError('%s: cannot start package-manifests: %s' % (label, exc))
-    if proc.returncode != 0:
-        raise ReleaseError('%s: package-manifests failed (exit %d); last output:\n%s'
-                           % (label, proc.returncode,
-                              tail(proc.stdout.decode('utf-8', 'replace'))))
-    staging = stage_dir.encode('utf-8')
-    for name in PACKAGE_MANIFESTS:
-        path = os.path.join(payload, name)
-        if os.path.islink(path) or not os.path.isfile(path) or os.path.getsize(path) == 0:
-            raise ReleaseError('%s: package-manifests did not write a non-empty %s'
-                               % (label, name))
-        with open(path, 'rb') as handle:
-            if staging in handle.read():
-                raise ReleaseError('%s: %s encodes the staging directory' % (label, name))
-
-
 def acquire_lock(output_dir):
     """Exclusive lock in the output directory; a held or stale lock is never removed."""
     path = os.path.join(output_dir, LOCK_NAME)
@@ -397,6 +410,7 @@ def acquire_lock(output_dir):
 
 
 def assemble(version, selected, roots, default, catalog_entries, output_dir):
+    """Build each selected release, assemble and verify pseudoct-<version>/, then publish it."""
     dest = os.path.join(output_dir, 'pseudoct-' + version)
     os.makedirs(output_dir, exist_ok=True)
     # Short staging directory inside the output directory; removed on exit.
@@ -461,8 +475,11 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
         copy_file(FRONTEND_ENTRY_SOURCE, os.path.join(pkg, FRONTEND_ENTRY), 0o644)
         for rel in FRONTEND_FILES:
             copy_file(frontend_source(rel), os.path.join(pkg, 'frontend', *rel.split('/')), 0o644)
-        for entry in selected:
-            run_package_manifests(entry, roots[entry['label']], pkg, stage_dir)
+        for name in HELP_FILES:
+            copy_file(os.path.join(HELP_DIR, name), os.path.join(pkg, 'help', name), 0o644)
+        for rel in SSH2_FILES:
+            copy_file(os.path.join(SSH2_SOURCE_ROOT, *rel.split('/')),
+                      os.path.join(pkg, *SSH2_ROOT_REL.split('/'), *rel.split('/')), 0o644)
 
         files, _dirs, tree_problems = walk_tree(pkg)
         if tree_problems:
@@ -514,8 +531,10 @@ def print_plan(version, selected, roots, output_dir):
                                   ' '.join(MATLAB_FLAGS)))
         print('PLAN %s build: build_application(%s, Mode build, OutputRoot <staging>/b)'
               % (label, label))
-    print('PLAN ship: %s, %s, frontend/ (%d files), resources/, manifest.json, SHA256SUMS'
-          % (LAUNCHER_REL, FRONTEND_ENTRY, len(FRONTEND_FILES)))
+    print('PLAN ship: %s, %s, frontend/ (%d files), help/ (%d files), %s/ (%d files), resources/, '
+          'manifest.json, SHA256SUMS'
+          % (LAUNCHER_REL, FRONTEND_ENTRY, len(FRONTEND_FILES), len(HELP_FILES),
+             SSH2_ROOT_REL, len(SSH2_FILES)))
     print('PLAN publish: %s (lock %s)' % (dest, os.path.join(output_dir, LOCK_NAME)))
     print('DRY_RUN_PASS (no MATLAB invoked, nothing written)')
 
@@ -580,11 +599,15 @@ def forbidden(rel):
 
 
 def path_allowed(rel, labels):
-    """The shipped allowlist: launcher, entry point, frontend files, the release runtime
-    files of the listed labels, and the atlas resources."""
+    """The shipped allowlist: launcher, entry point, frontend files, help documents, the
+    release runtime files of the listed labels, and the atlas resources."""
     if rel in (LAUNCHER_REL, FRONTEND_ENTRY):
         return True
     if rel.startswith('frontend/') and rel[len('frontend/'):] in FRONTEND_FILES:
+        return True
+    if rel.startswith('help/') and rel[len('help/'):] in HELP_FILES:
+        return True
+    if rel.startswith(SSH2_ROOT_REL + '/') and rel[len(SSH2_ROOT_REL) + 1:] in SSH2_FILES:
         return True
     parts = rel.split('/')
     if len(parts) == 2 and parts[0] == 'resources':
@@ -597,6 +620,8 @@ def path_allowed(rel, labels):
 def required_paths(labels):
     paths = [LAUNCHER_REL, FRONTEND_ENTRY]
     paths += ['frontend/' + rel for rel in FRONTEND_FILES]
+    paths += ['help/' + name for name in HELP_FILES]
+    paths += [SSH2_ROOT_REL + '/' + rel for rel in SSH2_FILES]
     for label in sorted(labels):
         paths += ['runtimes/%s/%s' % (label, rel) for rel in RUNTIME_FILES]
     paths += ['resources/' + name for name in RESOURCE_REQUIRED]
@@ -748,7 +773,7 @@ def _main(argv):
         return 0
 
     if args.version is None:
-        raise UsageError('--version is required, for example --version 1.0.0')
+        raise UsageError('--version is required, for example --version <VERSION>')
     if not VERSION_RE.fullmatch(args.version):
         raise UsageError('--version must match ^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$')
     default, ordered, by_label = load_catalog(CATALOG_PATH)
@@ -770,6 +795,7 @@ def _main(argv):
 
 
 def main(argv=None):
+    """Run the command line (argv defaults to sys.argv[1:]) and return the exit status."""
     try:
         return _main(sys.argv[1:] if argv is None else argv)
     except UsageError as exc:

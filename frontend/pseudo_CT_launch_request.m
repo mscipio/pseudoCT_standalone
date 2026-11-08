@@ -126,6 +126,13 @@ end
 if ~any(strcmp(req.profile, {'local'; 'local-mprage-only'; 'mlsc'; 'mlsc-mprage-only'}))
     error('pseudo_CT:InvalidProfile', 'Unknown profile: %s', req.profile);
 end
+% The artifact-root override is development-only and accepted for MLSC profiles only
+% (same rule as bin/pseudoct and pseudo_CT_apply_mlsc_current_overrides).
+if ~isempty(req.artifact_root) && ~any(strcmp(req.profile, {'mlsc'; 'mlsc-mprage-only'}))
+    error('run_pseudo_CT:InvalidMlscCurrentOverride', ['CurrentArtifactRoot is a ' ...
+        'development-only override accepted only for the mlsc and mlsc-mprage-only ' ...
+        'profiles; profile ''%s'' is incompatible.'], req.profile);
+end
 if ~isempty(req.umap) && numel(req.umap) ~= numel(req.mprage)
     error('pseudo_CT:OrchestrationInput', ...
         'UMAP paths must be positionally paired with MPRAGE paths.');
@@ -147,24 +154,44 @@ req.fingerprint = local_fingerprint(req);
 end
 
 function launcher = local_resolve_launcher(launcher, root_dir)
-%LOCAL_RESOLVE_LAUNCHER Explicit argument, then PSEUDOCT_LAUNCHER, then the
-%   installed bin/pseudoct beside run_pseudo_CT.m. A source checkout (no
-%   runtimes/ folder) has no compiled launcher and must name one explicitly.
-if isempty(launcher)
-    env_value = strtrim(getenv('PSEUDOCT_LAUNCHER'));
-    if ~isempty(env_value)
-        launcher = local_abs(env_value);
-    elseif exist(fullfile(root_dir, 'runtimes'), 'dir') == 7
-        launcher = fullfile(root_dir, 'bin', 'pseudoct');
-    else
-        error('pseudo_CT:FrontendLauncher', ...
-            ['No installed distribution beside run_pseudo_CT.m. Pass Launcher, ' ...
-            'or set PSEUDOCT_LAUNCHER, to the compiled bin/pseudoct.']);
+%LOCAL_RESOLVE_LAUNCHER The launcher for this root. An installed distribution (the
+%   tree without src/) always runs the bin/pseudoct beside run_pseudo_CT.m: it never
+%   reads PSEUDOCT_LAUNCHER and never falls back to source. An explicit Launcher is
+%   accepted there only when it names that same bundled file (the GUI passes it);
+%   any other value is refused with run_pseudo_CT:LauncherOverrideDevelopmentOnly.
+%   In a source checkout the explicit Launcher, then PSEUDOCT_LAUNCHER, are the
+%   development and test hooks.
+bundled = fullfile(root_dir, 'bin', 'pseudoct');
+if local_is_installed(root_dir)
+    if exist(fullfile(root_dir, 'runtimes'), 'dir') ~= 7
+        error('pseudo_CT:FrontendLauncher', ['This pseudoCT installation is ' ...
+            'incomplete: runtimes/ is missing beside run_pseudo_CT.m. Reinstall ' ...
+            'the pseudoCT distribution.']);
     end
+    if ~isempty(launcher) && ~strcmp(launcher, bundled)
+        error('run_pseudo_CT:LauncherOverrideDevelopmentOnly', ['The Launcher ' ...
+            'argument is a development and test override for source checkouts only. ' ...
+            'An installed distribution always runs its bundled bin/pseudoct; remove ' ...
+            'the Launcher argument.']);
+    end
+    launcher = bundled;
+elseif isempty(launcher)
+    env_value = strtrim(getenv('PSEUDOCT_LAUNCHER'));
+    if isempty(env_value)
+        error('pseudo_CT:FrontendLauncher', ['No launcher: this is a source ' ...
+            'checkout, which is for development only. Pass Launcher, or set ' ...
+            'PSEUDOCT_LAUNCHER, to a compiled bin/pseudoct.']);
+    end
+    launcher = local_abs(env_value);
 end
 if exist(launcher, 'file') ~= 2
     error('pseudo_CT:FrontendLauncher', 'The launcher is unavailable: %s', launcher);
 end
+end
+
+function flag = local_is_installed(root_dir)
+%LOCAL_IS_INSTALLED True for the packaged layout: no src/ tree beside run_pseudo_CT.m.
+flag = exist(fullfile(root_dir, 'src'), 'dir') ~= 7;
 end
 
 function argv = local_argv(req, config_path)

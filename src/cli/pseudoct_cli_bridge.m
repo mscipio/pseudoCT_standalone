@@ -1,9 +1,25 @@
 function status = pseudoct_cli_bridge(mode)
-%PSEUDOCT_CLI_BRIDGE Prepare and verify CLI requests using MATLAB v5 MAT.
-%   All request/result paths and non-secret values arrive through environment
-%   variables or a line-oriented input file. Passwords are never arguments,
-%   environment values, JSON, request MAT files, or output records.
-%   Minimum supported MATLAB: R2010b.
+%PSEUDOCT_CLI_BRIDGE Support operations for the CLI: requests, result checks and credentials.
+%   STATUS = PSEUDOCT_CLI_BRIDGE(MODE) is called by the standalone dispatcher
+%   (pseudoct_standalone) and by bin/pseudoct. MODE is one of:
+%     'prepare_validate'  reads the CLI input (PSEUDOCT_CLI_INPUT) and writes a
+%                         validate request MAT (PSEUDOCT_CLI_REQUEST).
+%     'prepare_submit'    reads the input and the validation result
+%                         (PSEUDOCT_CLI_RESULT; it must have status 'ready') and
+%                         writes a submit request MAT with the resolved job and
+%                         the credential handoff path (PSEUDOCT_CLI_HANDOFF).
+%     'verify_result'     checks the result MAT (PSEUDOCT_CLI_RESULT, against the
+%                         invocation, profile and action in the environment) and
+%                         writes a summary text file (PSEUDOCT_CLI_SUMMARY).
+%     'store_credentials' stores the credentials from the secret file
+%                         (PSEUDOCT_CLI_SECRET_FILE) into a single-use handoff
+%                         (PSEUDOCT_CLI_HANDOFF_OUTPUT).
+%   Paths and non-secret values come from environment variables or the
+%   line-oriented input file. Passwords are never arguments, environment values,
+%   JSON, request MAT files or output records.
+%   STATUS is 0 on success and 70 on failure. Failures print a fixed message to
+%   stderr without exception text.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11).
 
 status = 70;
 try

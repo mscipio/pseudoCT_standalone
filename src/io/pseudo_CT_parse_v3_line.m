@@ -1,5 +1,12 @@
 function [stage, status, kind] = pseudo_CT_parse_v3_line(message)
-%PSEUDO_CT_PARSE_V3_LINE Explicit messages from current_compute, not lifecycle.
+%PSEUDO_CT_PARSE_V3_LINE Map one explicit current-compute message to a stage and status.
+%   [STAGE, STATUS, KIND] = PSEUDO_CT_PARSE_V3_LINE(MESSAGE)
+%   MESSAGE is one text line printed by the current compute phase. STAGE is the
+%   stage number (5 to 8), or 0 when the message is not recognized. STATUS is
+%   'START', 'DONE' or 'INFO', or '' when unrecognized. KIND is 'explicit'.
+%   Recognizes the four stage start and done messages and the inverse-warp and
+%   reslice INFO messages. Lifecycle log lines are not matched.
+%   Minimum supported MATLAB: R2010b.
 stage = 0; status = ''; kind = 'explicit';
 starts = {'Aligning MPRAGE and creating subject mask.', 5; ...
     'Running SPM New Segment.', 6; 'Registering atlases with DARTEL.', 7; ...

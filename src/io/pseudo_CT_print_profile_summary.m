@@ -1,5 +1,19 @@
 function pseudo_CT_print_profile_summary(profile_name, config, processing_dirs, output_context, subject_options, run_evidence)
-%PSEUDO_CT_PRINT_PROFILE_SUMMARY Print and save the selected configuration.
+%PSEUDO_CT_PRINT_PROFILE_SUMMARY Save the selected configuration summary.
+%   PSEUDO_CT_PRINT_PROFILE_SUMMARY(PROFILE_NAME, CONFIG, PROCESSING_DIRS,
+%   OUTPUT_CONTEXT, SUBJECT_OPTIONS, RUN_EVIDENCE) writes
+%   pseudo_CT_profile_summary.txt into each folder in PROCESSING_DIRS (char or
+%   cell). Both local and MLSC profiles use it; it reports configured values
+%   and does not confirm execution by itself.
+%   PROFILE_NAME is the canonical profile ID, CONFIG the loaded profile struct,
+%   OUTPUT_CONTEXT the logging context for pseudo_CT_output (optional),
+%   SUBJECT_OPTIONS and RUN_EVIDENCE optional structs (default empty).
+%   Local profiles report the PCA backend resolved by pseudo_CT_pca_resolver.
+%   MLSC profiles report the configured PCA order and mark execution as
+%   confirmed only when RUN_EVIDENCE.terminal is true.
+%   Side effects: writes the summary text file and logs its path or a warning
+%   through pseudo_CT_output. Missing folders are skipped with a warning.
+%   Minimum supported MATLAB: R2010b.
 
 if nargin < 5 || ~isstruct(subject_options)
     subject_options = struct();
@@ -17,7 +31,7 @@ if strcmp(config.mode, 'local')
     end
 elseif isfield(config, 'pca_order') && iscell(config.pca_order) && ...
         ~isempty(config.pca_order)
-    % MLSC owns its payload PCA order (callable-first).
+    % MLSC reports the configured PCA order from the profile (callable-first).
     pca_backend = local_join_names(config.pca_order);
 end
 
@@ -245,9 +259,9 @@ end
 end
 
 function value = local_artifact_root(config)
-%LOCAL_ARTIFACT_ROOT Resolved artifact root for summary display (H).
-%   The T007 build layout keeps manifests at the artifact root, so the root
-%   is the directory containing the build manifest. R2010b only.
+%LOCAL_ARTIFACT_ROOT Artifact root for summary display.
+%   The artifact root is the folder that contains the build manifest. Returns
+%   '' when the profile has no build manifest path.
 value = '';
 try
     if isstruct(config) && isfield(config, 'current') && ...

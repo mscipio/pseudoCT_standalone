@@ -68,6 +68,9 @@ else
             'Validation requires a canonical profile key.');
     end
     config = pseudo_CT_load_profile(profile_name);
+    % A source checkout cannot validate an application profile without an
+    % explicit development artifact root (no legacy tree is resolved).
+    pseudo_CT_require_application_layout(artifact_root);
     % Headless/CLI validation binds the installed Runtime (env or default);
     % a no-op in source mode.
     config = pseudo_CT_runtime_select(config);
@@ -519,29 +522,60 @@ identity.build_manifest_path = '';
 identity.build_manifest_sha256 = '';
 identity.resource_manifest_path = '';
 identity.resource_manifest_sha256 = '';
+identity.payload_path = '';
+identity.payload_sha256 = '';
+identity.standalone_path = '';
+identity.standalone_sha256 = '';
 if isfield(config, 'current') && isstruct(config.current)
     fields = {'runner'; 'build_manifest'; 'resource_manifest'};
     for ii = 1:length(fields)
-        if isfield(config.current, fields{ii})
-            path_name = config.current.(fields{ii});
-            if ~ischar(path_name) || exist(path_name, 'file') ~= 2
-                error('pseudo_CT:OrchestrationArtifact', ...
-                    'A validated current artifact is unavailable.');
-            end
-            hash = local_file_sha256(path_name);
-            if strcmp(fields{ii}, 'runner')
-                identity.runner_path = path_name;
-                identity.runner_sha256 = hash;
-            elseif strcmp(fields{ii}, 'build_manifest')
-                identity.build_manifest_path = path_name;
-                identity.build_manifest_sha256 = hash;
-            else
-                identity.resource_manifest_path = path_name;
-                identity.resource_manifest_sha256 = hash;
-            end
+        % Installed direct mode carries empty manifest paths; they are not hashed.
+        if ~isfield(config.current, fields{ii}) || ...
+                (ischar(config.current.(fields{ii})) && isempty(config.current.(fields{ii})))
+            continue;
+        end
+        path_name = config.current.(fields{ii});
+        if ~ischar(path_name) || exist(path_name, 'file') ~= 2
+            error('pseudo_CT:OrchestrationArtifact', ...
+                'A validated current artifact is unavailable.');
+        end
+        hash = local_file_sha256(path_name);
+        if strcmp(fields{ii}, 'runner')
+            identity.runner_path = path_name;
+            identity.runner_sha256 = hash;
+        elseif strcmp(fields{ii}, 'build_manifest')
+            identity.build_manifest_path = path_name;
+            identity.build_manifest_sha256 = hash;
+        else
+            identity.resource_manifest_path = path_name;
+            identity.resource_manifest_sha256 = hash;
         end
     end
+    direct = isfield(config.current, 'build_manifest') && ...
+        isfield(config.current, 'resource_manifest') && ...
+        ischar(config.current.build_manifest) && isempty(config.current.build_manifest) && ...
+        ischar(config.current.resource_manifest) && isempty(config.current.resource_manifest);
+    if direct
+        % Direct mode binds the executables the manifests used to attest: the
+        % worker beside the runner and the standalone of the same release.
+        runner_dir = fileparts(config.current.runner);
+        payload_path = fullfile(runner_dir, 'pseudoct_worker');
+        standalone_path = fullfile(fileparts(runner_dir), 'standalone', ...
+            'pseudoct_standalone');
+        identity.payload_path = payload_path;
+        identity.payload_sha256 = local_direct_sha256(payload_path);
+        identity.standalone_path = standalone_path;
+        identity.standalone_sha256 = local_direct_sha256(standalone_path);
+    end
 end
+end
+
+function hash = local_direct_sha256(path_name)
+if exist(path_name, 'file') ~= 2
+    error('pseudo_CT:OrchestrationArtifact', ...
+        'A validated current artifact is unavailable.');
+end
+hash = local_file_sha256(path_name);
 end
 
 function hash = local_file_sha256(path_name)

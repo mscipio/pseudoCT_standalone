@@ -1,61 +1,49 @@
 function varargout = mlsc_current_validate(action, varargin)
-%MLSC_CURRENT_VALIDATE Pinned current artifact contract (T004, T014).
-%   The mlsc-current schema prefixes below identify compiled artifact
-%   contracts, not selectable profile keys.
-%   Implements the T014 pinned MCR_ROOT correction, which is authoritative
-%   over the stale T004 catalog/resolver wording. There is no generic
-%   catalog, no dynamic discovery, no MCR 7.11 fallback, no workstation
-%   inference, no latest/current-label authority, and no submitting-MATLAB
-%   substitute. The only accepted MCR_ROOT is the pinned version-specific
-%   tree /usr/pubsw/common/matlab/7.11 (R2010b, containing MCR 7.14; never
-%   the current symlink). The
-%   generated launcher owns the Runtime environment; this file never
-%   constructs a global LD_LIBRARY_PATH.
+%MLSC_CURRENT_VALIDATE Validate the pinned compiled-artifact contract for MLSC and local runs.
+%   VARARGOUT = MLSC_CURRENT_VALIDATE(ACTION, VARARGIN) implements the checks
+%   for the compiled current artifact: runner, manifests and runtime identity.
+%   The "mlsc-current" prefixes in schemas name compiled artifact contracts,
+%   not profile keys.
 %
-%   Actions (R2010b-compatible, deterministic offline, no live SSH/Slurm):
+%   Runtime pin: the only accepted MCR_ROOT is the version-specific MATLAB 7.11
+%   installation /usr/pubsw/common/matlab/7.11 (R2010b). It must contain the
+%   MCR 7.14 runtime library. The path is compared as a string, so the current
+%   symlink is rejected. The generated launcher owns the Runtime environment;
+%   this file never sets LD_LIBRARY_PATH globally. Installed distributions take
+%   the selected release identity from config/releases.json.
+%
+%   Actions:
 %     PINNED = MLSC_CURRENT_VALIDATE('pinned_mcr_root')
-%     MLSC_CURRENT_VALIDATE('validate_contract', CONFIG)
-%       Fail-closed pre-submission contract: missing runner/MCR_ROOT/
-%       manifests, malformed MCR_ROOT structure, validated actual MCR_ROOT
-%       identity from the exact MATLAB 7.11 install root containing MCR 7.14,
-%       identity/arch/release/
-%       generation/update mismatch, missing outputs contract. No native
-%       certification check remains in this active dev path (T009
-%       remediation): native fields and simplified manifests omitting
-%       them are both accepted; the payload enforces actual file existence.
-%     MLSC_CURRENT_VALIDATE('validate_for_execution', CONFIG)
-%       Same contract plus execution-time content, runtime, output, and
-%       copy-back checks.
-%     MLSC_CURRENT_VALIDATE('structure', MCR_ROOT)
-%       Malformed-structure guard for one MCR_ROOT path (dir plus
-%       runtime/glnxa64). Used by contract and directly by offline fixtures.
+%       Returns the pinned MATLAB 7.11 root.
 %     INFO = MLSC_CURRENT_VALIDATE('expected_actual')
-%       Returns the pinned MATLAB root/MCR 7.14 identity (arch glnxa64).
-%       Callers must not treat these constants as proof without the
-%       root/library check in local_validate_build.
+%       Returns the expected MCR identity (version 7.14, arch glnxa64). These
+%       constants are not proof by themselves; use 'actual_identity'.
 %     INFO = MLSC_CURRENT_VALIDATE('actual_identity', MCR_ROOT)
-%       Returns the disk-validated actual MCR_ROOT identity after proving
-%       the exact MATLAB 7.11 root and architecture-specific MCR 7.14 library.
+%       Validates MCR_ROOT on disk (the 7.11 root and the glnxa64 MCR 7.14
+%       library) and returns the identity.
+%     MLSC_CURRENT_VALIDATE('structure', MCR_ROOT)
+%       Checks the MCR_ROOT directory layout (runtime/glnxa64).
+%     MLSC_CURRENT_VALIDATE('validate_contract', CONFIG)
+%       Pre-submission check of config.current: runner, pinned MCR_ROOT,
+%       manifests and output contract. Source mode requires both manifest paths
+%       and validates the build and resource manifests (schema, version and
+%       identity). Installed direct mode has both manifest paths empty; it
+%       checks the runner, the pseudoct_worker beside it and the selected
+%       runtime identity, and reads no manifest.
+%     MLSC_CURRENT_VALIDATE('validate_for_execution', CONFIG)
+%       The contract check plus execution-time checks: output verification,
+%       content identity and copy-back verification.
+%     Helper actions used by the backends: 'resource_atlas_dir' (canonical atlas
+%       folder of one resource manifest), 'sha256_file', 'output_filename_map',
+%       'verify_output_verification', 'verify_copyback_identity' and
+%       'verify_att_map_semantic'.
 %
-%   Build manifest (.mat, scalar struct BUILD):
-%     schema 'pseudo-CT.mlsc-current-build/v1', manifest_version 1,
-%     runner (historic build path; relocated installs bind by basename
-%     plus recomputed SHA-256, provenance preserved separately),
-%     mcr_root (pinned MCR, separate from MATLAB matlabroot), compiler
-%     release (R-prefixed), update_minimum,
-%     mcr_version [major minor], arch, generation, runner_checksum
-%     (SHA-256), source_commit (base HEAD),
-%     source_provenance_fingerprint (SHA-256 over commit plus
-%     tracked/untracked lists), required_outputs (canonical 3).
-%   Resource manifest (.mat, scalar struct RESOURCES):
-%     schema 'pseudo-CT.mlsc-current-resources/v1', manifest_version 1
-%     (T003 authority; atlas/resource existence validated by payload).
-%     Contract checks existence/schema/version only; native fields
-%     are ignored when present and required of nothing. Detailed
-%     atlas/resource existence checks stay in mlsc_current_payload
-%     (no duplicated science).
-%
-%   Minimum supported MATLAB: R2010b.
+%   The resource manifest is checked for existence and scalar schema/version
+%   only; native fields are ignored when present. The worker checks the
+%   atlas and resource files themselves.
+%   Side effects: reads manifests, the runner and the MCR tree; writes nothing.
+%   Errors use the pseudo_CT:MLSCCurrent* identifiers.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11).
 
 if nargin < 1 || ~ischar(action) || size(action, 1) ~= 1
     error('pseudo_CT:MLSCCurrentContract', ...
@@ -400,7 +388,14 @@ for ii = 1:length(required)
             'The current artifact block is missing %s.', required{ii});
     end
 end
-text_fields = {'runner'; 'mcr_root'; 'build_manifest'; 'resource_manifest'};
+% Installed direct mode (empty manifest paths) checks only the runner, the
+% worker executable and the selected Runtime identity.
+direct = local_direct_installed(current);
+if direct
+    text_fields = {'runner'; 'mcr_root'};
+else
+    text_fields = {'runner'; 'mcr_root'; 'build_manifest'; 'resource_manifest'};
+end
 for ii = 1:length(text_fields)
     value = current.(text_fields{ii});
     if ~ischar(value) || size(value, 1) ~= 1 || isempty(strtrim(value)) || ...
@@ -409,9 +404,9 @@ for ii = 1:length(text_fields)
             'The current artifact %s is invalid.', text_fields{ii});
     end
 end
-% Pinned exactness: explicit MATLAB 7.11 installation root only. Rejects current symlink,
-% MCR 7.11, latest/current labels, workstation inference, and any other
-% substituted root by string inequality (no dynamic discovery).
+% Pinned exactness: the explicit MATLAB 7.11 installation root only. The
+% current symlink, latest/current labels, workstation inference and any other
+% root are rejected by string inequality (no dynamic discovery).
 pinned = local_pinned_mcr_root();
 if ~strcmp(local_strip_sep(current.mcr_root), pinned)
     error('pseudo_CT:MLSCCurrentMCR', ...
@@ -422,6 +417,16 @@ if exist(strtrim(current.runner), 'file') ~= 2
         'The current runner is unavailable.');
 end
 local_validate_structure(current.mcr_root);
+if direct
+    local_actual_runtime_identity(strtrim(current.mcr_root));
+    payload_path = fullfile(fileparts(strtrim(current.runner)), ...
+        'pseudoct_worker');
+    if exist(payload_path, 'file') ~= 2
+        error('pseudo_CT:MLSCCurrentRunner', ...
+            'The current payload executable is unavailable.');
+    end
+    return;
+end
 if exist(strtrim(current.build_manifest), 'file') ~= 2
     error('pseudo_CT:MLSCCurrentManifest', ...
         'The current build manifest is unavailable.');
@@ -433,14 +438,23 @@ end
 build = local_load_scalar(current.build_manifest, 'build', ...
     'pseudo-CT.mlsc-current-build/v1');
 local_validate_build(build, current);
-% Resource manifest: existence plus scalar schema/version only. T009
-% remediation removed every native certification check (pending marker,
-% platform/arch, native inventory, build/resource arch compatibility): manifests
-% carrying native fields and simplified manifests omitting them are
-% both accepted here. The payload enforces actual file existence; output
-% and copy-back verification below are unchanged.
+% Resource manifest: existence plus scalar schema/version only. Native
+% certification fields (pending marker, platform/arch, native inventory,
+% build/resource arch compatibility) are not checked: manifests with or without
+% them are both accepted here. The worker enforces actual file existence.
 local_load_scalar(current.resource_manifest, 'resources', ...
     'pseudo-CT.mlsc-current-resources/v1');
+end
+
+function flag = local_direct_installed(current)
+%LOCAL_DIRECT_INSTALLED True for installed direct mode: no manifest paths.
+flag = false;
+if ~isfield(current, 'build_manifest') || ~isfield(current, 'resource_manifest')
+    return;
+end
+flag = ischar(current.build_manifest) && isempty(current.build_manifest) && ...
+    ischar(current.resource_manifest) && isempty(current.resource_manifest) && ...
+    local_installed_runtime();
 end
 
 function local_validate_structure(mcr_root)
@@ -525,7 +539,7 @@ end
 % architecture-specific runtime library, and separate MCR version 7.14
 % metadata (MCR 7.14 does not ship the newer
 % VersionInfo.xml metadata). The compiler release is separate: an R2010b
-% MATLAB install can produce a payload deployed against MCR 7.14.
+% MATLAB install can produce a worker deployed against MCR 7.14.
 actual = local_actual_runtime_identity(strtrim(current.mcr_root));
 if ~ischar(build.release) || size(build.release, 1) ~= 1 || ...
         isempty(strtrim(build.release))

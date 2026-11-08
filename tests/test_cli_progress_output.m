@@ -55,7 +55,7 @@ run_source = local_read(fullfile(root_dir, 'src', 'orchestration', ...
 helper_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_output.m'));
 profile_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_print_profile_summary.m'));
 promote_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_promote_final_outputs.m'));
-dicom_source = local_read(fullfile(root_dir, 'src', 'io', 'nii2dcm_header_copy_vb20_david.m'));
+dicom_source = local_read(fullfile(root_dir, 'src', 'io', 'pseudo_CT_nii2dcm_header_copy.m'));
 prepare_source = local_read(fullfile(root_dir, 'src', 'science', 'current', 'pseudo_CT_current_prepare.m'));
 
 assert(~isempty(strfind(run_source, 'run_id = datestr(now, ''yyyymmdd_HHMMSS'')')));
@@ -81,7 +81,7 @@ assert(local_active_occurrences(run_source, 'warning(''off'', ''all'')') == 1);
 assert(~isempty(strfind(profile_source, 'pseudo_CT_profile_summary.txt')));
 assert(~isempty(strfind(helper_source, 'datestr(now, ''yyyy-mm-dd HH:MM:SS'')')));
 
-% T002: correct_aliasing seam logging — operation outcomes for both requests
+% correct_aliasing seam logging — operation outcomes for both requests
 assert(~isempty(strfind(prepare_source, '[recentering] Skipped as configured.')));
 assert(~isempty(strfind(prepare_source, '[recentering] Successfully applied.')));
 assert(~isempty(strfind(prepare_source, '[recentering] Not required.')));
@@ -115,7 +115,7 @@ assert(~isempty(strfind(prepare_source, '''Overwrite'', true')));
 assert(~isempty(strfind(prepare_source, 'P = result.outputs{1}')));
 % Batch-path regression guard: no recentering or aliasing status text.
 
-% T004: independent local seam regressions.
+% Independent local seam regressions.
 assert(~isempty(strfind(prepare_source, ...
     'aliasing_requested = logical(check_aliasing);')));
 assert(~isempty(strfind(prepare_source, ...
@@ -162,7 +162,7 @@ assert(~isempty(strfind(prepare_source, '[aliasing correction] Not required.')))
 assert(isempty(strfind(run_source, ...
     '''recenter_before_normalization'', jobs(1).recenter_before_normalization')));
 
-% T003: first-output validation, ERROR conditioning, failure-log ordering
+% First-output validation, ERROR conditioning, failure-log ordering
 % First-output validation: char + nonempty after trim
 assert(~isempty(strfind(prepare_source, 'ischar(candidate)')));
 assert(~isempty(strfind(prepare_source, 'strtrim(candidate)')));
@@ -199,7 +199,7 @@ fwrite(fid, zeros(1, 1000), 'uint8');
 fclose(fid);
 dimension_failed = false;
 try
-    nii2dcm_header_copy_vb20_david(fullfile(test_dir, 'input.nii'), ...
+    pseudo_CT_nii2dcm_header_copy(fullfile(test_dir, 'input.nii'), ...
         reference_file, fullfile(test_dir, 'dicom_output'));
 catch ME
     dimension_failed = strcmp(ME.identifier, 'pseudo_CT:DICOMDimensionMismatch');

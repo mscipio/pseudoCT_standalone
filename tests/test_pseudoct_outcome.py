@@ -3,7 +3,7 @@
 The block is the embedded python that reads the verified result summary and
 prints the JSONL/text record. It is extracted from bin/pseudoct itself, so the
 test exercises the shipped code, not a copy. No MATLAB, scheduler or science.
-Run: python3 -I -m unittest tests/test_pseudoct_outcome.py
+Run: python3 -I -B tests/test_pseudoct_outcome.py
 """
 import json
 import os

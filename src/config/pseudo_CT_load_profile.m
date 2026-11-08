@@ -145,7 +145,7 @@ end
 end
 
 function validate_mlsc_scheduler(mlsc, profile_name)
-%VALIDATE_MLSC_SCHEDULER Scheduler-only MLSC block for current (T005).
+%VALIDATE_MLSC_SCHEDULER Validate the scheduler-only config.mlsc block.
 %   Requires host/shell/FreeSurfer/partition/resources only.
 string_fields = {'host'; 'shell'; 'freesurfer_env'; 'partition'; ...
     'memory'; 'time'};
@@ -189,13 +189,13 @@ end
 end
 
 function validate_current(current, profile_name)
-%VALIDATE_CURRENT Fail-closed neutral current artifact contract (T005/T014).
-%   Requires the current-specific fields runner/mcr_root/build_manifest/
-%   resource_manifest/required_outputs, the exact pinned version-specific
-    %   MATLAB R2010b installation root containing MCR 7.14 (never the
-    %   current symlink), and scheduler-only config.mlsc.
-%   The current artifact structure is strict. Existence of referenced files
-%   is checked by preflight and again by execution validation. R2010b only.
+%VALIDATE_CURRENT Fail-closed validation of the current artifact contract.
+%   Requires exactly the current fields runner, mcr_root, build_manifest,
+%   resource_manifest and required_outputs. mcr_root must be the pinned
+%   MATLAB 7.11 (R2010b) installation root that contains MCR 7.14, never the
+%   current symlink. config.mlsc must hold scheduler fields only.
+%   File existence is checked by preflight and again by execution validation.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11).
 allowed_fields = {'runner'; 'mcr_root'; 'build_manifest'; ...
     'resource_manifest'; 'required_outputs'};
 if ~isequal(sort(fieldnames(current)), sort(allowed_fields))

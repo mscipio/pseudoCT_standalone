@@ -1,37 +1,26 @@
 function transport = mlsc_credentials_transport(config, username, password, ...
         host_key_provider)
-%MLSC_CREDENTIALS_TRANSPORT Build the credential-free MLSC callback surface.
-%   TRANSPORT = MLSC_CREDENTIALS_TRANSPORT(CONFIG, USERNAME, PASSWORD,
-%   HOST_KEY_PROVIDER) returns the struct of function-handle callbacks used
-%   by the existing approved MLSC remote mechanism: VERIFY, QUERY_ACCOUNTS,
-%   SUBMIT_SCRIPT, QUERY_SQUEUE, QUERY_SACCT, QUERY_SQUEUE_BY_NAME,
-%   QUERY_SACCT_BY_NAME, CANCEL_JOB, and CLEANUP.  Credentials remain in
-%   this runtime closure only and are never accepted in profiles, scripts,
-%   command strings, logs, or results.
-%
-%   This is the shared helper extracted verbatim from RUN_PSEUDO_CT's former
-%   private LOCAL_CREATE_MLSC_TRANSPORT (behavior identical).  It is used by
-%   RUN_PSEUDO_CT's MLSC path and by the historical sixth comparison command,
-%   so both reach authentication, account discovery,
-%   and the Slurm lifecycle through the same transport.  No private
-%   transport is duplicated.
-%
-%   Credentials remain in this runtime closure only.  The optional
-%   HOST_KEY_PROVIDER selects the host-key trust model.  When it is empty
-%   (the normal MLSC workflow), VERIFY uses the bundled Ganymed password
-%   authentication path with an empty verifier, exactly like the standard password
-%   login model: no known_hosts/fingerprint input and no authentication
-%   block, after which account discovery and the Slurm lifecycle proceed
-%   normally.  When an explicitly supplied, independently trusted MLSC
-%   known_hosts record (character text or a zero-argument provider handle,
-%   never a profile field or logged value) is given, VERIFY resolves it
-%   into an in-memory Ganymed KnownHosts database and a strict
-%   ServerHostKeyVerifier, and Connection.connect(verifier) runs before
-%   authentication; missing, malformed, unsupported, new, changed, or
-%   mismatched host keys then fail closed before authentication, account
-%   discovery, or submission, and only a key reported as HOSTKEY_IS_OK is
-%   accepted.  No host-key material is ever persisted or logged.
-%
+%MLSC_CREDENTIALS_TRANSPORT Build the MLSC callback surface for one session.
+%   TRANSPORT = MLSC_CREDENTIALS_TRANSPORT(CONFIG, USERNAME, PASSWORD, HOST_KEY_PROVIDER)
+%   returns a struct of function handles: verify, query_accounts, submit_script,
+%   query_squeue, query_sacct, query_squeue_by_name, query_sacct_by_name,
+%   cancel_job and cleanup. They use the MLSC connection that verify opens.
+%   Credentials stay in this runtime closure only. They are never accepted from
+%   profiles, scripts, command strings, logs or results.
+%   HOST_KEY_PROVIDER is optional. Empty (the normal MLSC workflow) selects the
+%   password path: verify logs in with the bundled Ganymed password
+%   authentication and an empty host-key verifier. Account discovery and the
+%   Slurm lifecycle then proceed. A supplied provider (known_hosts text, or a
+%   zero-argument function handle that returns it) selects strict checking: the
+%   record is loaded into an in-memory known-hosts database, and
+%   Connection.connect runs with a strict verifier before authentication. Only a
+%   key reported as HOSTKEY_IS_OK is accepted. Missing, malformed, unsupported,
+%   new, changed or mismatched keys fail closed before authentication, account
+%   discovery or submission. Host-key material is never stored or logged.
+%   verify is idempotent: an authenticated connection from an earlier call is
+%   reused, so no second socket is opened.
+%   Side effects: verify opens an SSH connection; cleanup closes it.
+%   Used by mlsc_initialize_backend_session. Minimum supported MATLAB: R2010b.
 %   Minimum supported MATLAB: R2010b.
 
 connection = [];

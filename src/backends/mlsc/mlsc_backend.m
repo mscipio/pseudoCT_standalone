@@ -10,7 +10,7 @@ function result = mlsc_backend(subject, config, runtime, transport)
 %   TRANSPORT.verify() must return logical true only after the approved strict
 %   host-key/authentication gate has succeeded.  TRANSPORT.submit_script(COMMAND)
 %   is the only submission callback.  The generated script is written to the
-%   shared filesystem before this callback, so no input/output/script payload
+%   shared filesystem before this callback, so no input, output or script data
 %   is transported over the network.  Missing or rejected transport fails
 %   before submission; no null verifier or alternate transport is used.
 %

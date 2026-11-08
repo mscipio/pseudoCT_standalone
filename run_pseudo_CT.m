@@ -13,20 +13,33 @@ function report = run_pseudo_CT(varargin)
 %     Action                   'validate' (default) or 'submit'
 %     CorrectAliasing, RecenterBeforeNormalization, CleanupOnSuccess
 %                              true/false or 'yes'/'no'; omit for the profile default
-%     CurrentArtifactRoot      compiled-artifact validation override
+%     CurrentArtifactRoot      development-only override; MLSC profiles only (mlsc,
+%                              mlsc-mprage-only). Local profiles reject it.
 %     GroupAccount             MLSC account selection (not a secret)
 %     HostKeyFile              MLSC strict host-key input
 %     CredentialHandoff        existing single-use launcher handoff (MLSC submit only)
 %     Runtime                  installed release label, for example R2010b
-%     McrRoot                  MATLAB Runtime root for the selected release
-%     Launcher                 path to bin/pseudoct; default: the bin/pseudoct beside
-%                              this file (installed distribution), else PSEUDOCT_LAUNCHER
+%     McrRoot                  Optional explicit MATLAB Runtime root (--mcr-root); omit for
+%                              the release's catalog location
+%     Launcher                 Installed distribution: omit it, or pass the bundled
+%                              bin/pseudoct beside this file; any other path is refused
+%                              with run_pseudo_CT:LauncherOverrideDevelopmentOnly. Source
+%                              checkout only: development and test override for
+%                              bin/pseudoct, otherwise PSEUDOCT_LAUNCHER is used.
+%                              PSEUDOCT_LAUNCHER is never read in an installed distribution.
 %   Passwords and user names are not accepted (use CredentialHandoff).
+%
+%   Launcher exit codes (REPORT.exit_code, same as bin/pseudoct --help): 0 validated or
+%   completed, 64 usage/config, 65 invalid request, 66 authentication, 67 submission
+%   failure, 68 scientific failure/unverified, 69 launcher/runtime failure, 70 MATLAB
+%   dispatch or runtime failure. CurrentArtifactRoot follows the same MLSC-only rule
+%   in bin/pseudoct, the frontend and the headless API.
 %
 %   RUN_PSEUDO_CT() with no arguments opens the pseudoCT window: profile
 %   selection, then the MPRAGE/UMAP window. Validate and Submit call the same
 %   launcher path as the arguments above. The window stays open after each
-%   submission and does not block MATLAB.
+%   request, but MATLAB is busy while Validate or Submit runs: the launcher
+%   runs synchronously through system() (frontend/pseudo_CT_launch_request.m).
 %   Minimum supported MATLAB: R2010b.
 
 root_dir = fileparts(mfilename('fullpath'));
@@ -52,7 +65,9 @@ local_print_report(report);
 end
 
 function report = local_open_window(root_dir)
-%LOCAL_OPEN_WINDOW Profile selection, runtime and MCR root, then the window.
+%LOCAL_OPEN_WINDOW Profile selection, then the window. No MATLAB Runtime root is
+%   chosen here: the launcher resolves the selected release from the catalog
+%   location (or --mcr-root), so the window never offers a folder picker.
 launcher = pseudo_CT_launch_request('launcher', '', root_dir);
 selection = pseudo_CT_profile_selector(launcher);
 report = struct('ok', false, 'outcome', 'cancelled', 'profile', '', ...
@@ -65,32 +80,13 @@ if isempty(selection.profile)
 end
 profiles = pseudo_CT_profile_choices();
 config = profiles(strcmp({profiles.name}, selection.profile)).config;
-mcr_root = '';
-if ~isempty(selection.runtime)
-    mcr_root = local_mcr_root(selection.runtime);
-    if isempty(mcr_root)
-        mcr_root = uigetdir('', ['Select the MATLAB Runtime root for ' ...
-            selection.runtime]);
-        if isequal(mcr_root, 0) || isempty(mcr_root)
-            return;
-        end
-    end
-end
 context = struct('root_dir', root_dir, 'launcher', launcher, ...
-    'runtime', selection.runtime, 'mcr_root', mcr_root);
+    'runtime', selection.runtime, 'mcr_root', '');
 load_mr_4_AC(config.io_policy.gui, config, context);
 report.ok = true;
 report.outcome = 'window_opened';
 report.profile = selection.profile;
 report.runtime = selection.runtime;
-end
-
-function mcr_root = local_mcr_root(label)
-%LOCAL_MCR_ROOT Per-release, then global, MATLAB Runtime root from the environment.
-mcr_root = strtrim(getenv(['PSEUDOCT_MCR_ROOT_' label]));
-if isempty(mcr_root)
-    mcr_root = strtrim(getenv('PSEUDOCT_MCR_ROOT'));
-end
 end
 
 function local_print_report(report)

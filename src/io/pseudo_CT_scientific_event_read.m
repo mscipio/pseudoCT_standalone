@@ -57,7 +57,7 @@ for ii = 1:length(lines) - 1
     end
     state.records = state.records + 1;
     if isfield(rec, 'source') && strcmp(rec.source, 'payload')
-        % Payload-written records show that this payload emits natively.
+        % Worker-written records show that this worker emits natively.
         state.payload = state.payload + 1;
     end
     event = local_presenter_event(rec, path);

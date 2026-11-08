@@ -1,5 +1,9 @@
 function config = local_mprage_only()
-%LOCAL_MPRAGE_ONLY Local MPRAGE-only profile matching LOCAL.
+%LOCAL_MPRAGE_ONLY Local MPRAGE-only profile: this computer, no UMAP reference.
+%   CONFIG = LOCAL_MPRAGE_ONLY() returns the canonical 'local-mprage-only'
+%   profile struct. It matches LOCAL except for the reference, output and GUI
+%   policies, and it declares 'local' as its compatibility baseline.
+%   Reads dependency paths only. Minimum supported MATLAB: R2010b.
 
 dependency_paths = pseudo_CT_dependency_paths();
 
@@ -44,7 +48,7 @@ config.compatibility_profile = 'local';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'Local MPRAGE Only';
 config.presentation.description = ...
-    'Generate a NIfTI-only pseudoCT locally from MPRAGE alone using the shared current-science payload. No UMAP required.';
+    'Generate a NIfTI-only pseudoCT on this computer from MPRAGE alone, using the shared compiled worker. No UMAP required.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = false;
 config.presentation.order = 10;
@@ -61,18 +65,15 @@ config.normalization.cluster = 'No';
 config.normalization.host_folder = '';
 
 
-% Current compiled prepare/compute artifacts shared with local and MLSC.
-% Source-repository profiles retain the existing compiled/current manifest
-% names; installed runtime selection rebases them to the package manifest
-% names.
-artifact_dir_here = dependency_paths.current_root;
-config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
-    'run_mlsc_current_payload.sh');
+% Current compiled prepare/compute artifacts shared with local and MLSC. No
+% compiled tree is assumed: the placeholders are not files. Installed runtime
+% selection replaces them and clears both manifest paths (direct mode); a source
+% checkout refuses application runs without an explicit development artifact root.
+config.current.runner = 'runtime-selection-required';
+% MATLAB 7.11 (R2010b) installation root; the MCR runtime release is 7.14.
 config.current.mcr_root = '/usr/pubsw/common/matlab/7.11';
-config.current.build_manifest = fullfile(artifact_dir_here, ...
-    'mlsc_current_build.mat');
-config.current.resource_manifest = fullfile(artifact_dir_here, ...
-    'mlsc_current_resources.mat');
+config.current.build_manifest = 'runtime-selection-required';
+config.current.resource_manifest = 'runtime-selection-required';
 config.current.required_outputs = {'att_map.nii'; ...
     'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};
 end

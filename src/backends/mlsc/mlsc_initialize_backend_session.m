@@ -1,9 +1,26 @@
 function session = mlsc_initialize_backend_session(config, username, password, ...
         host_key_provider, requested_account, allow_account_dialog)
-%MLSC_INITIALIZE_BACKEND_SESSION Shared MLSC auth/account initialization.
-%   Used only at submit by GUI, script, and headless paths. Credentials remain in
-%   the transport closure only. The returned session retains that transport
-%   for submission and monitoring; callers must clean it up when finished.
+%MLSC_INITIALIZE_BACKEND_SESSION Authenticate to MLSC and prepare one submit session.
+%   SESSION = MLSC_INITIALIZE_BACKEND_SESSION(CONFIG, USERNAME, PASSWORD,
+%   HOST_KEY_PROVIDER, REQUESTED_ACCOUNT, ALLOW_ACCOUNT_DIALOG)
+%   Called only at submit, by the frontend and by pseudo_CT_run_lifecycle.
+%   CONFIG must be an 'mlsc' profile struct. USERNAME and PASSWORD are text.
+%   HOST_KEY_PROVIDER is optional ([] selects the password path; see
+%   mlsc_credentials_transport). REQUESTED_ACCOUNT is optional (''): the Slurm
+%   account to use. When it is empty, the first account reported by MLSC is
+%   used. ALLOW_ACCOUNT_DIALOG is optional (false). It is validated but not used:
+%   account selection always runs without a dialog.
+%   SESSION is a struct with transport (the callback struct from
+%   mlsc_credentials_transport), authentication_status, account_status,
+%   preflight_status, accounts (cell), selected_account, status ('ready' or
+%   'failed'), submission_status, error_code and error_message. Failure sets
+%   error_code to AUTHENTICATION_FAILED, ACCOUNT_QUERY_FAILED, NO_ACCOUNTS or
+%   INVALID_GROUP_ACCOUNT, with a fixed error_message. On failure the transport
+%   is closed and session.transport is []. Credentials are never returned.
+%   Side effects: opens the MLSC connection and queries the account list. On
+%   success the caller owns session.transport and must call its cleanup handle
+%   when finished.
+%   Errors: pseudo_CT:MLSCSessionRequest for an invalid request.
 %   Minimum supported MATLAB: R2010b.
 
 if nargin < 4

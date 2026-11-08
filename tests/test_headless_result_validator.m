@@ -21,6 +21,26 @@ cleanup = onCleanup(@() local_cleanup(scratch_dir)); %#ok<NASGU>
 
 invocation_id = '6d915c13-2bd1-4db1-a107-b1eab4d34c11';
 profile = 'mlsc';
+% The development-only artifact-root override is refused for a local profile by the
+% headless validate request before any validation runs; the diagnostics name the
+% shared identifier.
+override_dir = fullfile(scratch_dir, 'artifact-root-local');
+mkdir(override_dir);
+override_request = local_validate_request('local', local_subject(), invocation_id);
+override_request.current_artifact_root = fullfile(override_dir, 'dev-root');
+request = override_request; %#ok<NASGU>
+override_request_path = fullfile(override_dir, 'request.mat');
+save(override_request_path, 'request', '-v6');
+override_result = pseudo_CT_headless(override_request_path, ...
+    fullfile(override_dir, 'result.mat'));
+assert(strcmp(override_result.status, 'failed'), ...
+    'A local profile accepted the development-only artifact-root override.');
+diag_fid = fopen(fullfile(override_dir, 'pseudoct-headless-diagnostics.txt'), 'r');
+assert(diag_fid ~= -1, 'The headless refusal wrote no diagnostics.');
+diag_text = char(fread(diag_fid, inf, 'uint8')');
+fclose(diag_fid);
+assert(~isempty(strfind(diag_text, 'run_pseudo_CT:InvalidMlscCurrentOverride')), ...
+    'The local artifact-root refusal did not use the shared identifier.');
 
 % A successful configuration-only validation has no subject records but is
 % still bound to the same invocation/profile as its resolved job.
@@ -115,9 +135,10 @@ mkdir(headless_dir);
 missing_input = fullfile(headless_dir, 'missing-mprage.nii');
 local_profile = 'local-mprage-only';
 
-% Natural unclassified validation failure: a missing MPRAGE reaches the
-% orchestrator input check, which is not a named mapping. Confirm that the
-% underlying identifier directly so the case cannot pass on another failure.
+% Natural unclassified validation failure: this suite runs from a source checkout,
+% which is development-only, so an application validation is refused before any
+% input check. That refusal is not a named mapping. Confirm the underlying
+% identifier directly so the case cannot pass on another failure.
 natural = local_headless(headless_dir, 'validate-missing-input', ...
     local_validate_request(local_profile, missing_input, invocation_id), ...
     invocation_id, local_profile);
@@ -129,8 +150,8 @@ try
 catch ME
     input_identifier = ME.identifier;
 end
-assert(strcmp(input_identifier, 'pseudo_CT:OrchestrationInput'), ...
-    'The natural validation case must reach the missing-input check.');
+assert(strcmp(input_identifier, 'pseudo_CT:SourceCheckoutDevelopmentOnly'), ...
+    'The natural validation case must be refused by the source-checkout guard.');
 local_assert_validation_failure(natural);
 assert(strcmp(natural.error_code, 'VALIDATION_FAILED'), ...
     'An unclassified validation failure must report VALIDATION_FAILED.');

@@ -1,7 +1,17 @@
 function [ok, message] = pseudo_CT_cleanup_subject_temp(temp_dir)
-%PSEUDO_CT_CLEANUP_SUBJECT_TEMP Preserve retained logs and invocation owners.
-% Unlike rmdir(job.temp_dir,'s'), success cleanup must not erase scientific
-% evidence or another invocation's private transport/status/capture directory.
+%PSEUDO_CT_CLEANUP_SUBJECT_TEMP Remove the subject temporary folder contents after success.
+%   [OK, MESSAGE] = PSEUDO_CT_CLEANUP_SUBJECT_TEMP(TEMP_DIR)
+%   Deletes the entries of TEMP_DIR (MR_PET/tmp), except retained entries:
+%   scientific evidence and private invocation files or folders named
+%   pseudoct-runtime-*, pseudoct-cli.*, pseudoct-headless.*,
+%   pseudoct_v3_compiled_* and pseudoct-run-*. Unlike rmdir(TEMP_DIR, 's'),
+%   this keeps evidence and other invocations' private files. Symbolic links
+%   are removed without being followed. A TEMP_DIR that is a symbolic link is
+%   refused.
+%   OK is false and MESSAGE gives the reason when an entry cannot be removed or
+%   the link check fails. OK is true when TEMP_DIR does not exist.
+%   Side effects: deletes files and folders under TEMP_DIR.
+%   Minimum supported MATLAB: R2010b.
 ok = true; message = '';
 if exist(temp_dir, 'dir') ~= 7, return; end
 [status, ~] = system(['test ! -L ' local_quote(temp_dir)]);

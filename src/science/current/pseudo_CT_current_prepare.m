@@ -1,6 +1,10 @@
 function [P_out, handoff, early_return, fh] = pseudo_CT_current_prepare(P_in, dir_batch_templates_in, check_aliasing_in, config, output_context_in, recenter_override_in)
-%PSEUDO_CT_CURRENT_PREPARE Pre-normalization preparation for current pipeline.
-%   Used by mlsc_current_payload (compiled-current prepare phase). Implements the
+%PSEUDO_CT_CURRENT_PREPARE Pre-normalization preparation for the current pipeline.
+%   [P_OUT, HANDOFF, EARLY_RETURN, FH] = PSEUDO_CT_CURRENT_PREPARE(P_IN,
+%   DIR_BATCH_TEMPLATES_IN, CHECK_ALIASING_IN, CONFIG, OUTPUT_CONTEXT_IN,
+%   RECENTER_OVERRIDE_IN)
+%   Prepare phase of the shared compiled worker (pseudoct_worker). The local
+%   current runner and MLSC jobs both reach it through that worker. Implements the
 %   pre-normalization order exactly: optional reslice, normalized/moved
 %   suffix gates, correct_aliasing(input,output,'AliasCorrection',bool,
 %   'Centering',bool,'Overwrite',true), success/partial/no-op/early-return
@@ -422,7 +426,9 @@ end
 end
 
 function code_version = local_resolve_code_version()
-code_version = '2.8.4';  % fallback
+% CHANGELOG.md line 1 is the authoritative bare version. There is no fallback
+% version: an unreadable source fails closed.
+code_version = '';
 try
     root_dir = fileparts(fileparts(fileparts(fileparts(mfilename('fullpath')))));
     fid = fopen(fullfile(root_dir, 'CHANGELOG.md'), 'r');
@@ -434,6 +440,10 @@ try
         end
     end
 catch %#ok<CTCH>
+end
+if isempty(code_version)
+    error('pseudo_CT:VersionUnavailable', ...
+        'The pseudoCT version could not be read from CHANGELOG.md line 1.');
 end
 end
 

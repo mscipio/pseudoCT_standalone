@@ -1,7 +1,6 @@
-function [coeff, score, latent] = pseudo_ct_princomp_legacy(X)
-% Investigation tool — investigation-cleanup-release.
-% PSEUDO_CT_PRINCOMP_LEGACY  Legacy-compatible PCA (princomp behavior).
-%   [COEFF, SCORE, LATENT] = pseudo_ct_princomp_legacy(X) performs
+function [coeff, score, latent] = pseudo_CT_princomp_legacy(X)
+%PSEUDO_CT_PRINCOMP_LEGACY Legacy-compatible PCA (princomp behavior).
+%   [COEFF, SCORE, LATENT] = PSEUDO_CT_PRINCOMP_LEGACY(X) performs
 %   principal components analysis on the N-by-P data matrix X, reproducing
 %   the behavior of the old MATLAB princomp function (R2010b-era).
 %
@@ -20,12 +19,13 @@ function [coeff, score, latent] = pseudo_ct_princomp_legacy(X)
 %       largest absolute value in each column is made positive.
 %
 %   This helper is zero-dependency: no toolboxes, no Java, no MATLAB
-%   version requirements beyond bsxfun.  It is the primary PCA path for
-%   the pseudo-CT pipeline and replaces both the old princomp (removed
-%   after R2012b) and MATLAB pca(...) when deterministic legacy behavior
-%   is required.
+%   version requirements beyond bsxfun. It is the repo_legacy PCA backend
+%   (pseudo_CT_pca_resolver). Profiles list callable_pca first, so this path
+%   runs only when MATLAB pca is unavailable or the callable path fails. It
+%   stands in for the old princomp function, which was removed after R2012b.
+%   Minimum supported MATLAB: R2010b.
 %
-%   See also: move_image_2_MNI, princomp (legacy), pca.
+%   See also: pseudo_CT_move_image_2_mni, pseudo_CT_pca_resolver, pca.
 
 X = double(X);
 [n, p] = size(X);

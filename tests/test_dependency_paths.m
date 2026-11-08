@@ -23,9 +23,12 @@ assert(strcmp(paths.overrides_root, fullfile(root_dir, ...
     'src', 'science', 'overrides')));
 assert(strcmp(paths.ssh2_root, fullfile(root_dir, ...
     'external', 'ssh2_v2_m1_r5')));
-assert(strcmp(paths.current_root, fullfile(root_dir, 'compiled', 'current')));
+% No compiled artifact tree is assumed by the dependency layout.
+assert(~isfield(paths, 'current_root'), ...
+    'The dependency layout must not name a compiled artifact tree.');
 
-% Profiles use the same pinned local roots.
+% Profiles use the same pinned local roots. Their artifact fields are
+% placeholders that runtime selection replaces; no compiled tree is named.
 profile_dir = fullfile(root_dir, 'src', 'config', 'profiles');
 addpath(profile_dir, '-begin');
 for fn = {'local', 'mlsc', 'local_mprage_only', 'mlsc_mprage_only'}
@@ -33,10 +36,10 @@ for fn = {'local', 'mlsc', 'local_mprage_only', 'mlsc_mprage_only'}
     config = feval(fn{1});
     assert(strcmp(config.spm_root, paths.spm_root));
     assert(strcmp(config.atlas_root, paths.atlas_root));
-    assert(strcmp(config.current.build_manifest, ...
-        fullfile(paths.current_root, 'mlsc_current_build.mat')));
-    assert(strcmp(config.current.resource_manifest, ...
-        fullfile(paths.current_root, 'mlsc_current_resources.mat')));
+    assert(strcmp(config.current.runner, 'runtime-selection-required'));
+    assert(strcmp(config.current.build_manifest, 'runtime-selection-required'));
+    assert(strcmp(config.current.resource_manifest, 'runtime-selection-required'));
+    assert(strcmp(config.current.mcr_root, '/usr/pubsw/common/matlab/7.11'));
 end
 
 % Setup already owns the fail-closed root checks; exercise each missing-root

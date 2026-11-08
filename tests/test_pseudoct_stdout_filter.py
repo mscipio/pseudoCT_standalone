@@ -5,6 +5,8 @@ prints the TIME/SUBJECT table header and rule again. The launcher's embedded
 transport must print the header once per invocation (state shared across
 phases through a marker beside the diagnostics file) and never drop rows.
 Runs the launcher's real embedded Python with /bin/cat; no MATLAB, no jobs.
+
+Run: python3 -I -B tests/test_pseudoct_stdout_filter.py
 """
 import pathlib
 import subprocess
@@ -27,7 +29,7 @@ compile(transport, 'bin/pseudoct:run_headless', 'exec')
 
 HEADER = 'TIME     SUBJECT STAGE   STATUS    MESSAGE\n'
 RULE = '-' * 123 + '\n'
-# Captured MLSC console rows (presenter-v4 run, 2026-11-05).
+# Captured MLSC console rows (2026-11-05).
 PHASE1 = HEADER + RULE + (
     '10:24:59 S01     [1/10]  ACTIVE    Preparing input MPRAGE\n'
     '10:25:44 S01             DONE      Input MPRAGE prepared\n')

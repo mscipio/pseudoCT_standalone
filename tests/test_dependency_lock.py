@@ -1,11 +1,29 @@
 #!/usr/bin/env python3
-"""Fail-closed integrity checks for the locally staged dependency lock."""
+"""Fail-closed integrity checks for the locally staged dependency lock.
+
+Re-anchored (T012): compiled/current is an obsolete historical observation,
+superseded by dist/ for new packages. This test no longer walks or hashes the
+compiled/current tree. For that entry it asserts only, as string checks, that
+the lock labels it an obsolete historical observation and records the pinned
+historical digest. The SPM8, batch-atlas and ssh2 external trees and the ssh2
+Ganymed JAR are still verified against their recorded digests, and every lock
+hash field must be a well-formed lowercase 64-hex SHA-256 value.
+
+Run: python3 -I -B tests/test_dependency_lock.py
+"""
 
 import hashlib
 import json
 import os
+import re
 import stat
 from pathlib import Path
+
+# Historical digest of the obsolete compiled/current observation (string check only).
+COMPILED_CURRENT_HISTORICAL_TREE_SHA256 = (
+    "f55d47937c1c93e4e7f087b5a2d6939bdd23461b87a8204b99830ae8d6cefe68"
+)
+HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 class ChecksumMismatch(Exception):
@@ -28,7 +46,10 @@ def sha256_file(path):
 
 
 def tree_inventory(root):
-    """Return sha256-tree-v1 and every local file record without following links."""
+    """Return the sha256-tree-v1 digest (treeSha256) and the file, byte and symlink inventory.
+
+    Symlinks are recorded by target and never followed.
+    """
     root = Path(root).resolve()
     records = []
     files = []
@@ -85,6 +106,19 @@ def tree_inventory(root):
     }
 
 
+def iter_hash_fields(node, path="$"):
+    """Yield (path, value) for every object key whose name contains sha256."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child = f"{path}.{key}"
+            if "sha256" in key.lower():
+                yield child, value
+            yield from iter_hash_fields(value, child)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from iter_hash_fields(value, f"{path}[{index}]")
+
+
 def verify_tree(root, expected, label):
     actual = tree_inventory(root)
     require_equal(f"{label} tree SHA-256", actual["treeSha256"], expected["treeSha256"])
@@ -104,6 +138,13 @@ def main():
     if "blocked" not in lock["policy"]["publicPackaging"].lower():
         raise AssertionError("Public packaging must remain blocked pending rights review.")
 
+    hash_fields = list(iter_hash_fields(lock))
+    if not hash_fields:
+        raise AssertionError("The lock records no SHA-256 hash fields.")
+    for field_path, value in hash_fields:
+        if not (isinstance(value, str) and HEX64.fullmatch(value)):
+            raise AssertionError(f"{field_path} is not a well-formed SHA-256 hex value.")
+
     dependencies = {item["id"]: item for item in lock["dependencies"]}
     local_roots = {
         "spm8-r6313": dependencies["spm8-r6313"]["artifact"],
@@ -118,14 +159,26 @@ def main():
         if "blocked" not in license_record["publicRedistribution"].lower():
             raise AssertionError(f"Public redistribution unexpectedly cleared for {name}.")
 
-    # The supported compiled payload remains pinned by its tree digest.
+    # ssh2 Ganymed JAR, verified against external/ssh2_v2_m1_r5 (the ssh2 tree root).
+    ssh2 = dependencies["ssh2-v2-m1-r5"]["artifact"]
+    jar = repo / ssh2["developmentPath"] / "ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar"
+    require_equal("ssh2 Ganymed JAR SHA-256", sha256_file(jar), ssh2["ganymedJarSha256"])
+
+    # compiled/current: string checks only; its tree is never read (obsolete historical observation).
     current = lock["observedLayout"]["current"]
-    actual_current = tree_inventory(repo / current["availableArtifactPath"])
+    boundary = lock["distributionLayout"]["checkoutBoundary"]
     require_equal(
-        "compiled/current tree SHA-256",
-        actual_current["treeSha256"],
+        "compiled/current recorded tree SHA-256 (historical)",
         current["canonicalTreeSha256"],
+        COMPILED_CURRENT_HISTORICAL_TREE_SHA256,
     )
+    require_equal(
+        "compiled/current checkout-boundary digest (historical)",
+        boundary["compiledCurrentTreeSha256"],
+        COMPILED_CURRENT_HISTORICAL_TREE_SHA256,
+    )
+    if "obsolete historical observation" not in current["note"]:
+        raise AssertionError("compiled/current must be recorded as an obsolete historical observation.")
 
     # A digest mismatch must raise, never degrade to a warning or alternate root.
     try:
@@ -136,8 +189,9 @@ def main():
         raise AssertionError("Checksum mismatch did not fail closed.")
 
     print(
-        "Current dependency integrity passed: SPM8/atlas trees and compiled/current "
-        "matched; public redistribution remains blocked."
+        "Current dependency integrity passed: SPM8/atlas trees, ssh2 JAR and well-formed "
+        "lock hashes verified; compiled/current recorded as an obsolete historical "
+        "observation (not read); public redistribution remains blocked."
     )
 
 

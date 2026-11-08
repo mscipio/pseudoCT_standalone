@@ -1,19 +1,19 @@
-%  nii2dcm_header_copy_vb20_david.m
-%  Author: Spencer Bowen (adapted from isocenter.m by Dan Chonde)
-%  Lab Group: Catana
-%  Date: 06-22-2011
-%  Copy metadata from one dicom series to create a another dicom series with image data from
-%  a nifti file
-%  inputs:  nifti_in  = nifti data file (*.nii) or header (*.hdr)
-%    	    dcm_ref   = single frile from reference dicom series to copy metadata from
-%  	    dcm_out   = directory of new dicom files to write
-%           series_num= series number for the new dicom series
-%
-% Version by David Izquierdo adapted from the Spencer Bowen one. In this
-% one, we reorient the volume to leave it as eye(4);
-%
-%  nii2dcm_header_copyV2(nii_in,dcm_ref,dcm_out)
-function nii2dcm_header_copy_vb20_david(nifti_in,dcm_ref,dcm_out)
+function pseudo_CT_nii2dcm_header_copy(nifti_in,dcm_ref,dcm_out)
+%PSEUDO_CT_NII2DCM_HEADER_COPY Write a NIfTI volume as a DICOM series with reference metadata.
+%   PSEUDO_CT_NII2DCM_HEADER_COPY(NIFTI_IN, DCM_REF, DCM_OUT)
+%   NIFTI_IN is the NIfTI file (.nii or .hdr) with the image data. DCM_REF is
+%   one file of the reference DICOM series; its header metadata and SeriesNumber
+%   are copied into the new series. DCM_OUT is the output folder, created when
+%   missing (pwd when empty).
+%   The volume is flipped along its second dimension before writing, and the
+%   images are written as DICOM slices, one file per slice, reusing the padding
+%   and metadata layout of the reference series.
+%   Side effects: creates DCM_OUT when missing and writes the DICOM files there.
+%   Errors: nii2dcm_header_copy_vb20_david:CreateOutputDirFailed (identifier kept
+%   for compatibility). Calls with fewer than three arguments open interactive
+%   pickers that reference undefined variables; always pass all three.
+%   Origin: Spencer Bowen (2011), adapted by David Izquierdo to reorient the
+%   volume to eye(4). Minimum supported MATLAB: R2010b.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % define constants

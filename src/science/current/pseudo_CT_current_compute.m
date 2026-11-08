@@ -1,21 +1,26 @@
 function [Pf] = pseudo_CT_current_compute(P_in, dir_batch_templates_in, config, output_context_in, fh_in)
-%PSEUDO_CT_CURRENT_COMPUTE Post-normalization computation for current pipeline.
-%   Used by mlsc_current_payload (compiled-current compute phase). Implements the
-%   post-normalization order exactly: MNI/PCA/masking/segmentation/bone/
+%PSEUDO_CT_CURRENT_COMPUTE Post-normalization computation for the current pipeline.
+%   PF = PSEUDO_CT_CURRENT_COMPUTE(P_IN, DIR_BATCH_TEMPLATES_IN, CONFIG,
+%   OUTPUT_CONTEXT_IN, FH_IN)
+%   Compute phase of the shared compiled worker (pseudoct_worker). The local
+%   current runner and MLSC jobs both reach it through that worker. Implements
+%   the post-normalization order exactly: MNI/PCA/masking/segmentation/bone/
 %   DARTEL/inverse warp/reslice/attenuation/QC.
 %
 %   Preserves original P_orig affine semantics (P_orig = verified input at
 %   entry), current thresholds, float32 output, 0.096 gap-fill, bone and
 %   zero-background switches, and array TIFF/version output. config.fwhm
-%   is not consumed here; DICOM finalization remains in run_pseudo_CT.
+%   is not consumed here. DICOM finalization is not performed here: the
+%   caller (pseudo_CT_run_lifecycle) writes DICOM through
+%   pseudo_CT_write_mu_map_dicom after the compute phase.
 %
 %   Inputs:
 %     P_in: verified normalized input char matrix (post-FreeSurfer).
 %     dir_batch_templates_in: atlas/batch template directory.
 %     config: selected profile config struct.
 %     output_context_in: logging context struct (optional).
-%     fh_in: interactive figure handle from prepare (optional, [] when
-%       optional).
+%     fh_in: interactive figure handle from prepare (optional; [] when
+%       headless or when prepare created no figure).
 %
 %   Output:
 %     Pf: char matrix of warped atlas outputs plus att_map.nii, or ''
@@ -44,8 +49,8 @@ dir_batch_templates = dir_batch_templates_in;
 
 code_version = local_resolve_code_version();
 
-% Look for the Atlases (recomputed so compute is self-contained for the
-% MLSC payload path; facade prepare already gated this same condition).
+% Look for the atlases (recomputed so compute is self-contained for the
+% worker compute phase; the prepare phase already gated this same condition).
 list_atlas = dir(fullfile(dir_batch_templates, '*Atlas*.nii'));
 if length(list_atlas) == 0
     pseudo_CT_output('ERROR', output_context, 'No atlas NIfTI files were found.');
@@ -70,7 +75,7 @@ local_stage_event(output_context, 'alignment_mask', 5, 'STARTED', ...
     'Aligning MPRAGE and creating subject mask.');
 try
     P_orig = P; % Let's save the original image filenames as we will need them to use their .mat to reposition the att-map!
-    P = move_image_2_MNI(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), ...
+    P = pseudo_CT_move_image_2_mni(P_orig, fullfile(dir_batch_templates, 'ch2.nii'), ...
         stage_context, config);
     % Decompose the first image (reference to warp everthing into this image)
     % into its fileparts:
@@ -88,8 +93,8 @@ try
     sm_fn = fullfile(pathm, strcat('s', fnm, extm)); % The new smoothed file filename!
     spm_smooth(P(1, :), sm_fn, 4);
     Ims = spm_read_vols(spm_vol(sm_fn));
-    [~, subj_mask] = head_mask_mprage(Ims, 15); % Create the mask!; Before v1.8 it was 20;
-    mm = imdilate(subj_mask, ones(13, 13, 13)); % Dilate the mask to compensate for the previous erosion in head_mask_mprage;
+    [~, subj_mask] = pseudo_CT_head_mask_mprage(Ims, 15); % Create the mask!; Before v1.8 it was 20;
+    mm = imdilate(subj_mask, ones(13, 13, 13)); % Dilate the mask to compensate for the previous erosion in pseudo_CT_head_mask_mprage;
     V_aux = spm_vol(deblank(P(1, :)));
     Ims = spm_read_vols(V_aux);
     II = find(mm == 0);
@@ -117,7 +122,7 @@ load(fullfile(dir_batch_templates, 'new_segment_batch.mat')); % A new variable c
 % We need to change the channels according to the loaded files:
 nf = size(P, 1);
 matlabbatch{1}.spm.tools.preproc8.channel(1).vols = {deblank(P(1, :))};
-matlabbatch{1}.spm.tools.preproc8.warp.affreg = ''; % This option should be here only if there is an Affine coreg into the MNI before (in move_image_2_MNI.m);
+matlabbatch{1}.spm.tools.preproc8.warp.affreg = ''; % This option should be here only if there is an Affine coreg into the MNI before (in pseudo_CT_move_image_2_mni.m);
 matlabbatch{1}.spm.tools.preproc8.channel(1).biasfwhm = 30; % FWHM to 30mm;
 matlabbatch{1}.spm.tools.preproc8.warp.reg = 10; % Warping regularization to 10;
 for ii = 2:nf
@@ -189,7 +194,7 @@ if config.bone_enabled
         aux = strcat(paths, filesep, 'rc', num2str(ii), fns, exts);
         Prc_old(ii, 1:length(aux)) = aux;
     end
-    [Prc_new] = reduce_bone_segment(Prc_old);
+    [Prc_new] = pseudo_CT_reduce_bone_segment(Prc_old);
 end
 exten = '';
 pseudo_CT_output('SUCCESS', stage_context, 'Segmentation completed (elapsed %s).', ...
@@ -297,7 +302,7 @@ for ii = 1:num_atlas
 end
 V_CT = spm_vol(Pf(pos_CT, :));
 CT = spm_read_vols(V_CT);
-[att_map] = CT_2_att_map(CT);
+[att_map] = pseudo_CT_ct_to_att_map(CT);
 
 % Now, let's multiply it by the head_mask:
 for ii = 1:num_atlas
@@ -324,7 +329,7 @@ V_att_map.mat = V_orig.mat;
 % Let's get Original MPRAGE mask and then let's make whatever is not
 % covered by the atlas mask become soft-tissue:
 orig_mprage = spm_read_vols(V_orig);
-[aux, subj_mask] = head_mask_mprage(orig_mprage, 20); % It used to be 30 up to version 1.5 included;
+[aux, subj_mask] = pseudo_CT_head_mask_mprage(orig_mprage, 20); % It used to be 30 up to version 1.5 included;
 % For version 1.7: Choose only the biggest blob in the mask!
 [L, num] = bwlabeln(subj_mask);
 if num > 1
@@ -360,10 +365,10 @@ aux = spm_write_vol(V_att_map, att_map);
 Pf(num_atlas+1, 1:length(fn_att_map)) = fn_att_map;
 local_stage_event(output_context, 'attenuation_save', 8, 'COMPLETED', 'Attenuation map and QC completed.');
 
-% Jun/25/2016: Printing a validation image (T003: explicit bundled QC
+% Jun/25/2016: Printing a validation image (explicit bundled QC
 % colormap location; single-arg default output is unchanged because the
 % helper resolves that same bundled file).
-composite = quick_fusion_pseudo_ct(paths, local_qc_colormap_resource());
+composite = pseudo_CT_quick_fusion(paths, local_qc_colormap_resource());
 imwrite(composite, fullfile(paths, 'Fusion_MR_Pseudo_CT_validation.tiff'), 'Resolution', 300);
 
 try
@@ -398,7 +403,9 @@ end
 end
 
 function code_version = local_resolve_code_version()
-code_version = '2.8.4';  % fallback
+% CHANGELOG.md line 1 is the authoritative bare version. There is no fallback
+% version: an unreadable source fails closed.
+code_version = '';
 try
     root_dir = fileparts(fileparts(fileparts(fileparts(mfilename('fullpath')))));
     fid = fopen(fullfile(root_dir, 'CHANGELOG.md'), 'r');
@@ -410,6 +417,10 @@ try
         end
     end
 catch %#ok<CTCH>
+end
+if isempty(code_version)
+    error('pseudo_CT:VersionUnavailable', ...
+        'The pseudoCT version could not be read from CHANGELOG.md line 1.');
 end
 end
 

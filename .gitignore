@@ -17,3 +17,5 @@ openspec/
 /scratch/
 /compiled/
 /external/
+__pycache__/
+*.pyc

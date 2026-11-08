@@ -35,7 +35,7 @@ function [first, second] = mlsc_progress(action, arg1, arg2)
 %       [EVENTS, CURSOR] = MLSC_PROGRESS('consume', PROGRESS_PATH, CURSOR)
 %       [EVENTS, CURSOR] = MLSC_PROGRESS('read', PROGRESS_PATH, CURSOR)
 %
-%   T004 current milestones (bounded, same engine, no second poller):
+%   Current-stage milestones (bounded, same engine, no second poller):
 %       preparation|done (bundled prepare wrote handoff)
 %       alias_recenter|done (alias/recenter selection resolved)
 %       alignment_mask|done, segmentation|done, bone|done,

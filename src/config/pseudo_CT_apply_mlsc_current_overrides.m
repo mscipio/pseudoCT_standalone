@@ -1,10 +1,12 @@
 function config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, artifact_root)
 %PSEUDO_CT_APPLY_MLSC_CURRENT_OVERRIDES Apply the current-MLSC artifact root.
 %   ARTIFACT_ROOT supplies the current runner and build/resource manifests
-%   under the pinned layout. Source mode uses the existing compiled/current
-%   names; installed mode uses build_manifest.mat/resource_manifest.mat.
-%   Only mlsc and mlsc-mprage-only may consume this option. Empty keeps the
-%   profile-owned defaults.
+%   under the pinned layout. It is a development and internal-API option, never
+%   an installed-use prerequisite. Source mode uses the development manifest
+%   names (mlsc_current_build.mat / mlsc_current_resources.mat); installed mode
+%   uses build_manifest.mat/resource_manifest.mat. Only mlsc and mlsc-mprage-only
+%   may consume this option. Empty keeps the profile-owned placeholders, which
+%   runtime selection (installed) or the source-checkout refusal resolves.
 %   Minimum supported MATLAB: R2010b.
 
 if nargin < 2
@@ -52,7 +54,7 @@ else
     resource_manifest_name = 'mlsc_current_resources.mat';
 end
 config.current.runner = fullfile(root, 'payload_build', ...
-    'run_mlsc_current_payload.sh');
+    'run_pseudoct_worker.sh');
 config.current.build_manifest = fullfile(root, ...
     build_manifest_name);
 config.current.resource_manifest = fullfile(root, ...

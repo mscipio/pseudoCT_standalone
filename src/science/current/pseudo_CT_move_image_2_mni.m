@@ -1,9 +1,20 @@
-% Date: 03/31/2013;
-% Name: move_image_2_MNI.m;
-% Functio to move an image (or set of images) to get is as close as
-% possible to the MNI template (ch2.nii);
-
-function [Pout] = move_image_2_MNI(Pin, varargin)
+function [Pout] = pseudo_CT_move_image_2_mni(Pin, varargin)
+%PSEUDO_CT_MOVE_IMAGE_2_MNI Reposition image(s) toward the MNI template (ch2.nii).
+%   POUT = PSEUDO_CT_MOVE_IMAGE_2_MNI(PIN, TEMPLATE, IS_PET, OUTPUT_CONTEXT, CONFIG)
+%   PIN is a char matrix with one input NIfTI path per row. The optional
+%   arguments between PIN and CONFIG are: TEMPLATE, a numeric volume or a
+%   template NIfTI path (default: Batch_atlas/ch2.nii in the repository); IS_PET,
+%   a logical flag (0 = MPRAGE threshold 20, 1 = PET threshold 0.001);
+%   OUTPUT_CONTEXT, an optional logging struct. CONFIG (the profile struct) is
+%   the last argument and is required.
+%   POUT is a char matrix with one written path per input row.
+%   Side effects: writes <name>_repos.nii beside each input, using the new
+%   affine. When the environment variable PSEUDOCT_DEBUG_MOVE2MNI is set, it
+%   also writes <name>_repos_move2mni_debug.mat. It runs SPM coregistration
+%   in estimate-only mode and does not reslice.
+%   Errors: pseudo_CT:ProfileRequired (no CONFIG) and pseudo_CT:TemplateNotFound
+%   (default template missing).
+%   Originally dated 03/31/2013. Minimum supported MATLAB: R2010b.
 
 autom_select_template = 1;
 isPET = 0;
@@ -27,7 +38,7 @@ end
 
 if nargin < 3 || ~isstruct(varargin{end})
     error('pseudo_CT:ProfileRequired', ...
-        'move_image_2_MNI requires the selected profile config.');
+        'pseudo_CT_move_image_2_mni requires the selected profile config.');
 end
 config = varargin{end};
 output_context = struct();

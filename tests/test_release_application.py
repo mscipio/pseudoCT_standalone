@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, 'scripts'))
@@ -40,7 +41,12 @@ def write(path, text):
         handle.write(text)
 
 
-def make_package(root, labels=('R2010b',), version='1.0.0'):
+# Test fixture only: the caller passes this explicit synthetic version. It is not a
+# pseudoCT package version and the repository does not choose one.
+FIXTURE_VERSION = '0.0.0-test'
+
+
+def make_package(root, labels=('R2010b',), *, version):
     """A synthetic package with every required path and a consistent manifest and sums."""
     pkg = os.path.join(root, 'pseudoct-' + version)
     for rel in ra.required_paths(labels):
@@ -106,13 +112,61 @@ class CatalogAndSelectionTest(unittest.TestCase):
             ra.validate_catalog(bad_library)
 
 
+class FrontendInventoryTest(unittest.TestCase):
+    """The frontend/ inventory on synthetic frontend trees under the scratch base.
+
+    Why the 21 passed / 2 failed result in the v3.2.0 audit: Python writes bytecode into
+    frontend/__pycache__/. A stale, git-ignored .pyc left in the working tree was counted
+    as an extra frontend file, so the working tree failed two tests. A copy without
+    __pycache__/ passed all 23. The inventory now skips bytecode caches, so the working
+    tree passes as it is. No test relies on a clean copy."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix='release-frontend-', dir=scratch_base())
+        self.addCleanup(shutil.rmtree, self.base, True)
+        self.frontend = os.path.join(self.base, 'frontend')
+        for rel in ra.FRONTEND_OWN:
+            write(os.path.join(self.frontend, *rel.split('/')), 'synthetic ' + rel + '\n')
+        patcher = mock.patch.object(ra, 'FRONTEND_DIR', self.frontend)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_clean_frontend_tree_passes(self):
+        self.assertEqual(ra.frontend_files_on_disk(), set(ra.FRONTEND_OWN))
+        ra.check_sources()
+
+    def test_bytecode_caches_do_not_count(self):
+        write(os.path.join(self.frontend, '__pycache__', 'pseudo_CT_result_fields.cpython-313.pyc'),
+              'stale bytecode\n')
+        write(os.path.join(self.frontend, '__pycache__', 'pseudo_CT_gui_state.cpython-313.pyo'),
+              'stale bytecode\n')
+        write(os.path.join(self.frontend, 'stray.pyc'), 'stale bytecode\n')
+        self.assertEqual(ra.frontend_files_on_disk(), set(ra.FRONTEND_OWN))
+        ra.check_sources()
+
+    def test_unexpected_real_files_still_fail(self):
+        write(os.path.join(self.frontend, 'extra.m'), 'x\n')
+        write(os.path.join(self.frontend, '__pycache__', 'notes.txt'), 'x\n')
+        with self.assertRaises(ra.ReleaseError) as caught:
+            ra.check_sources()
+        message = str(caught.exception)
+        self.assertIn('extra.m', message)
+        self.assertIn('__pycache__/notes.txt', message)
+
+
 class FrontendAllowlistTest(unittest.TestCase):
 
-    def test_repository_frontend_matches_the_allowlist_exactly(self):
+    def test_real_working_tree_frontend_matches_the_allowlist(self):
+        """The repository's own frontend/ as it is on disk, including any untracked bytecode
+        cache left by earlier runs. It must pass without a clean copy (see FrontendInventoryTest)."""
         self.assertEqual(ra.frontend_files_on_disk(), set(ra.FRONTEND_OWN))
         for rel in ra.FRONTEND_FROM_SRC:
             self.assertTrue(os.path.isfile(ra.frontend_source(rel)), rel)
         ra.check_sources()
+
+    def test_package_resources_include_the_spm_dictionary(self):
+        self.assertIn('spm_dicom_dict.mat', ra.RESOURCE_REQUIRED)
+        self.assertIn('TPM.nii', ra.RESOURCE_REQUIRED)
 
     def test_shipped_paths_never_include_source_external_or_app_trees(self):
         labels = ('R2010b',)
@@ -125,6 +179,45 @@ class FrontendAllowlistTest(unittest.TestCase):
         self.assertTrue(ra.path_allowed('runtimes/R2010b/standalone/pseudoct_standalone', labels))
 
 
+class HelpAllowlistTest(unittest.TestCase):
+    """Package content for help/: the two help documents only, never screenshots."""
+
+    LABELS = ('R2010b',)
+    # Synthetic fixture names: screenshots as they appear under docs/help/assets/, and
+    # other help-tree paths. None may be shipped.
+    PNG_FIXTURES = ('help/assets/profile-selector.png', 'help/assets/getting-started.png',
+                    'help/screenshot.png', 'help/index.png', 'help/assets/index.html',
+                    'help/assets/style.css', 'help/extra.html', 'help/index.html/extra')
+
+    def test_help_index_and_style_are_shipped_under_help(self):
+        self.assertEqual(ra.HELP_FILES, ('index.html', 'style.css'))
+        for name in ra.HELP_FILES:
+            rel = 'help/' + name
+            self.assertTrue(ra.path_allowed(rel, self.LABELS), rel)
+            self.assertIn(rel, ra.required_paths(self.LABELS))
+            self.assertTrue(os.path.isfile(os.path.join(ra.HELP_DIR, name)), name)
+
+    def test_help_assets_and_png_images_are_never_allowed(self):
+        for rel in self.PNG_FIXTURES:
+            self.assertFalse(ra.path_allowed(rel, self.LABELS), rel)
+        for rel in ra.required_paths(self.LABELS):
+            self.assertNotIn('assets', rel.split('/'), rel)
+            self.assertFalse(rel.lower().endswith('.png'), rel)
+        for name in ra.HELP_FILES:
+            self.assertFalse(name.lower().endswith('.png'), name)
+
+    def test_package_containing_a_help_screenshot_fails_verification(self):
+        base = tempfile.mkdtemp(prefix='release-help-', dir=scratch_base())
+        try:
+            pkg = make_package(base, version=FIXTURE_VERSION)
+            self.assertEqual(ra.verify_package(pkg), [])
+            write(os.path.join(pkg, 'help', 'assets', 'profile-selector.png'), 'synthetic image\n')
+            problems = ra.verify_package(pkg)
+            self.assertTrue(any('help/assets/profile-selector.png' in p for p in problems), problems)
+        finally:
+            shutil.rmtree(base, ignore_errors=True)
+
+
 class VerifyTest(unittest.TestCase):
 
     def setUp(self):
@@ -134,17 +227,17 @@ class VerifyTest(unittest.TestCase):
         shutil.rmtree(self.base, ignore_errors=True)
 
     def test_consistent_package_verifies(self):
-        pkg = make_package(self.base)
+        pkg = make_package(self.base, version=FIXTURE_VERSION)
         self.assertEqual(ra.verify_package(pkg), [])
 
     def test_tampered_frontend_file_is_detected(self):
-        pkg = make_package(self.base)
+        pkg = make_package(self.base, version=FIXTURE_VERSION)
         write(os.path.join(pkg, 'frontend', 'load_mr_4_AC.m'), 'changed\n')
         problems = ra.verify_package(pkg)
         self.assertTrue(any('load_mr_4_AC.m' in p for p in problems), problems)
 
     def test_source_external_and_app_additions_are_refused(self):
-        pkg = make_package(self.base)
+        pkg = make_package(self.base, version=FIXTURE_VERSION)
         write(os.path.join(pkg, 'src', 'cli', 'pseudoct_standalone.m'), 'x\n')
         problems = ra.verify_package(pkg)
         self.assertTrue(any('forbidden path present: src/' in p for p in problems), problems)
@@ -156,16 +249,16 @@ class VerifyTest(unittest.TestCase):
         self.assertTrue(any('app' in p for p in ra.verify_package(pkg)))
 
     def test_unlisted_frontend_file_is_outside_the_allowlist(self):
-        pkg = make_package(self.base)
+        pkg = make_package(self.base, version=FIXTURE_VERSION)
         write(os.path.join(pkg, 'frontend', 'extra_helper.m'), 'x\n')
         problems = ra.verify_package(pkg)
         self.assertTrue(any('extra_helper.m' in p for p in problems), problems)
 
     def test_missing_executable_and_stale_sums_are_detected(self):
-        pkg = make_package(self.base)
-        os.remove(os.path.join(pkg, 'runtimes', 'R2010b', 'payload', 'mlsc_current_payload'))
+        pkg = make_package(self.base, version=FIXTURE_VERSION)
+        os.remove(os.path.join(pkg, 'runtimes', 'R2010b', 'payload', 'pseudoct_worker'))
         problems = ra.verify_package(pkg)
-        self.assertTrue(any('missing file: runtimes/R2010b/payload/mlsc_current_payload' in p
+        self.assertTrue(any('missing file: runtimes/R2010b/payload/pseudoct_worker' in p
                             for p in problems), problems)
         pkg2 = make_package(self.base, version='1.0.1')
         write(os.path.join(pkg2, ra.SUMS_NAME), 'bad\n')
@@ -212,6 +305,123 @@ class DryRunTest(unittest.TestCase):
         self.assertNotIn('WRAPPER', text)
         self.assertNotIn('app/', text)
         self.assertFalse(os.path.exists(output))
+
+
+class RuntimeManifestNegativeTest(unittest.TestCase):
+    """Runtime build and resource manifests are never shipped. Only manifest.json and
+    SHA256SUMS are manifest-type files written by the release. Nothing is built here."""
+
+    LABELS = ('R2010b', 'R2014b')
+    RUNTIME_MANIFESTS = ('build_manifest.mat', 'resource_manifest.mat',
+                         'mlsc_current_build.mat', 'mlsc_current_resources.mat')
+
+    def test_runtime_manifest_names_are_not_in_the_allowlist(self):
+        candidates = []
+        for name in self.RUNTIME_MANIFESTS:
+            candidates += [name, 'bin/' + name, 'frontend/' + name, 'help/' + name,
+                           'resources/' + name, 'runtimes/R2010b/payload/' + name,
+                           'runtimes/R2010b/standalone/' + name]
+        for rel in candidates:
+            self.assertFalse(ra.path_allowed(rel, self.LABELS), rel)
+        for rel in ra.required_paths(self.LABELS):
+            self.assertNotIn(os.path.basename(rel), self.RUNTIME_MANIFESTS, rel)
+        shipped_names = ({os.path.basename(p) for p in ra.RESOURCE_REQUIRED + ra.RUNTIME_FILES}
+                         | {os.path.basename(p) for p in ra.FRONTEND_FILES}
+                         | set(ra.HELP_FILES))
+        for name in self.RUNTIME_MANIFESTS:
+            self.assertNotIn(name, shipped_names)
+
+    def test_only_manifest_json_and_sha256sums_are_manifest_files(self):
+        import ast
+        self.assertEqual(ra.MANIFEST_NAME, 'manifest.json')
+        self.assertEqual(ra.SUMS_NAME, 'SHA256SUMS')
+        for name in (ra.MANIFEST_NAME, ra.SUMS_NAME):
+            self.assertFalse(ra.path_allowed(name, self.LABELS), name)
+        labels = [entry['label'] for entry in ra.load_catalog(ra.CATALOG_PATH)[1]]
+        for rel in ra.required_paths(labels):
+            name = os.path.basename(rel)
+            self.assertNotIn('manifest', name.lower(), rel)
+            self.assertNotEqual(name, ra.SUMS_NAME, rel)
+        # Static: every write_bytes call in the assembler must target exactly one of the
+        # two manifest-type names. Each call's first argument is inspected as source text.
+        with open(ra.__file__, encoding='utf-8') as handle:
+            source = handle.read()
+        written = []
+        for node in ast.walk(ast.parse(source, ra.__file__)):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                    and node.func.id == 'write_bytes':
+                names = {n.id for n in ast.walk(node.args[0]) if isinstance(n, ast.Name)}
+                hits = sorted(names & {'MANIFEST_NAME', 'SUMS_NAME'})
+                self.assertEqual(len(hits), 1, ast.get_source_segment(source, node))
+                written.append(hits[0])
+        self.assertEqual(sorted(written), ['MANIFEST_NAME', 'SUMS_NAME'])
+
+
+class Ssh2PackageInclusionTest(unittest.TestCase):
+    """AMEND-1: the MATLAB SSH2 transport ships under external/ssh2_v2_m1_r5/ with its
+    required MATLAB wrappers, the Ganymed JAR and the licence notices, and nothing else."""
+
+    LABELS = ('R2010b',)
+    JAR = 'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar'
+    NOTICES = ('license.txt', 'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1-source/LICENSE.txt')
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix='release-ssh2-', dir=scratch_base())
+        self.addCleanup(shutil.rmtree, self.base, True)
+
+    def package_path(self, rel):
+        return ra.SSH2_ROOT_REL + '/' + rel
+
+    def test_jar_and_licence_notices_are_required_and_allowlisted(self):
+        for rel in self.NOTICES + (self.JAR,):
+            self.assertIn(rel, ra.SSH2_FILES)
+            self.assertTrue(ra.path_allowed(self.package_path(rel), self.LABELS), rel)
+            self.assertIn(self.package_path(rel), ra.required_paths(self.LABELS))
+            self.assertTrue(os.path.isfile(os.path.join(ra.SSH2_SOURCE_ROOT, *rel.split('/'))), rel)
+
+    def test_allowlist_is_exactly_the_top_level_wrappers_jar_and_notices(self):
+        wrapper_dir = os.path.join(ra.SSH2_SOURCE_ROOT, 'ssh2_v2_m1_r5')
+        wrappers = {'ssh2_v2_m1_r5/' + name for name in os.listdir(wrapper_dir)
+                    if name.endswith('.m') and os.path.isfile(os.path.join(wrapper_dir, name))}
+        self.assertEqual(len(wrappers), 19)
+        self.assertEqual(wrappers, {rel for rel in ra.SSH2_FILES if rel.endswith('.m')})
+        source = set()
+        for dirpath, _dirs, names in os.walk(ra.SSH2_SOURCE_ROOT):
+            for name in names:
+                full = os.path.join(dirpath, name)
+                source.add(os.path.relpath(full, ra.SSH2_SOURCE_ROOT).replace(os.sep, '/'))
+        allowed = {rel for rel in source if ra.path_allowed(self.package_path(rel), self.LABELS)}
+        self.assertEqual(allowed, set(ra.SSH2_FILES))
+        self.assertLess(len(allowed), len(source))
+
+    def test_other_external_content_is_never_allowlisted(self):
+        for rel in ('ssh2_v2_m1_r5/examples/Basic.java',
+                    'ssh2_v2_m1_r5/examples/ssh2_examples.m',
+                    'ssh2_v2_m1_r5/HISTORY.txt',
+                    'ssh2_v2_m1_r5/README.txt',
+                    'ssh2_v2_m1_r5/ssh2_extra_helper.m',
+                    'ssh2_v2_m1_r5/ganymed-ssh2-m1/README.txt',
+                    'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1-source/ganymed-ssh2-m1.jar',
+                    'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1-source/src/ch/ethz/ssh2/Session.java',
+                    'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1-source/javadoc/index.html',
+                    'other_library/extra.m'):
+            self.assertFalse(ra.path_allowed(self.package_path(rel), self.LABELS), rel)
+        self.assertFalse(ra.path_allowed('external/spm8-r6313/spm.m', self.LABELS))
+
+    def test_package_without_a_licence_notice_fails_verification(self):
+        pkg = make_package(self.base, version=FIXTURE_VERSION)
+        self.assertEqual(ra.verify_package(pkg), [])
+        os.remove(os.path.join(pkg, *self.package_path('license.txt').split('/')))
+        problems = ra.verify_package(pkg)
+        self.assertTrue(any('missing file: external/ssh2_v2_m1_r5/license.txt' in p
+                            for p in problems), problems)
+
+    def test_extra_external_example_in_a_package_is_refused(self):
+        pkg = make_package(self.base, version='0.0.1-test')
+        write(os.path.join(pkg, *self.package_path('ssh2_v2_m1_r5/examples/Basic.java').split('/')),
+              'x\n')
+        problems = ra.verify_package(pkg)
+        self.assertTrue(any('ssh2_v2_m1_r5/examples/Basic.java' in p for p in problems), problems)
 
 
 if __name__ == '__main__':

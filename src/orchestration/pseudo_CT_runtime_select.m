@@ -13,8 +13,8 @@ function out = pseudo_CT_runtime_select(config, label)
 %   'bin/pseudoct resolve --mcr LABEL' prints PSEUDOCT_RUNTIME/MCR_ROOT/RUNNER
 %   assignments and fails when the release is absent or its MCR mismatches.
 %   On success this sets config.current.runner, config.current.mcr_root and
-%   config.current.release (LABEL), plus config.current.build_manifest and
-%   resource_manifest under <install>/runtimes/LABEL/payload, and exports PSEUDOCT_RUNTIME_RELEASE,
+%   config.current.release (LABEL). Installed mode sets build_manifest and
+%   resource_manifest to '' (direct mode: no manifests), and exports PSEUDOCT_RUNTIME_RELEASE,
 %   PSEUDOCT_RUNTIME_MCR_ROOT and PSEUDOCT_RUNTIME_MCR_VERSION for the MLSC
 %   identity check. Any failure is raised before scientific processing.
 %
@@ -75,11 +75,10 @@ end
 out.current.runner = runner;
 out.current.mcr_root = mcr_root;
 out.current.release = label;
-% Per-release manifests written at assembly by 'package-manifests'.
-payload_dir = fullfile(install_root, 'runtimes', label, 'payload');
-out.current.build_manifest = fullfile(payload_dir, 'build_manifest.mat');
-out.current.resource_manifest = fullfile(payload_dir, ...
-    'resource_manifest.mat');
+% Installed direct mode: no build or resource manifests. The runner, worker
+% executable and standalone are identified by SHA-256 at validation and submit.
+out.current.build_manifest = '';
+out.current.resource_manifest = '';
 setenv('PSEUDOCT_RUNTIME_RELEASE', label);
 setenv('PSEUDOCT_RUNTIME_MCR_ROOT', mcr_root);
 setenv('PSEUDOCT_RUNTIME_MCR_VERSION', releases(index).mcr_version);

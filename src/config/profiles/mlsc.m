@@ -1,22 +1,22 @@
 function config = mlsc()
-%MLSC MLSC profile using the R2010b compiled payload.
-%   T005 canonical cell (T014 authoritative): mode='mlsc',
-%   Science settings match local
-%   (alias=1, recenter='Yes', zero_background='No', bone=true, fwhm=0,
-%   PCA callable_pca then repo_legacy, standard mMR/UMAP/NIfTI-and-DICOM
-%   policy). config.current carries the neutral pinned artifact contract
-%   (runner, pinned MATLAB installation root /usr/pubsw/common/matlab/7.11,
-%   required MCR release 7.14, build_manifest,
-%   resource_manifest, required_outputs); config.mlsc carries
-%   scheduler/host/shell/FreeSurfer fields only.
+%MLSC MLSC profile: Slurm submission to MLSC with the shared compiled worker.
+%   CONFIG = MLSC() returns the canonical 'mlsc' profile struct. Its science
+%   settings match LOCAL (alias 1, recenter 'Yes', zero background 'No', bone
+%   on, fwhm 0, PCA callable_pca then repo_legacy, mMR policy, NIfTI and DICOM
+%   output). config.mlsc holds the host, shell, FreeSurfer and Slurm fields
+%   (partition basic, 1 node, 1 task, 4 CPUs, 8G memory, 02:00:00 time limit).
+%   config.current holds the compiled artifact contract: runner, mcr_root (the
+%   MATLAB 7.11 installation root), build_manifest, resource_manifest and
+%   required_outputs. The required MCR release is 7.14; it is not inferred
+%   from mcr_root.
 %
-%   Artifact references resolve relative to the installed pseudoCT
-%   version directory derived from this profile's own location at load
-%   time (single coherent installation layout, no second layout).
-%   Source-only checkouts without the packaged artifacts fail closed at
-%   preflight. No catalog, no resolver, no
-%   mutable-alias/current-label authority, no MCR 7.11 release fallback, no
-%   submitting-MATLAB substitute. No payload fields inside config.mlsc.
+%   Artifact fields are placeholders here; the installed Runtime selection
+%   supplies them. A source checkout has no installed artifact and fails closed
+%   before any application run unless an explicit development artifact root is
+%   given. There is no mutable alias or current-label lookup, and no submitting-
+%   MATLAB substitute. config.mlsc contains no artifact fields.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11). This file only declares
+%   values; mlsc_preflight and the MLSC backend perform validation and submission.
 
 dependency_paths = pseudo_CT_dependency_paths();
 
@@ -57,7 +57,7 @@ config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'MLSC';
 config.presentation.description = ...
-    'Run the pseudoCT pipeline on MLSC using the compiled MATLAB R2010b backend.';
+    'Run the pseudoCT pipeline on MLSC using the same shared compiled worker.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = true;
 config.presentation.order = 15;
@@ -73,7 +73,7 @@ config.normalization.cluster = 'Yes';
 % Shared subject temporary directories are used by the MLSC backend.
 config.normalization.host_folder = '';
 
-% MLSC scheduler/host/shell/FreeSurfer fields only. Payload fields
+% MLSC scheduler/host/shell/FreeSurfer fields only. Artifact fields
 % (runner/mcr_root/build_manifest/...) live in config.current, never here.
 % MLSC SSH host.
 config.mlsc.host = 'mlsc.nmr.mgh.harvard.edu';
@@ -88,34 +88,24 @@ config.mlsc.cpus_per_task = 4;
 config.mlsc.memory = '8G';
 config.mlsc.time = '02:00:00';
 
-% Neutral current artifact contract (T004/T014): the referenced immutable
-% artifact plus its machine-readable manifests. Defaults resolve relative
-% to the installed pseudoCT version directory derived from this profile's
-% own location at load time: this file lives in
-% <version>/src/config/profiles/, so the version directory is three
-% levels up and the staged artifact layout keeps the launcher under
-% <version>/compiled/current/payload_build/ with the existing source
-% manifests at <version>/compiled/current/. Installed runtime selection
-% rebases these paths to build_manifest.mat/resource_manifest.mat under the
-% release payload. There is no absolute pin and no silent fallback: absent
-% bundled files fail closed at missing-file validation.
-% The explicit mlsc_current_artifact_root override wins over these defaults.
-% MATLAB_ROOT stays pinned below while
-% the required bundled MCR release remains separately pinned at 7.14. The
-% resolved shared Runtime path belongs only to transient execution
-% context, never to this profile (no runtime_root field).
-artifact_dir_here = dependency_paths.current_root;
-% Launcher of the referenced artifact.
-config.current.runner = fullfile(artifact_dir_here, 'payload_build', ...
-    'run_mlsc_current_payload.sh');
+% Neutral current artifact contract: the referenced immutable artifact and its
+% machine-readable manifests. No compiled tree is assumed. The placeholders below
+% are not files. Installed runtime selection replaces the runner and MATLAB
+% Runtime root and clears build_manifest and resource_manifest (direct mode),
+% identifying the runner by SHA-256 instead. A source checkout refuses application
+% runs unless an explicit development artifact root is supplied
+% (mlsc_current_artifact_root). There is no absolute pin and no silent fallback.
+% MATLAB_ROOT stays pinned below; the required MCR release stays separately
+% pinned at 7.14. The resolved shared Runtime path belongs only to transient
+% execution context, never to this profile (no runtime_root field).
+% Launcher of the referenced artifact (placeholder until runtime selection).
+config.current.runner = 'runtime-selection-required';
 % MATLAB R2010b/compiler installation root (never infer MCR from this path).
 config.current.mcr_root = '/usr/pubsw/common/matlab/7.11';
-% Immutable build manifest describing the referenced artifact.
-config.current.build_manifest = fullfile(artifact_dir_here, ...
-    'mlsc_current_build.mat');
-% Resource manifest describing the referenced artifact resources.
-config.current.resource_manifest = fullfile(artifact_dir_here, ...
-    'mlsc_current_resources.mat');
+% Immutable build manifest (placeholder until runtime selection clears it).
+config.current.build_manifest = 'runtime-selection-required';
+% Resource manifest (placeholder until runtime selection clears it).
+config.current.resource_manifest = 'runtime-selection-required';
 % Required outputs described by the referenced artifact contract.
 config.current.required_outputs = {'att_map.nii'; ...
     'Fusion_MR_Pseudo_CT_validation.tiff'; 'Pseudo_CT_AC_Version.txt'};

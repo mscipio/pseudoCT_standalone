@@ -7,8 +7,9 @@ function varargout = load_mr_4_AC(varargin)
 %
 %   Validate and Submit both go through the compiled launcher by way of
 %   pseudo_CT_launch_request. Submit is enabled only after a successful
-%   Validate of exactly the current inputs and options. The window does not
-%   block MATLAB: it stays open for another job after each submission.
+%   Validate of exactly the current inputs and options. The window stays open
+%   for another job after each request, but the launcher call is synchronous:
+%   MATLAB is busy until Validate or Submit returns.
 %   Minimum supported MATLAB: R2010b.
 
 % Edit the above text to modify the response to help load_mr_4_AC
@@ -306,7 +307,7 @@ try
             'The inputs changed after validation. Validate again before Submit.');
     end
     if local_requires_gui_credentials(handles.validation_config)
-        [password, username, group_account] = passwordEntryDialog( ...
+        [password, username, group_account] = pseudo_CT_password_entry_dialog( ...
             'enterUserName', true, 'enterGroupAccount', true, ...
             'DefaultUserName', '', 'DefaultGroupAccount', '', ...
             'CheckPasswordLength', true, 'PasswordLengthMin', 1, ...

@@ -42,6 +42,9 @@ local_expect('pseudo_CT:BuildDependency', ...
 fake_spm = fullfile(work, 'fake-spm');
 mkdir(fake_spm);
 local_write(fullfile(fake_spm, 'Contents.m'), {'% synthetic SPM root for preflight tests'});
+% The preflight requires SPM's DICOM dictionary; a synthetic one is enough here.
+dict_synthetic = struct('values', 1); %#ok<NASGU>
+save(fullfile(fake_spm, 'spm_dicom_dict.mat'), 'dict_synthetic', '-v6');
 local_expect('pseudo_CT:BuildCompileInputMissing', ...
     @() build_application('R2010b', 'SpmRoot', fake_spm));
 
@@ -60,9 +63,12 @@ assert(strcmp(report.mode, 'dry-run') && ~report.mcc_invoked, 'Dry run must not 
 assert(exist(fullfile(fresh_out, 'R2010b'), 'dir') ~= 7, 'Dry run must not create a package.');
 assert(exist(sentinel, 'file') ~= 2, 'mcc was reached during the dry run.');
 
+% MEX inputs whose folder is already on the search path report exist type 3.
+local_mex_on_path_case(repo, work, sentinel);
+
 % Synthetic package: inventory, manifest agreement, and tamper detection.
 pkg = fullfile(work, 'pkg');
-rels = {'standalone/pseudoct_standalone'; 'payload/mlsc_current_payload'; ...
+rels = {'standalone/pseudoct_standalone'; 'payload/pseudoct_worker'; ...
     'resources/Atlas_a.nii'; 'bin/pseudoct'};
 bodies = {'standalone stub'; 'payload stub'; 'atlas bytes'; 'launcher'};
 for kk = 1:numel(rels)
@@ -117,14 +123,73 @@ restored = verify_application_package(pkg);
 assert(restored.passed, 'Restored synthetic package must verify.');
 assert(exist(sentinel, 'file') ~= 2, 'mcc was reached during the tests.');
 
-% Payload data plan: spm_dicom_headers loads spm_dicom_dict.mat by a bare name,
-% so it must be a -a input of the payload CTF; the deployed compute reads the
-% atlas TPM.nii from the resources folder, so it must be a resource.
+% Single mechanism: the SPM DICOM dictionary is an unchanged resources/ file copied
+% from the SPM root, not a worker -a input; the atlas TPM.nii is a resource too.
 plan_text = local_read_text(fullfile(repo, 'scripts', 'build_application.m'));
-assert(~isempty(strfind(plan_text, 'fullfile(spm, ''spm_dicom_dict.mat'')')), ...
-    'The payload -a plan must include the SPM DICOM dictionary.');
+assert(isempty(strfind(plan_text, 'fullfile(spm, ''spm_dicom_dict.mat'')')), ...
+    'The payload -a plan must no longer compile the SPM DICOM dictionary.');
+assert(~isempty(strfind(plan_text, '{''spm_dicom_dict.mat''}')), ...
+    'The resource list must include spm_dicom_dict.mat.');
+assert(~isempty(strfind(plan_text, 'source_dir = opt.spmroot;')), ...
+    'The dictionary must be copied from the selected SPM root.');
 assert(~isempty(strfind(plan_text, '''TPM.nii''')), ...
     'The atlas resources must include TPM.nii.');
+
+% The dictionary check (used by the worker before any SPM call): missing,
+% unreadable and present cases, in a scratch folder.
+addpath(fullfile(repo, 'src', 'science', 'current'), '-begin');
+dict_cleanup = onCleanup(@() rmpath(fullfile(repo, 'src', 'science', 'current'))); %#ok<NASGU>
+dict_dir = fullfile(work, 'dict');
+mkdir(dict_dir);
+local_expect('pseudo_CT:SpmDicomDictMissing', ...
+    @() pseudo_CT_check_spm_dicom_dict(dict_dir));
+local_write_bytes(fullfile(dict_dir, 'spm_dicom_dict.mat'), uint8([]));
+local_expect('pseudo_CT:SpmDicomDictUnreadable', ...
+    @() pseudo_CT_check_spm_dicom_dict(dict_dir));
+local_write_bytes(fullfile(dict_dir, 'spm_dicom_dict.mat'), uint8('not a MAT file'));
+local_expect('pseudo_CT:SpmDicomDictUnreadable', ...
+    @() pseudo_CT_check_spm_dicom_dict(dict_dir));
+dict = struct('values', 1); %#ok<NASGU>
+save(fullfile(dict_dir, 'spm_dicom_dict.mat'), 'dict', '-v6');
+found = pseudo_CT_check_spm_dicom_dict(dict_dir);
+assert(strcmp(found, fullfile(dict_dir, 'spm_dicom_dict.mat')), ...
+    'A present dictionary must return its absolute path.');
+assert(strcmp(which('spm_dicom_dict.mat'), found), ...
+    'The dictionary must resolve by its bare name once joined.');
+rmpath(dict_dir);
+end
+
+function local_mex_on_path_case(repo, work, sentinel)
+%LOCAL_MEX_ON_PATH_CASE Dry-run preflight accepts SPM MEX inputs on the path.
+%   exist reports a MEX-file on the search path as type 3, not 2. The SPM root
+%   is added to the path here, so the case does not depend on folders left by
+%   earlier suites. The path is restored when this function returns.
+old_path = path();
+cleanup_path = onCleanup(@() path(old_path)); %#ok<NASGU>
+spm_root = fullfile(repo, 'external', 'spm8-r6313');
+addpath(spm_root, '-begin');
+mex_file = fullfile(spm_root, 'spm_slice_vol.mexa64');
+if exist(mex_file, 'file') ~= 3
+    error('test_build_application:MexType', ...
+        'Expected exist type 3 for a MEX file on the path, got %d.', exist(mex_file, 'file'));
+end
+out_root = fullfile(work, 'mex-on-path');
+report = build_application('R2010b', 'OutputRoot', out_root);
+if ~strcmp(report.mode, 'dry-run') || report.mcc_invoked
+    error('test_build_application:MexDryRun', 'Dry run with a MEX on the path must not invoke mcc.');
+end
+if exist(fullfile(out_root, 'R2010b'), 'dir') == 7 || exist(sentinel, 'file') == 2
+    error('test_build_application:MexDryRun', 'Dry run must not write a package or reach mcc.');
+end
+end
+
+function local_write_bytes(path_text, bytes)
+fid = fopen(path_text, 'w');
+if fid == -1
+    error('test_build_application:Write', 'Cannot write %s.', path_text);
+end
+cleanup_fid = onCleanup(@() fclose(fid)); %#ok<NASGU>
+fwrite(fid, bytes, 'uint8');
 end
 
 function local_expect(identifier, handle)

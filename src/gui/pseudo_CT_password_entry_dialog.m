@@ -1,76 +1,36 @@
-function [Password, UserName, GroupAccount] = passwordEntryDialog(varargin)
-% PASSWORDENTRYDIALOG
-% [Password, UserName] = passwordEntryDialog(varargin)
+function [Password, UserName, GroupAccount] = pseudo_CT_password_entry_dialog(varargin)
+% PSEUDO_CT_PASSWORD_ENTRY_DIALOG Modal login dialog for pseudoCT MLSC credentials.
+%   [PASSWORD, USERNAME, GROUPACCOUNT] = PSEUDO_CT_PASSWORD_ENTRY_DIALOG(NAME, VALUE, ...)
+%   Shows a dialog with a hidden password field. It is called by the MLSC
+%   login step of the frontend and the run lifecycle. The third output is the
+%   MLSC group account, which is entered only when 'enterGroupAccount' is true.
 %
-% Create a password entry dialog for entering a password that is visibly
-% hidden.  Releases before R2019a require Java Swing support.
+%   Name-value options (defaults):
+%     'enterUserName'        false   show a user name field
+%     'DefaultUserName'      ''      initial user name
+%     'enterGroupAccount'    false   show a group account field
+%     'DefaultGroupAccount'  ''      initial group account
+%     'ValidatePassword'     false   ask for the password a second time
+%     'CheckPasswordLength'  true    enforce the length limits below
+%     'PasswordLengthMin'    2
+%     'PasswordLengthMax'    8
+%     'WindowName'           'Login'
 %
-% It has only been tested on the Windows platform in R2008a.  It should
-% work in R2007a or later.
+%   Outputs: PASSWORD is the entered text. On cancel, the Java path returns -1.
+%   USERNAME and GROUPACCOUNT are '' unless their fields are enabled.
 %
-% The password box is created using the Java Swing component
-% JPasswordField.
-%
-% Optional Input Arguments
-% ------------------------
-%
-% 'enterUserName'       DEFAULT: false
-% Display the user name entry box.  The user name entered must be at least
-% one character or an error dialog is displayed.
-%
-% 'DefaultUserName'     DEFAULT: ''
-% String value of user name to populate in User Name box upon creation.
-%
-% 'ValidatePassword'    DEFAULT: false
-% Display dialog box to reenter password for validation purposes.
-%
-% 'CheckPasswordLength' DEFAULT: true
-% Check the password length to ensure it meets the specified criteria.
-%
-% 'PasswordLengthMin'   DEFAULT: 2
-% Minimum password length allowed.
-%
-% 'PasswordLengthMax'   DEFAULT: 8
-% Maximum password length allowed.
-%
-% 'WindowName'          DEFAULT: 'Login'
-% Title of the password entry window.
-%
-% Examples
-% --------
-%
-% Create a password dialog box with the default options.
-% -----------------------------------------------------------------------
-% [Password] = passwordEntryDialog;
-%
-% Create a user name and password entry dialog box without password
-% verification.
-% -----------------------------------------------------------------------
-% [Password, UserName] = passwordEntryDialog('enterUserName', true)
-%
-% Create a user name and password entry dialog box without password
-% verification.  Set the user name to 'jdoe' upon startup.
-% -----------------------------------------------------------------------
-% [Password, UserName] = passwordEntryDialog('enterUserName', true,...
-%      'DefaultUserName', 'jdoe')
-%
-% Create a password dialog box with password validation
-% -----------------------------------------------------------------------
-% [Password] = passwordEntryDialog('ValidatePassword', true);
-%
-% Create a user name and password entry dialog box with password
-% verification.
-% -----------------------------------------------------------------------
-% [Password, UserName] = passwordEntryDialog('enterUserName', true,...
-%      'ValidatePassword', true)
-%
-% Check the length of the password to be between 5 and 8 characters
-% -----------------------------------------------------------------------
-% [Password, UserName] = passwordEntryDialog('CheckPasswordLength', true,...
-%      'PasswordLengthMin', 5,...
-%      'PasswordLengthMax', 8)
-%
-% -----------------------------------------------------------------------
+%   Implementation: on MATLAB R2019a (9.6) and later the dialog uses the bundled
+%   passwordTools functions (uilogin, uipassword). Earlier releases, including
+%   R2010b (MATLAB 7.11), build a Java Swing JPasswordField dialog and require
+%   Java Swing. That Java path was originally tested on Windows (R2008a); it
+%   has not been verified on R2010b in this repository.
+%   Errors: pseudo_CT_password_entry_dialog error when Java Swing is unavailable
+%   (Java path); MATLAB:InputParser:ArgumentFailedValidation when
+%   PasswordLengthMax is below PasswordLengthMin.
+%   Side effects: displays a modal window. The credentials are returned to the
+%   caller only and are not logged or written to disk.
+%   Origin: Jesse B. Lai (2007-2008), LGPL v3; see the notice below.
+%   Minimum supported MATLAB: R2010b (Java path).
 % Copyright (C) 2007-2008, Jesse B. Lai
 %
 % This program is free software: you can redistribute it and/or modify
@@ -127,7 +87,7 @@ function [Password, UserName, GroupAccount] = passwordEntryDialog(varargin)
 %% Select the supported UI implementation
 UsePasswordTools = ~verLessThan('matlab', '9.6');
 if ~UsePasswordTools && ~usejava('swing')
-   error('passwordEntryDialog: Java is required for this program to run.');
+   error('pseudo_CT_password_entry_dialog: Java is required for this program to run.');
 end
 
 %% Parse Input Arguments

@@ -1,28 +1,31 @@
-# pseudoCT release catalog and standalone layout
+# Release catalog, packaging and runtime identity
 
-This document records the MATLAB release catalog used by the multi-release standalone
-workflow. The machine-readable source is `config/releases.json`; this file explains it.
-Values here must match that file.
+This document owns packaging, the MATLAB release catalog, runtime identity and
+the layout of the standalone distribution. The machine-readable catalog is
+`config/releases.json`; the table below mirrors it, and that JSON file is
+authoritative. Installation steps are in [Installation](installation.md); CLI
+options are in [Headless API and CLI](headless-cli.md).
 
 ## Supported exact release labels
 
 Each `--mcr` value must be one of these exact labels.
 
-| Release label | MATLAB version      | MCR version | Architecture | Runtime library                 |
-|---------------|---------------------|-------------|--------------|---------------------------------|
-| R2010b (default) | 7.11           | 7.14        | glnxa64      | `libmwmclmcrrt.so.7.14`         |
-| R2014a        | 8.3                 | 8.3         | glnxa64      | `libmwmclmcrrt.so.8.3`          |
-| R2014b        | 8.4                 | 8.4         | glnxa64      | `libmwmclmcrrt.so.8.4`          |
-| R2019a        | 9.6.0.1072779       | 9.6         | glnxa64      | `libmwmclmcrrt.so.9.6`          |
-| R2019b        | 9.7.0.1190202       | 9.7         | glnxa64      | `libmwmclmcrrt.so.9.7`          |
-| R2022a        | 9.12.0.2039608      | 9.12        | glnxa64      | `libmwmclmcrrt.so.9.12`         |
-| R2022b        | 9.13.0.2049777      | 9.13        | glnxa64      | `libmwmclmcrrt.so.9.13`         |
-| R2026a        | 26.1.0.3251617      | 26.1        | glnxa64      | `libmwmclmcrrt.so.26.1`         |
+| Release label | MATLAB version | MCR version | Architecture | Runtime library |
+|---|---|---|---|---|
+| R2010b (default) | 7.11 | 7.14 | glnxa64 | `libmwmclmcrrt.so.7.14` |
+| R2014a | 8.3 | 8.3 | glnxa64 | `libmwmclmcrrt.so.8.3` |
+| R2014b | 8.4 | 8.4 | glnxa64 | `libmwmclmcrrt.so.8.4` |
+| R2019a | 9.6.0.1072779 | 9.6 | glnxa64 | `libmwmclmcrrt.so.9.6` |
+| R2019b | 9.7.0.1190202 | 9.7 | glnxa64 | `libmwmclmcrrt.so.9.7` |
+| R2022a | 9.12.0.2039608 | 9.12 | glnxa64 | `libmwmclmcrrt.so.9.12` |
+| R2022b | 9.13.0.2049777 | 9.13 | glnxa64 | `libmwmclmcrrt.so.9.13` |
+| R2026a | 26.1.0.3251617 | 26.1 | glnxa64 | `libmwmclmcrrt.so.26.1` |
 
-- The default release is **R2010b**.
+- The default release is **R2010b**: MATLAB 7.11 is its build provenance, and
+  MATLAB Runtime 7.14 is the runtime identity checked at execution.
 - **R2010a** and **R2026b** are not in the catalog because they are not installed
   on the inspected workstation. Do not add them without inspecting an installation.
-- Identity terms are defined in [Identity terminology](#identity-terminology).
+- Identity terms are defined in [Version and identity terminology](#version-and-identity-terminology).
 
 ## Selecting a release
 
@@ -40,27 +43,32 @@ Each `--mcr` value must be one of these exact labels.
 ## Build inputs
 
 - The release driver `scripts/release_application.py` takes a required explicit
-  `--version`. No `VERSION` file or `git describe` is inferred.
+  `--version`. No `VERSION` file or `git describe` is inferred. The driver's
+  examples use the placeholder `--version <VERSION>`; substitute the package
+  version chosen by the user. The distribution package number is a user decision;
+  this repository does not choose it.
 - MATLAB installation roots are explicit build inputs supplied at build time
   (`--matlab-root LABEL=PATH`). They are not stored in `config/releases.json`.
 - The default output directory is `<repository>/dist/`, derived from the location of
   the driver, not from the working directory. `--output DIR` overrides it.
+- Each release is built by `scripts/build_application.m`, which refuses a dirty git
+  tree. Commit or otherwise clean the tree before a real build; this guard is
+  intentional and must not be bypassed.
 
 ## Distribution layout
 
 ```
 pseudoct-<version>/
-  bin/pseudoct                                          the only public launcher (copied)
-  run_pseudo_CT.m                                       MATLAB frontend (copied from the repository)
-  frontend/                                             MATLAB frontend files (copied verbatim)
-  runtimes/<LABEL>/payload/mlsc_current_payload         compiled MLSC payload (science worker)
-  runtimes/<LABEL>/payload/run_mlsc_current_payload.sh  payload runner (copy of scripts/)
-  runtimes/<LABEL>/payload/build_manifest.mat           per-release build manifest (package-manifests)
-  runtimes/<LABEL>/payload/resource_manifest.mat        per-release resource manifest (package-manifests)
-  runtimes/<LABEL>/standalone/pseudoct_standalone       compiled headless engine (dispatcher)
-  resources/                                            atlas and template files
-  manifest.json                                         canonical; embeds the release catalog
-  SHA256SUMS                                            sorted checksums, includes manifest.json
+  bin/pseudoct                                       the only public launcher (copied)
+  run_pseudo_CT.m                                    MATLAB frontend (copied from the repository)
+  frontend/                                          MATLAB frontend files (copied verbatim)
+  help/index.html, help/style.css                    help documents from docs/help (docs/help/assets/ is never shipped)
+  runtimes/<LABEL>/payload/pseudoct_worker           compiled science worker (shared by local and MLSC)
+  runtimes/<LABEL>/payload/run_pseudoct_worker.sh    worker runner (copy of scripts/run_pseudoct_worker.sh)
+  runtimes/<LABEL>/standalone/pseudoct_standalone    compiled headless engine (dispatcher)
+  resources/                                         atlas and template files, and SPM's DICOM dictionary (spm_dicom_dict.mat, copied unchanged)
+  manifest.json                                      catalog manifest read by bin/pseudoct (embeds the release catalog)
+  SHA256SUMS                                         sorted checksums, includes manifest.json
 ```
 
 - `frontend/` holds the window, its profile selector, the request bridge and the
@@ -68,9 +76,17 @@ pseudoct-<version>/
   shipped from their `src/` originals, which the compiled CLI and the lifecycle also
   use. The driver's `FRONTEND_OWN` and `FRONTEND_FROM_SRC` lists are the complete
   allowlist; nothing else is shipped beside them.
-- The distribution contains no `src/`, no `external/`, no tests, no build tools, no logs
-  and no `app/` GUI executable. `--verify DIR` of the driver refuses anything outside the
-  allowlist.
+- The inventory skips Python bytecode under `frontend/` (`*.pyc`/`*.pyo`, including in
+  `__pycache__/`). Python regenerates it and git ignores it, so it is not frontend
+  content. The release check does not depend on whether a checkout has it; any other
+  extra file in `frontend/` still fails.
+- The distribution contains no `src/`, no tests, no build tools, no logs and no `app/`
+  GUI executable. Under `external/` it contains only `external/ssh2_v2_m1_r5/`: the SSH2
+  MATLAB files, the Ganymed jar and the licence notices. No other `external/` content is
+  shipped. `--verify DIR` of the driver refuses anything outside the allowlist.
+- **No build or resource manifest is shipped.** The compiled-current build and resource
+  manifests (`mlsc_current_build.mat` and `mlsc_current_resources.mat`) belong to source
+  checkouts only. `manifest.json` is the release catalog, not a build manifest.
 - Paths inside the distribution are relative to the installed location, so the tree
   works after it is moved or reached through a symlink.
 
@@ -105,12 +121,12 @@ pseudoct --help
   (see below). `gui` and `run --orchestrate` were removed; both are refused as unknown
   operations with exit `64`.
 - `run validate|run` is the CLI (validate, or validate and submit) with the same
-  options, text/JSONL output and exit codes as before. The action word follows `run`.
+  options, text/JSONL output and exit codes as in [Headless API and CLI](headless-cli.md).
 - `headless` keeps the two-positional contract and runs `standalone/pseudoct_standalone
   headless` with `PSEUDOCT_REQUEST_MAT` and `PSEUDOCT_RESULT_MAT`.
 - `resolve` validates one release and prints single-quoted, sourceable lines:
   `PSEUDOCT_EXE='...'` (the standalone dispatcher), `PSEUDOCT_MCR_ROOT='...'`,
-  `PSEUDOCT_RUNNER='...'` (`runtimes/<LABEL>/payload/run_mlsc_current_payload.sh`),
+  `PSEUDOCT_RUNNER='...'` (`runtimes/<LABEL>/payload/run_pseudoct_worker.sh`),
   `PSEUDOCT_INSTALL_ROOT='...'` and `PSEUDOCT_RUNTIME_RELEASE='<LABEL>'`. This is the one
   runtime-selection mechanism; MATLAB callers use it.
 - Every installed operation that runs a release (`run`, `headless`)
@@ -126,23 +142,44 @@ pseudoct --help
 ### Release and MATLAB Runtime root selection
 
 - A release is complete only when all three artifacts exist and are executable:
-  `payload/mlsc_current_payload`, `payload/run_mlsc_current_payload.sh` and
+  `payload/pseudoct_worker`, `payload/run_pseudoct_worker.sh` and
   `standalone/pseudoct_standalone`.
-- The MATLAB Runtime root precedence is:
-  1. `--mcr-root <dir>`
-  2. `PSEUDOCT_MCR_ROOT_<LABEL>`, for example `PSEUDOCT_MCR_ROOT_R2010b`
-  3. `PSEUDOCT_MCR_ROOT`
+- The MATLAB Runtime root is `--mcr-root <dir>` when given; otherwise the catalog
+  location `/usr/pubsw/common/matlab/<D>` of the selected release, where `<D>` is the
+  first two dotted components of its `matlab_version` (`9.6.0.1072779` → `9.6`,
+  `26.1.0.3251617` → `26.1`, `7.11` → `7.11`). Every catalog release is discovered this
+  way. No environment variable takes part in discovery. A catalog location that is absent
+  or fails identity validation stops the run and names the candidate, the missing item and
+  `--mcr-root`; an explicit `--mcr-root` always takes precedence.
 - A root only selects a directory. It never bypasses identity validation: the library
   and `mcrversion.ver` evidence must match the selected label, or nothing runs.
 - In an installed distribution the catalog is the copy embedded under `catalog` in
   `manifest.json`. A repository checkout reads `config/releases.json`.
 
-### Payload runner
+### Worker runner and installed-direct identity
 
-`payload/run_mlsc_current_payload.sh` is installed beside `mlsc_current_payload`. It
-takes `<mcr_root> <phase> <job_manifest> <resource_manifest>`, sets the Runtime library
-path from `mcr_root` and execs the compiled payload from its own directory. The
-repository branch of `scripts/run_mlsc_current_payload.sh` is unchanged.
+`payload/run_pseudoct_worker.sh` is installed beside `pseudoct_worker`. It takes
+`<mcr_root> <phase> <job_manifest> [<resource_manifest>]`, sets the Runtime library
+path from `mcr_root` and execs the compiled worker from its own directory. The
+repository source of this runner is `scripts/run_pseudoct_worker.sh` (renamed in
+v3.2.0 from the former MLSC payload runner name; its body is otherwise unchanged).
+
+Installed runs (local and MLSC) use **installed-direct** mode, because no build or
+resource manifest is shipped. Direct mode uses the two-argument worker call (phase
+and job manifest, with no resource manifest). The worker checks the packaged
+`resources/` files itself, and the MLSC generator fails closed when a required
+resource is missing.
+
+Installed-direct identity is a packaged-layout trust model:
+
+- the runner is pinned by SHA-256, and the runtime checks in
+  [Runtime identity](#runtime-identity) apply;
+- the compiled worker and standalone executables are **not** independently hashed
+  in direct mode, as in the earlier baseline.
+
+Source checkouts keep manifest mode (`mlsc_current_build.mat` and
+`mlsc_current_resources.mat`, or their text forms), with full SHA-256 checks of the
+build and resource manifests and the runner.
 
 ## MATLAB frontend: `run_pseudo_CT.m` and `frontend/`
 
@@ -156,14 +193,15 @@ MATLAB.
 
 - `run_pseudo_CT('Profile', P, 'MPRAGE', FILE, ...)` validates by default; `'Action',
   'submit'` runs the launcher's `run` action. `'Runtime'` and `'McrRoot'` select the
-  installed release and its MATLAB Runtime root. `'Launcher'` names the launcher; without
-  it the `bin/pseudoct` beside `run_pseudo_CT.m` is used in an installed distribution, or
-  `PSEUDOCT_LAUNCHER` in a checkout.
+  installed release and its MATLAB Runtime root. An installed distribution always runs the
+  `bin/pseudoct` beside `run_pseudo_CT.m`; a `'Launcher'` naming any other file is refused
+  (`run_pseudo_CT:LauncherOverrideDevelopmentOnly`) and `PSEUDOCT_LAUNCHER` is ignored. In a
+  source checkout, `'Launcher'` or `PSEUDOCT_LAUNCHER` names the development or test launcher.
 - `run_pseudo_CT()` (no arguments) opens the profile selector, then the MPRAGE/UMAP
-  window. Validate and Submit use the same bridge. Submit is enabled only after a
-  successful validation of exactly the current inputs and options.
-- The MATLAB Runtime root comes from `PSEUDOCT_MCR_ROOT_<LABEL>` or `PSEUDOCT_MCR_ROOT`;
-  if neither is set, the window asks once.
+  window. Validate and Submit use the same bridge and the same gate described in
+  [Validate and submit](headless-cli.md#validate-and-submit).
+- The MATLAB Runtime root is the catalog location of the selected release (or the
+  `--mcr-root` override); the window never asks for a folder.
 - MLSC submission creates one single-use credential handoff with the existing
   `pseudo_CT_credentials('store', ...)` format and passes only its path to the launcher.
 - The frontend needs `python3` to read the launcher's result record.
@@ -173,24 +211,15 @@ MATLAB.
 `scripts/release_application.py` assembles the distribution in a staging directory in
 the output directory and validates it. Publication is non-overwriting:
 
-0. after each release's runtime and the resources are staged, the driver runs that
-   release's `standalone/pseudoct_standalone package-manifests PAYLOAD RESOURCES PAYLOAD`
-   under that release's MATLAB Runtime (`LD_LIBRARY_PATH` as the runner sets it). The
-   environment carries `PSEUDOCT_RUNTIME_RELEASE`, `PSEUDOCT_INSTALL_ROOT` (the staging
-   package) and `PSEUDOCT_RUNTIME_MCR_VERSION`, the catalog `mcr_version` of that label
-   (for example `7.14` for R2010b), read from the catalog and not from MATLAB. It writes
-   `build_manifest.mat` and `resource_manifest.mat` into the release payload
-   directory; both must exist and be non-empty. They are listed in `manifest.json` and
-   `SHA256SUMS` like every other file. Manifests must use paths relative to the package
-   (the atlas directory is recorded as `../../../resources`, relative to the manifest
-   folder `runtimes/<LABEL>/payload/`: three `..` steps reach the package root, so it
-   resolves to `<package>/resources`). The driver fails if either
-   file contains the staging directory, and nothing is published;
-1. an exclusive lock file `.pseudoct-release.lock` is created with `O_EXCL` in the
-   output directory; a held or stale lock is refused and never removed automatically;
-2. the destination is rechecked under the lock;
-3. the fully validated staging directory is renamed to `pseudoct-<version>`;
-4. the lock is removed on exit, success or failure.
+1. After each release's runtime and the resources are staged, the driver copies the
+   release executables and runner. No build or resource manifest is generated: installed
+   resources are verified by file name at setup and in the payload, and integrity is
+   covered by `SHA256SUMS` and `--verify`.
+2. An exclusive lock file `.pseudoct-release.lock` is created with `O_EXCL` in the
+   output directory; a held or stale lock is refused and never removed automatically.
+3. The destination is rechecked under the lock.
+4. The fully validated staging directory is renamed to `pseudoct-<version>`.
+5. The lock is removed on exit, success or failure.
 
 A failed or incomplete build publishes nothing, and no staging directory or lock is left
 behind after a normal failure. Residual limits: the lock is advisory and only protects
@@ -198,6 +227,10 @@ against other cooperating release runs; a process that creates the destination w
 taking the lock between the recheck and the rename can still be overwritten by an empty
 directory (POSIX `rename` replaces an empty directory), and a crash leaves the lock file
 behind, which must then be removed by hand after confirming that no release is running.
+
+**Publication status:** assembling a package is a separate, approved action. The
+redistribution gate in [`dependencies.lock.json`](../dependencies.lock.json) blocks
+public packaging until dependency provenance, notices and rights are cleared.
 
 ## Version and identity terminology
 
@@ -212,11 +245,17 @@ behind, which must then be removed by hand after confirming that no release is r
 
 ## Verification status
 
-Synthetic tests in `tests/test_release_application.py` (catalog, selection, frontend
-allowlist, `--verify`) and `tests/test_standalone_release.py` (launcher) use fake
-MATLAB roots, fake compiled executables and fake runtime evidence only. Real builds are
-checked separately by running the driver against a MATLAB installation. Passing these
-tests is not certification or deployment.
+What the evidence does and does not establish for the current source. Scientific
+evidence is in [Scientific notes](scientific-notes.md#bounded-comparison-evidence).
+
+| Area | Status |
+|---|---|
+| Offline release and launcher checks | Synthetic only: `tests/test_release_application.py` and `tests/test_standalone_release.py` use fake MATLAB roots, fake executables and fake runtime evidence. Passing them is not certification or deployment. See [tests](../tests/README.md). |
+| Installed-direct MLSC generation and staging | Offline regression coverage only (`tests/test_mlsc_installed_direct.m`), with fixtures and no scheduler contact. |
+| MLSC installed submit | Implemented and offline-tested. **Not independently verified** against a live scheduler or cluster. |
+| Compiled R2010b local run | Maintainer-reported comparison against v3.0.2; see [Scientific notes](scientific-notes.md#bounded-comparison-evidence). The comparison record is not included in this repository. |
+| Changed sources (v3.2.0) | Not built. The `compiled/` tree is obsolete and its executables still carry the pre-rename names. Source checkouts do not resolve it: an application run from a checkout is refused with a message to install the distribution. Rebuilding `compiled/` is not a fix. See [tests](../tests/README.md#source-checkouts-are-development-only). |
+| `build_application` real builds and packaged distribution | Not verified in this audit. No package has been assembled or verified for v3.2.0. |
 
 ### Staging path and temporary directories
 

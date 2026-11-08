@@ -1,14 +1,33 @@
 function Pf = pseudo_CT_run_local_current_subject(input_path, work_dir, ...
         config, check_aliasing, recenter_before_normalization, output_context)
-%PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT Run the shared compiled current phases.
-%   Uses the same pinned runner and job/resource manifest contract as
-%   mlsc: prepare, the existing external local FreeSurfer
-%   normalization, then compute. Scientific processing stays in the
-%   compiled payload; this function only coordinates those phases.
-%   Minimum supported MATLAB: R2010b.
+%PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT Run the local current phases for one subject.
+%   PF = PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT(INPUT_PATH, WORK_DIR, CONFIG,
+%   CHECK_ALIASING, RECENTER_BEFORE_NORMALIZATION, OUTPUT_CONTEXT)
+%   Coordinates the local profile's current pipeline for one MPRAGE NIfTI
+%   (INPUT_PATH) in WORK_DIR (the subject temporary folder): the prepare phase of
+%   the compiled worker, the external FreeSurfer normalization, then the compute
+%   phase. Both phases run through config.current.runner (run_pseudoct_worker.sh)
+%   with the same manifest contract as MLSC. The science runs in the worker;
+%   this function only coordinates the phases.
+%   CONFIG is the local profile struct (mode 'local', normalization host
+%   127.0.0.1 or localhost). CHECK_ALIASING is scalar 0 or 1.
+%   RECENTER_BEFORE_NORMALIZATION is 'Yes' or 'No' (or a 0/1 flag).
+%   OUTPUT_CONTEXT is the logging struct for pseudo_CT_output.
+%   PF is the char matrix of outputs returned by the compute phase, or '' when
+%   atlas outputs are missing.
+%   Side effects: validates the artifact with mlsc_current_validate, writes
+%   job.mat and the runner status files in a private runtime folder under WORK_DIR,
+%   and runs the compiled runner and FreeSurfer through the shell. Removes its
+%   private runtime folder on exit.
+%   Test seam: a two-argument call ('__current_stream_test__', STRUCT) exercises
+%   the child stream monitor without a compiled runner. Production calls always
+%   pass six arguments.
+%   Errors: pseudo_CT:LocalCurrentRequest for invalid arguments and
+%   pseudo_CT:LocalCurrentRunner when a runner phase fails.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11).
 
 % Narrow test seam for exercising the production child stream monitor without
-% invoking a compiled payload. Production calls always pass six arguments.
+% invoking the compiled worker. Production calls always pass six arguments.
 if nargin == 2 && ischar(input_path) && ...
         strcmp(input_path, '__current_stream_test__') && isstruct(work_dir)
     Pf = local_current_stream_test_dispatch(work_dir);
@@ -78,7 +97,7 @@ job.check_aliasing = double(check_aliasing);
 job.recenter_before_normalization = recenter_before_normalization;
 job.bone_enabled = logical(config.bone_enabled);
 % Native scientific event file for this subject (advisory: the emitter never
-% throws). The compiled payload appends prepare, compute and science-boundary
+% throws). The compiled worker appends prepare, compute and science-boundary
 % records; this orchestrator appends only normalization. The two never write
 % concurrently because each phase runs to completion before the next starts.
 job.zero_background = config.zero_background;
@@ -142,7 +161,7 @@ if logical(handoff.needs_normalization)
     local_normalize_event(event_target, 'STARTED', ...
         'FreeSurfer MPRAGE normalization started.');
     try
-        normalization_status = run_normalization_cmd(normalization_command, ...
+        normalization_status = pseudo_CT_run_normalization_cmd(normalization_command, ...
             normalization_connection, normalization_context, config);
     catch normalization_error
         local_normalize_event(event_target, 'FAILED', ...
@@ -213,10 +232,16 @@ function local_run_phase(current, phase, job_manifest_path, ...
         resource_manifest_path, output_context, public)
 runner = strtrim(current.runner);
 mcr_root = strtrim(current.mcr_root);
+% An empty resource manifest path is installed direct mode: no argument is passed.
+resource_arg = '';
+if ~isempty(resource_manifest_path)
+    resource_arg = [' ' local_shell_quote(resource_manifest_path)];
+end
 if ~local_runner_argument_safe(runner) || ...
         ~local_runner_argument_safe(mcr_root) || ...
         ~local_runner_argument_safe(job_manifest_path) || ...
-        ~local_runner_argument_safe(resource_manifest_path)
+        (~isempty(resource_manifest_path) && ...
+        ~local_runner_argument_safe(resource_manifest_path))
     error('pseudo_CT:LocalCurrentRunner', ...
         'A current runner argument contains unsupported shell syntax.');
 end
@@ -225,8 +250,7 @@ artifact_config.current = current;
 mlsc_current_validate('validate_for_execution', artifact_config);
 command = ['env -u LD_LIBRARY_PATH ' local_shell_quote(runner) ' ' ...
     local_shell_quote(mcr_root) ' ' local_shell_quote(phase) ' ' ...
-    local_shell_quote(job_manifest_path) ' ' ...
-    local_shell_quote(resource_manifest_path)];
+    local_shell_quote(job_manifest_path) resource_arg];
 if strcmp(phase, 'prepare')
     phase_stage = 2;
 else
@@ -643,7 +667,7 @@ elseif strcmp(line_class, 'private') && in_block && isempty(strtrim(line))
 end
 local_flush_warning_block(stream_state, output_context);
 if scientific
-    % Stdout stage events show only until the payload writes native records;
+    % Stdout stage events show only until the worker writes native records;
     % thereafter the native JSONL is the source (see local_present_native_events).
     public = stream_state('public');
     for ii = 1:length(scientific_events)
@@ -696,7 +720,7 @@ end
 
 function [line_class, line_level] = local_classify_current_line(line, stream_state)
 %LOCAL_CLASSIFY_CURRENT_LINE Separate child chatter from public events.
-%   event        timestamped orchestration record from the payload
+%   event        timestamped orchestration record from the worker
 %   warning      start of a MATLAB {Warning: ...} block
 %   continuation open multi-line warning text
 %   error        MATLAB/runner error line
@@ -1034,7 +1058,7 @@ pseudo_CT_scientific_event(event_target, struct('stage_id', 'normalize', ...
 end
 
 function capable = local_native_capable(stream_state)
-%LOCAL_NATIVE_CAPABLE True once the payload has written native records for this run.
+%LOCAL_NATIVE_CAPABLE True once the worker has written native records for this run.
 capable = false;
 if stream_state.isKey('native_reader')
     reader = stream_state('native_reader');
@@ -1044,7 +1068,7 @@ end
 
 function local_present_native_events(stream_state, output_context)
 %LOCAL_PRESENT_NATIVE_EVENTS Present new native scientific records (read-only).
-% The JSONL file is appended by the compiled payload and by this orchestrator's
+% The JSONL file is appended by the compiled worker and by this orchestrator's
 % normalization step only. This reader never appends. Records the orchestrator
 % already prints itself (source local-orchestrator) are not presented twice.
 try

@@ -1,4 +1,18 @@
 function success = pseudo_CT_promote_final_outputs(temp_dir, processing_dir, seed_nii, varargin)
+%PSEUDO_CT_PROMOTE_FINAL_OUTPUTS Copy the final outputs from the subject temp folder to MR_PET.
+%   SUCCESS = PSEUDO_CT_PROMOTE_FINAL_OUTPUTS(TEMP_DIR, PROCESSING_DIR, SEED_NII, CONTEXT)
+%   TEMP_DIR is the subject working folder (MR_PET/tmp). PROCESSING_DIR is the
+%   MR_PET folder that receives the outputs; it is created when missing. SEED_NII
+%   is the input NIfTI, used to find the MPRAGE outputs. CONTEXT is an optional
+%   logging struct for pseudo_CT_output.
+%   Copies the available outputs (NIfTI files, the QC TIFF, the version text and
+%   the MPRAGE_spm files) into PROCESSING_DIR. att_map.nii is required and is
+%   committed last, after all staging succeeds. Existing final files are not
+%   deleted before the copy.
+%   SUCCESS is 1 when the required outputs were promoted, and 0 otherwise.
+%   Side effects: creates PROCESSING_DIR and copies files into it. The temporary
+%   folder is kept when promotion fails. Logs failures through pseudo_CT_output.
+%   Minimum supported MATLAB: R2010b.
 
 success = 0;
 context = struct();

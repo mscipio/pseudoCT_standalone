@@ -1,9 +1,10 @@
 function diff_entrypoint_runs(local_dir, launchpad_dir, varargin)
-% Investigation tool — investigation-cleanup-release.
-%DIFF_ENTRYPOINT_RUNS Compare pseudo-CT intermediate outputs from two runs.
+%DIFF_ENTRYPOINT_RUNS Compare pseudo-CT intermediate outputs from two run folders.
 %   DIFF_ENTRYPOINT_RUNS(LOCAL_DIR, LAUNCHPAD_DIR) compares the file trees
-%   in LOCAL_DIR and LAUNCHPAD_DIR, reporting per-file status as IDENTICAL,
-%   DIVERGENT, EXPECTED_DIFF, LOCAL_ONLY, or LAUNCHPAD_ONLY.
+%   in LOCAL_DIR and LAUNCHPAD_DIR (the second argument keeps its historical
+%   name; it is simply the second run folder), reporting per-file status as
+%   IDENTICAL, DIVERGENT, EXPECTED_DIFF, LOCAL_ONLY, or LAUNCHPAD_ONLY. The
+%   LAUNCHPAD_* status tokens are printed report labels for the second folder.
 %
 %   DIFF_ENTRYPOINT_RUNS(..., 'Tolerance', VAL) sets the numeric tolerance
 %   for NIfTI pixel comparisons (default: 1e-6).
@@ -13,15 +14,20 @@ function diff_entrypoint_runs(local_dir, launchpad_dir, varargin)
 %
 %   DIFF_ENTRYPOINT_RUNS(..., 'Order', MODE) controls report ordering.
 %   MODE can be 'timestamp' (default) or 'name'. Timestamp ordering uses
-%   the local tree modification-time rank as the generation-order template.
-%   Launchpad-only files are appended by their own modification-time rank.
+%   the LOCAL_DIR modification-time rank as the generation-order template.
+%   Files found only in the second folder are appended by their own
+%   modification-time rank.
 %
 %   The comparator does NOT change the working directory (cd-neutral).
+%   Side effects: prints the report and, with 'OutputCSV', writes a CSV file.
 %   Minimum supported MATLAB: R2010b.
 %
 %   Known expectations (built-in, no sidecar config needed):
 %     Pseudo_CT_AC_Version.txt  — EXPECTED_DIFF (version string differs)
-%     Fusion_MR_Pseudo_CT_validation.tiff — LOCAL_ONLY (QC image, local only)
+%     Fusion_MR_Pseudo_CT_validation.tiff — LOCAL_ONLY when only LOCAL_DIR has
+%       it. This QC TIFF is a required output of the local and MLSC profiles;
+%       the label is a comparator expectation, not a statement about which
+%       backend writes it.
 
 tolerance = 1e-6;
 output_csv = '';
@@ -481,7 +487,7 @@ return
 % =====================================================================
 function ranks = file_generation_ranks(file_list)
 %FILE_GENERATION_RANKS Rank files by modification time within one run tree.
-%   The absolute timestamps between local and Launchpad runs are not expected
+%   The absolute timestamps between local and second-folder runs are not expected
 %   to match.  The rank within each tree is used as a proxy for generation
 %   order, with filename order as the deterministic tie-breaker.
 ranks = zeros(length(file_list), 1);
@@ -521,7 +527,7 @@ for ii = 1:length(all_names)
     local_idx = find(strcmp(local_names, fname), 1);
     lp_idx = find(strcmp(lp_names, fname), 1);
 
-    % Use LOCAL generation order as the template.  Launchpad copy-back can
+    % Use LOCAL generation order as the template.  second-folder copy-back can
     % rewrite mtimes, so its rank is only meaningful for files that have no
     % local counterpart.
     if ~isempty(local_idx)

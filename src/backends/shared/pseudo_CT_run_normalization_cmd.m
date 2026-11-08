@@ -1,27 +1,26 @@
-% Date: Sept/19/2014;
-% Name: run_normalization_cmd.m;
-% Function to run the normalization command in an external machine (not cluster) using the ssh commands
-% from matlab;
-% Inputs: - cmd: the command to run on the external machine;
-%         - ssh2_conn: (optional) if available, the ssh connection to a
-%         host;
-%         - config: selected profile config;
-%
-% Output: - sts: the exit status of the command (from the external machine). If 0 then
-%           command finshed properly, otherwise there was some problem.
-%
-% To use: [sts] = run_normalization_cmd(cmd, ssh2_conn, pause_time, init_pause)
-%
-% By David Izquierdo-Garcia.
-% Athinoula A. Martinos Center.
-% Harvard University / Mass. General Hospital. Boston.
-
-function [sts] = run_normalization_cmd(cmd, ssh2_conn, varargin)
+function [sts] = pseudo_CT_run_normalization_cmd(cmd, ssh2_conn, varargin)
+%PSEUDO_CT_RUN_NORMALIZATION_CMD Run the FreeSurfer normalization command, locally or over SSH.
+%   STS = PSEUDO_CT_RUN_NORMALIZATION_CMD(CMD, SSH2_CONN, CONFIG)
+%   STS = PSEUDO_CT_RUN_NORMALIZATION_CMD(CMD, SSH2_CONN, OUTPUT_CONTEXT, CONFIG)
+%   CMD is the normalization command. Its last space-separated token is the
+%   normalized NIfTI path that the command must create.
+%   SSH2_CONN is the connection struct; its hostname selects the path. 127.0.0.1
+%   and localhost run CMD on this machine with system(), prefixed by
+%   config.normalization.source_command and child_lib_path. Any other host runs
+%   the command through pseudo_CT_ssh2_command, then checks the file with ls.
+%   CONFIG is the selected profile struct. OUTPUT_CONTEXT is an optional logging
+%   struct.
+%   STS is 0 when the normalized file exists and -1 when it does not. Failure
+%   detail is logged through pseudo_CT_output.
+%   Side effects: runs the external FreeSurfer command on the local or remote
+%   host. Errors: pseudo_CT:ProfileRequired when CONFIG is missing.
+%   Origin: David Izquierdo-Garcia (Athinoula A. Martinos Center, MGH), 2014.
+%   Minimum supported MATLAB: R2010b.
 
 sts = 0;
 if nargin < 3 || nargin > 4 || ~isstruct(varargin{end})
     error('pseudo_CT:ProfileRequired', ...
-        'run_normalization_cmd requires the selected profile config.');
+        'pseudo_CT_run_normalization_cmd requires the selected profile config.');
 end
 config = varargin{end};
 output_context = struct();
@@ -39,7 +38,7 @@ is_local_host = strcmp(ssh2_conn.hostname, '127.0.0.1') || strcmpi(ssh2_conn.hos
 if is_local_host
     [status, command_result] = system(local_prepare_source_command(source_command, cmd, child_lib_path));
 else
-    [ssh2_conn, command_result] = ssh2_command_david(ssh2_conn, sprintf('%s%s', source_command, cmd), 1);
+    [ssh2_conn, command_result] = pseudo_CT_ssh2_command(ssh2_conn, sprintf('%s%s', source_command, cmd), 1);
 end
 
 if is_local_host
@@ -55,7 +54,7 @@ if is_local_host
         return
     end
 else
-    [ssh2_conn, commando] = ssh2_command_david(ssh2_conn, sprintf('ls %s', norm_fn)); % Added the commando directly here and changed ssh_command by the David function that runs locally too!
+    [ssh2_conn, commando] = pseudo_CT_ssh2_command(ssh2_conn, sprintf('ls %s', norm_fn)); % Added the commando directly here and changed ssh_command by the David function that runs locally too!
     if iscell(commando)
         commando = commando{end};
     end

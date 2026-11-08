@@ -1,25 +1,30 @@
-%  mMR_nii2mu_dicom_blur_david.m
-%  Author: Spencer Bowen (adapted from isocenter.m by Dan Chonde)
-%  Lab Group: Catana
-%  Date: 09-28-2011
-%  Register nifti images (*.hdr or *.nii) to spatial frame of reference
-%  of the mMR mu-maps and write as a dicom series
-%  inputs:  nifti_in   = header file (*.hdr) or single file (*.nii) for the nifti images
-%           dir_out    = directory to save the new dicom series mu-map
-%	    tfm_file   = slicer3 tranformation matrix file (tfm) to register input data
-%		         to the mMR PET spatial frame of reference
-%	    mu_ref     = single dicom file (*.ima) of reference MR mu-map image
-%	    interp_flag= 0 for near neighbor interpolation, and 1 for tri-linear
-%	    scale_val  = scale the raw nifti_in image by a uniform value
-%	    sigma      = FWHM (mm) of 3D Gaussian blurring function to smooth images
-%       ssh2_conn  = to perform the ssh connextion to Brain-Vision (ssh2_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD))
-%
-% Version from David Izquierdo-Garcia, adapted from the one form Spencer
-% Bowen, to use SPM code to coreg and blur the images before writing the
-% final Dicom images;
-%
-%  mMR_nii2mu_dicom_blur_david(nifti_in,dir_out,tfm_file,tfm_file,mu_ref,interp_flag, scale_vali, sigma, ssh_log)
-function mMR_nii2mu_dicom_blur_david(nifti_in,dir_out,mu_ref,interp_flag, scale_val, sigma, temp_dir, output_context)
+function pseudo_CT_mmr_nii2mu_dicom(nifti_in,dir_out,mu_ref,interp_flag, scale_val, sigma, temp_dir, output_context)
+%PSEUDO_CT_MMR_NII2MU_DICOM Write an attenuation map as an mMR mu-map DICOM series.
+%   PSEUDO_CT_MMR_NII2MU_DICOM(NIFTI_IN, DIR_OUT, MU_REF, INTERP_FLAG, SCALE_VAL,
+%   SIGMA, TEMP_DIR, OUTPUT_CONTEXT)
+%   Registers NIFTI_IN to the reference mu-map MU_REF, optionally smooths it,
+%   and writes the DICOM series to DIR_OUT.
+%   NIFTI_IN is the NIfTI file to convert (att_map.nii in the pipeline).
+%   DIR_OUT is the output folder; it is created when missing and defaults to pwd
+%   when empty. MU_REF is one DICOM file of the reference mu-map, used as the
+%   metadata template. INTERP_FLAG is optional; it is not used by the current
+%   registration step, which takes its settings from spm_get_defaults('coreg.write').
+%   SCALE_VAL is optional (default 1): the image is multiplied by SCALE_VAL and
+%   by 1e4, rounded, and stored as int16. SIGMA is optional: the FWHM in mm of a
+%   3D Gaussian smoothing, where 0 (default) means no smoothing. TEMP_DIR is
+%   optional (default DIR_OUT). OUTPUT_CONTEXT is an optional logging struct;
+%   when present, the reference conversion uses pseudo_CT_convert_dicom_quiet,
+%   otherwise dcm2nii.
+%   Side effects: creates DIR_OUT and TEMP_DIR when missing; writes temporary
+%   NIfTI files in TEMP_DIR (nifti_16bit_temp.nii, rnifti_16bit_temp.nii,
+%   ref_file.nii) and deletes the 16-bit input when finished. Writes the DICOM
+%   series through pseudo_CT_nii2dcm_header_copy.
+%   Errors: mMR_nii2mu_dicom_blur_david:CreateOutputDirFailed and
+%   mMR_nii2mu_dicom_blur_david:CreateTempDirFailed (identifiers kept for
+%   compatibility). Calls with no arguments open interactive pickers that
+%   reference undefined variables; always pass NIFTI_IN and MU_REF.
+%   Origin: Spencer Bowen (2011), adapted by David Izquierdo-Garcia to use SPM
+%   for coregistration and blurring. Minimum supported MATLAB: R2010b.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % load the input file
@@ -128,8 +133,7 @@ nii_final_out = fullfile(temp_dir, 'rnifti_16bit_temp.nii');
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % write the dicom series
-%nii2dcm_header_copyV2(anlz_final_out,mu_ref,out_path); % old version!
-nii2dcm_header_copy_vb20_david(nii_final_out,mu_ref,dir_out);
+pseudo_CT_nii2dcm_header_copy(nii_final_out,mu_ref,dir_out);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % delete temporary files

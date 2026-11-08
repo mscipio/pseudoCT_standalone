@@ -1,47 +1,45 @@
 function artifact = mlsc_generate_slurm_script(subject, config, runtime)
-%MLSC_GENERATE_SLURM_SCRIPT Generate one safe MLSC Slurm job script.
-%   ARTIFACT = MLSC_GENERATE_SLURM_SCRIPT(SUBJECT, CONFIG, RUNTIME) returns
-%   credential-free script text and, when RUNTIME contains ACCOUNT and
-%   SCRIPT_PATH, a safely quoted per-subject sbatch command.  The subject
-%   input is expected to have been written by MATLAB into the existing shared
-%   subject temporary directory.  No scheduler, network, or file staging is
-%   performed by this function.
+%MLSC_GENERATE_SLURM_SCRIPT Generate one MLSC Slurm job script for a prepared subject.
+%   ARTIFACT = MLSC_GENERATE_SLURM_SCRIPT(SUBJECT, CONFIG, RUNTIME) returns the
+%   credential-free script text. When RUNTIME contains ACCOUNT and SCRIPT_PATH,
+%   it also returns a safely quoted per-subject sbatch command. The subject
+%   input must already be written by MATLAB into the shared subject temporary
+%   folder. The function runs mlsc_preflight and generates text only: it makes
+%   no scheduler call, no network access and no file staging.
 %
-%   All variable paths are represented as POSIX shell single-quoted values;
-%   embedded single quotes are safely split and re-opened.  The batch shell
-%   performs only normal filesystem cp operations between shared storage and
-%   node-local $TMPDIR.  Slurm stdout and stderr are retained in the shared
-%   subject temp using the job-ID patterns pseudoCT_mlsc_%j.out/.err.
+%   Quoting: every variable path is a POSIX shell single-quoted value; embedded
+%   single quotes are split and re-opened. The batch shell performs only
+%   filesystem cp operations between shared storage and node-local $TMPDIR.
+%   Slurm stdout and stderr are kept in the shared subject temp folder under
+%   the job-ID patterns pseudoCT_mlsc_%j.out and pseudoCT_mlsc_%j.err.
 %
-%   The batch shell also appends tiny deterministic T001 progress records to
-%   the exact per-submission shared "$shared_temp/.mlsc_progress_<id>" file
-%   around the existing work, where <id> is the non-secret submission
-%   correlation identity passed explicitly in RUNTIME (RUNTIME.
-%   submission_correlation_id).  Without that identity the fixed shared
-%   "$shared_temp/.mlsc_progress" name is used for direct generation only.
-%   Each write is best-effort append-only under umask 077 and can never fail
-%   the job.  Records and the correlation suffix contain only fixed
-%   stage|state literals and [A-Za-z0-9_.-], never paths, accounts,
-%   credentials, or SSH values.
+%   Progress: the batch shell appends best-effort, append-only records to
+%   "$shared_temp/.mlsc_progress_<id>", where <id> is the non-secret
+%   RUNTIME.submission_correlation_id. Without that identity, direct generation
+%   uses the fixed name "$shared_temp/.mlsc_progress". Records hold only
+%   stage|state literals and [A-Za-z0-9_.-] characters, never paths, accounts,
+%   credentials or SSH values. A failed write never fails the job.
 %
-%   T004 current branch (T014 authoritative): when CONFIG selects MLSC
-%   current, the payload portion only is parameterized. The script stages
-%   shared input plus job/resource manifests to node-local $TMPDIR, runs
-%   prepare (bundled alias/recenter) BEFORE the unchanged external
-%   FreeSurfer tcsh contract, then compute, then verified copy-back. The
-%   launcher is invoked as <runner> <pinned MCR_ROOT> <phase>
-%   <job_manifest> <resource_manifest> matching the T003 payload CLI.
-%   Resources use CONFIG.mlsc
-%   scheduler values (provisional basic/1/1/32G/4h with CPU unchosen for the
-%   future profile); OMP/MKL exports derive from SLURM_CPUS_PER_TASK without
-%   claiming enforcement and without -singleCompThread forcing. The generated
-%   launcher owns the Runtime environment; no global LD_LIBRARY_PATH is
-%   constructed here. Single generic assembly path (R005): shared
-%   directives/TMPDIR/progress/env/staging/sbatch/metadata via
-%   local_generic_* helpers; narrow current payload/manifest/output-contract
-%   branches only.
+%   Current artifact, source and manifest mode (CONFIG.current.build_manifest
+%   and resource_manifest set): the script stages the shared input, the job
+%   manifest and the resource manifest to node-local $TMPDIR. It runs prepare
+%   (bundled alias/recenter) before the unchanged external FreeSurfer tcsh step,
+%   then compute, then verified copy-back. The launcher is called as
+%   <runner> <pinned MCR_ROOT> <phase> <job_manifest> <resource_manifest>.
+%   Installed direct mode (both manifest paths empty, set by
+%   pseudo_CT_runtime_select): no build or resource manifest is read, hashed or
+%   staged. The job atlas_dir is CONFIG.atlas_root, checked before generation.
+%   The launcher is called as <runner> <pinned MCR_ROOT> <phase> <job_manifest>.
 %
-%   Minimum supported MATLAB: R2010b.
+%   Scheduler values come from CONFIG.mlsc (profiles/mlsc.m: partition basic,
+%   1 node, 1 task, 4 CPUs, 8G memory, 2 hours). OMP_NUM_THREADS and
+%   MKL_NUM_THREADS are set from SLURM_CPUS_PER_TASK; no enforcement is claimed
+%   and single-thread execution is not forced. The generated launcher owns the
+%   Runtime environment; no global LD_LIBRARY_PATH is set here.
+%
+%   Errors use the pseudo_CT:MLSCAccountRequired, pseudo_CT:MLSCCurrentManifest,
+%   pseudo_CT:MLSCPreflight and pseudo_CT:MLSCProgressCorrelation identifiers.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11).
 
 if nargin < 3 || isempty(runtime)
     runtime = struct();
@@ -131,7 +129,7 @@ end
 end
 
 function lines = local_generic_directives(mlsc, q_stdout_log_path, q_stderr_log_path)
-%LOCAL_GENERIC_DIRECTIVES Single generic Slurm directives path (R005).
+%LOCAL_GENERIC_DIRECTIVES Shared Slurm #SBATCH directive lines.
 %   Single construction path. R2010b only.
 lines = {};
 lines{end + 1} = ['#!' mlsc.shell];
@@ -149,7 +147,7 @@ lines{end + 1} = 'umask 077';
 end
 
 function lines = local_generic_shared_vars(q_shared_input, q_shared_temp, q_input_name, q_normalized_name)
-%LOCAL_GENERIC_SHARED_VARS Single generic shared-vars path (R005).
+%LOCAL_GENERIC_SHARED_VARS Shared shell variable definitions.
 lines = {};
 lines{end + 1} = ['shared_input=' q_shared_input];
 lines{end + 1} = ['shared_temp=' q_shared_temp];
@@ -158,7 +156,7 @@ lines{end + 1} = ['normalized_name=' q_normalized_name];
 end
 
 function lines = local_generic_progress_tmpdir(progress_filename, include_executor_provenance)
-%LOCAL_GENERIC_PROGRESS_TMPDIR Single generic progress/TMPDIR path (R005).
+%LOCAL_GENERIC_PROGRESS_TMPDIR Shared TMPDIR and progress-record lines.
 %   Progress file, record helper, node-local TMPDIR guards, shared
 %   input/temp checks, and write-probe. R2010b only.
 if nargin < 2
@@ -303,7 +301,7 @@ end
 
 
 function lines = local_generic_env_pre()
-%LOCAL_GENERIC_ENV_PRE Shared env/staging prefix without cd/stage-in (R005).
+%LOCAL_GENERIC_ENV_PRE Shared environment prefix, without cd or stage-in.
 %   Used by current so manifest staging precedes cd/stage-in in the narrow
 %   manifest branch while reusing the single generic env construction.
 lines = {};
@@ -319,7 +317,7 @@ lines{end + 1} = 'cp -- "$shared_input" "$local_input"';
 end
 
 function command = local_generic_sbatch(runtime)
-%LOCAL_GENERIC_SBATCH Single generic sbatch construction (R005).
+%LOCAL_GENERIC_SBATCH Shared sbatch command construction.
 command = '';
 if isfield(runtime, 'script_path') && ~isempty(runtime.script_path)
     if ~isfield(runtime, 'account') || isempty(runtime.account)
@@ -338,7 +336,7 @@ end
 end
 
 function lines = local_append_generic(lines, extra)
-%LOCAL_APPEND_GENERIC Append generic helper lines (R005, R2010b only).
+%LOCAL_APPEND_GENERIC Append lines to the script line cell array (R2010b-compatible).
 if isempty(extra)
     return;
 end
@@ -348,13 +346,14 @@ end
 end
 
 function artifact = local_generate_current(subject, config, runtime, preflight)
-%LOCAL_GENERATE_CURRENT Current-only Slurm script (T004, T014).
-%   Smallest payload-only seam: reuses the generic prologue (TMPDIR,
+%LOCAL_GENERATE_CURRENT Slurm script for the current worker job.
+%   Reuses the generic prologue (TMPDIR,
 %   shared checks, progress file, MCR_CACHE_ROOT, OMP/MKL derived from
 %   allocation without enforcement) and the unchanged external FreeSurfer
 %   tcsh contract. Stages shared input plus job/resource manifests to
-%   $TMPDIR, runs prepare BEFORE normalization then compute via the pinned
-%   launcher <runner> <MCR_ROOT> <phase> <job> <resources>, verifies the
+%   $TMPDIR (direct mode: job manifest only), runs prepare BEFORE
+%   normalization then compute via the pinned launcher <runner> <MCR_ROOT>
+%   <phase> <job> [<resources>] (direct mode omits <resources>), verifies the
 %   three required outputs plus mandatory evidence (exit nonzero on missing
 %   even if launcher exit 0), and copies back before exit. Normalization
 %   uses the PREPARE-validated handoff derivation (selected input,
@@ -371,7 +370,7 @@ input_name = preflight.input_name;
 normalized_name = preflight.normalized_name;
 needs_normalization = preflight.needs_normalization;
 % PREPARE-validated derivation (mirrors pseudo_CT_current_prepare and
-% mlsc_current_payload handoff checks): the corrected variant and its
+% pseudoct_worker handoff checks): the corrected variant and its
 % _normalized expectation. The runtime shell selects between raw and
 % corrected via existence + controlled-basename validation, never by
 % sourcing/evaluating the .mat handoff.
@@ -382,8 +381,19 @@ runner_path = strtrim(current.runner);
 mcr_root = strtrim(current.mcr_root);
 build_manifest_path = strtrim(current.build_manifest);
 resource_manifest_path = strtrim(current.resource_manifest);
-resources = local_load_current_resources(resource_manifest_path);
-build = local_load_current_build(build_manifest_path);
+% Installed direct mode (both manifest paths empty): no manifest is read,
+% hashed or staged. The job atlas_dir is the packaged resources folder, whose
+% required files are verified before generation. Manifest mode is unchanged.
+direct_mode = isempty(build_manifest_path) && isempty(resource_manifest_path);
+if direct_mode
+    direct_atlas_dir = local_strip_trailing_separators(strtrim(config.atlas_root));
+    pseudo_CT_check_installed_resources(direct_atlas_dir);
+    resources = struct('atlas_dir', direct_atlas_dir);
+    build = struct();
+else
+    resources = local_load_current_resources(resource_manifest_path);
+    build = local_load_current_build(build_manifest_path);
+end
 recorded_build_release = local_manifest_text(build, 'release');
 recorded_build_mcr_version = local_manifest_text(build, 'mcr_version');
 recorded_build_generation = local_manifest_text(build, 'generation');
@@ -396,7 +406,7 @@ recorded_build_runner_checksum = local_manifest_text(build, 'runner_checksum');
 % the configured value exactly as before.
 installed_mode = ~isempty(strtrim(getenv('PSEUDOCT_INSTALL_ROOT')));
 raw_atlas_dir = strtrim(resources.atlas_dir);
-relocated_atlas = installed_mode && ~isempty(raw_atlas_dir) && ...
+relocated_atlas = installed_mode && ~direct_mode && ~isempty(raw_atlas_dir) && ...
     raw_atlas_dir(1) ~= '/';
 if relocated_atlas
     atlas_dir = mlsc_current_validate('resource_atlas_dir', resource_manifest_path);
@@ -422,7 +432,9 @@ local_write_current_job_manifest(shared_job_manifest, input_name, ...
 % node-local storage, where a relative atlas_dir would not resolve, so the
 % submitted copy carries the resolved absolute directory and is the file
 % identity-checked below. Otherwise the configured manifest is submitted as is.
-if relocated_atlas
+if direct_mode
+    shared_resource_manifest = '';
+elseif relocated_atlas
     shared_resource_manifest = fullfile(shared_temp, 'resource_manifest.mat');
     local_write_current_resource_manifest(shared_resource_manifest, resources, ...
         atlas_dir);
@@ -436,13 +448,20 @@ end
 % is unavailable generation fails closed here (before PREPARE). R2010b only.
 expected_runner_bytes = local_file_bytes(runner_path);
 expected_runner_sha256 = local_file_sha256_hex(runner_path);
-expected_build_bytes = local_file_bytes(build_manifest_path);
-expected_build_sha256 = local_file_sha256_hex(build_manifest_path);
-expected_resource_bytes = local_file_bytes(shared_resource_manifest);
-expected_resource_sha256 = local_file_sha256_hex(shared_resource_manifest);
+expected_build_bytes = 0;
+expected_build_sha256 = '';
+expected_resource_bytes = 0;
+expected_resource_sha256 = '';
+if ~direct_mode
+    expected_build_bytes = local_file_bytes(build_manifest_path);
+    expected_build_sha256 = local_file_sha256_hex(build_manifest_path);
+    expected_resource_bytes = local_file_bytes(shared_resource_manifest);
+    expected_resource_sha256 = local_file_sha256_hex(shared_resource_manifest);
+end
 expected_job_bytes = local_file_bytes(shared_job_manifest);
-if isempty(expected_runner_sha256) || isempty(expected_build_sha256) || ...
-        isempty(expected_resource_sha256)
+if isempty(expected_runner_sha256) || ...
+        (~direct_mode && (isempty(expected_build_sha256) || ...
+        isempty(expected_resource_sha256)))
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Current identity hashing is unavailable; failing closed before PREPARE.');
 end
@@ -453,7 +472,11 @@ expected_mcr = mlsc_current_validate('actual_identity', pinned);
 expected_update_value = expected_mcr.update;
 expected_update_op = '-ne';
 if installed_mode
-    expected_update_value = build.update_minimum;
+    % Installed releases compare as a lower bound: the build manifest minimum,
+    % or no minimum (the catalog update, 0) in direct mode.
+    if ~direct_mode
+        expected_update_value = build.update_minimum;
+    end
     expected_update_op = '-lt';
 end
 q_shared_input = local_shell_quote(shared_input);
@@ -472,17 +495,25 @@ stdout_log_path = fullfile(shared_temp, 'pseudoCT_mlsc_%j.out');
 stderr_log_path = fullfile(shared_temp, 'pseudoCT_mlsc_%j.err');
 q_stdout_log_path = local_shell_quote(stdout_log_path);
 q_stderr_log_path = local_shell_quote(stderr_log_path);
-% Single generic assembly path (R005): shared directives/vars/progress/
+% One assembly path: shared directives/vars/progress/
 % TMPDIR/env/staging/sbatch via generic helpers; narrow current
-% payload/manifest/output-contract branches below.
+% worker/manifest/output-contract branches below.
+% Direct mode passes the two-argument worker form (no resource manifest).
+if direct_mode
+    worker_resource_arg = '';
+else
+    worker_resource_arg = ' "$local_resource_manifest"';
+end
 lines = {};
 lines = local_append_generic(lines, local_generic_directives(mlsc, ...
     q_stdout_log_path, q_stderr_log_path));
 lines = local_append_generic(lines, local_generic_shared_vars( ...
     q_shared_input, q_shared_temp, q_input_name, q_normalized_name));
 lines{end + 1} = ['shared_job_manifest=' q_shared_job];
-lines{end + 1} = ['shared_resource_manifest=' q_shared_resources];
-lines{end + 1} = ['shared_build_manifest=' q_shared_build];
+if ~direct_mode
+    lines{end + 1} = ['shared_resource_manifest=' q_shared_resources];
+    lines{end + 1} = ['shared_build_manifest=' q_shared_build];
+end
 lines{end + 1} = ['current_runner=' q_runner];
 lines{end + 1} = ['current_mcr_root=' q_mcr_root];
 lines{end + 1} = 'actual_mcr_release=""';
@@ -519,10 +550,12 @@ q_pinned_mcr = local_shell_quote(pinned);
 lines{end + 1} = ['pinned_mcr_root=' q_pinned_mcr];
 lines{end + 1} = ['expected_runner_bytes=' num2str(expected_runner_bytes, '%.0f')];
 lines{end + 1} = ['expected_runner_sha256=' local_shell_quote(expected_runner_sha256)];
-lines{end + 1} = ['expected_build_bytes=' num2str(expected_build_bytes, '%.0f')];
-lines{end + 1} = ['expected_build_sha256=' local_shell_quote(expected_build_sha256)];
-lines{end + 1} = ['expected_resource_bytes=' num2str(expected_resource_bytes, '%.0f')];
-lines{end + 1} = ['expected_resource_sha256=' local_shell_quote(expected_resource_sha256)];
+if ~direct_mode
+    lines{end + 1} = ['expected_build_bytes=' num2str(expected_build_bytes, '%.0f')];
+    lines{end + 1} = ['expected_build_sha256=' local_shell_quote(expected_build_sha256)];
+    lines{end + 1} = ['expected_resource_bytes=' num2str(expected_resource_bytes, '%.0f')];
+    lines{end + 1} = ['expected_resource_sha256=' local_shell_quote(expected_resource_sha256)];
+end
 lines{end + 1} = ['expected_mcr_release=' local_shell_quote(expected_mcr.release)];
 lines{end + 1} = ['expected_mcr_version=' local_shell_quote(expected_mcr.version)];
 lines{end + 1} = ['expected_mcr_update=' num2str(expected_update_value, '%.0f')];
@@ -685,103 +718,111 @@ else
 end
 lines{end + 1} = 'fi';
 lines{end + 1} = '# Runtime identity uses the pinned root and library metadata.';
-lines{end + 1} = 'if [ ! -s "$shared_build_manifest" ]; then';
-lines{end + 1} = '    printf ''Current build manifest is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'build_bytes=$(wc -c < "$shared_build_manifest" | tr -d '' '')';
-lines{end + 1} = 'if [ "$build_bytes" != "$expected_build_bytes" ]; then';
-lines{end + 1} = '    printf ''Current build manifest changed after preflight (TOCTOU).\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'if [ -z "$expected_build_sha256" ]; then';
-lines{end + 1} = '    printf ''Current build manifest hash is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'if ! command -v sha256sum >/dev/null 2>&1; then';
-lines{end + 1} = '    printf ''Current hash utility is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'build_sha=$(sha256sum "$shared_build_manifest" | cut -d '' '' -f1)';
-lines{end + 1} = 'if [ "$build_sha" != "$expected_build_sha256" ]; then';
-lines{end + 1} = '    printf ''Current build manifest content changed after preflight (TOCTOU).\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'if [ ! -s "$shared_resource_manifest" ]; then';
-lines{end + 1} = '    printf ''Current resource manifest is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'resource_bytes=$(wc -c < "$shared_resource_manifest" | tr -d '' '')';
-lines{end + 1} = 'if [ "$resource_bytes" != "$expected_resource_bytes" ]; then';
-lines{end + 1} = '    printf ''Current resource manifest changed after preflight (TOCTOU).\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'if [ -z "$expected_resource_sha256" ]; then';
-lines{end + 1} = '    printf ''Current resource manifest hash is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'if ! command -v sha256sum >/dev/null 2>&1; then';
-lines{end + 1} = '    printf ''Current hash utility is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'resource_sha=$(sha256sum "$shared_resource_manifest" | cut -d '' '' -f1)';
-lines{end + 1} = 'if [ "$resource_sha" != "$expected_resource_sha256" ]; then';
-lines{end + 1} = '    printf ''Current resource manifest content changed after preflight (TOCTOU).\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
+if ~direct_mode
+    lines{end + 1} = 'if [ ! -s "$shared_build_manifest" ]; then';
+    lines{end + 1} = '    printf ''Current build manifest is unavailable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'build_bytes=$(wc -c < "$shared_build_manifest" | tr -d '' '')';
+    lines{end + 1} = 'if [ "$build_bytes" != "$expected_build_bytes" ]; then';
+    lines{end + 1} = '    printf ''Current build manifest changed after preflight (TOCTOU).\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if [ -z "$expected_build_sha256" ]; then';
+    lines{end + 1} = '    printf ''Current build manifest hash is unavailable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if ! command -v sha256sum >/dev/null 2>&1; then';
+    lines{end + 1} = '    printf ''Current hash utility is unavailable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'build_sha=$(sha256sum "$shared_build_manifest" | cut -d '' '' -f1)';
+    lines{end + 1} = 'if [ "$build_sha" != "$expected_build_sha256" ]; then';
+    lines{end + 1} = '    printf ''Current build manifest content changed after preflight (TOCTOU).\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if [ ! -s "$shared_resource_manifest" ]; then';
+    lines{end + 1} = '    printf ''Current resource manifest is unavailable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'resource_bytes=$(wc -c < "$shared_resource_manifest" | tr -d '' '')';
+    lines{end + 1} = 'if [ "$resource_bytes" != "$expected_resource_bytes" ]; then';
+    lines{end + 1} = '    printf ''Current resource manifest changed after preflight (TOCTOU).\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if [ -z "$expected_resource_sha256" ]; then';
+    lines{end + 1} = '    printf ''Current resource manifest hash is unavailable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if ! command -v sha256sum >/dev/null 2>&1; then';
+    lines{end + 1} = '    printf ''Current hash utility is unavailable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'resource_sha=$(sha256sum "$shared_resource_manifest" | cut -d '' '' -f1)';
+    lines{end + 1} = 'if [ "$resource_sha" != "$expected_resource_sha256" ]; then';
+    lines{end + 1} = '    printf ''Current resource manifest content changed after preflight (TOCTOU).\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+end
 lines{end + 1} = 'if [ ! -s "$shared_job_manifest" ]; then';
 lines{end + 1} = '    printf ''Current job manifest is unavailable.\n'' >&2';
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
 % Shared env/staging via the single generic path; narrow current manifest
-% staging follows as the payload/manifest branch before cd/stage-in.
+% staging follows as the worker/manifest branch before cd/stage-in.
 lines = local_append_generic(lines, local_generic_env_pre());
 lines{end + 1} = ['local_job_manifest="$TMPDIR/' job_manifest_name '"'];
-lines{end + 1} = ['local_resource_manifest="$TMPDIR/' resource_stage_name '"'];
+if ~direct_mode
+    lines{end + 1} = ['local_resource_manifest="$TMPDIR/' resource_stage_name '"'];
+end
 lines{end + 1} = 'cp -- "$shared_job_manifest" "$local_job_manifest"';
-lines{end + 1} = 'cp -- "$shared_resource_manifest" "$local_resource_manifest"';
+if ~direct_mode
+    lines{end + 1} = 'cp -- "$shared_resource_manifest" "$local_resource_manifest"';
+end
 lines{end + 1} = 'cd "$TMPDIR"';
 lines{end + 1} = 'mlsc_record_progress ''stage_in|done''';
 lines{end + 1} = 'if [ ! -s "$local_job_manifest" ]; then';
 lines{end + 1} = '    printf ''Staged job manifest is missing.\n'' >&2';
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
-lines{end + 1} = 'if [ ! -s "$local_resource_manifest" ]; then';
-lines{end + 1} = '    printf ''Staged resource manifest is missing.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'staged_resource_bytes=$(wc -c < "$local_resource_manifest" | tr -d '' '')';
-lines{end + 1} = 'if [ "$staged_resource_bytes" != "$expected_resource_bytes" ]; then';
-lines{end + 1} = '    printf ''Staged resource manifest changed after preflight (TOCTOU).\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'if [ -z "$expected_resource_sha256" ]; then';
-lines{end + 1} = '    printf ''Staged resource manifest hash is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'if ! command -v sha256sum >/dev/null 2>&1; then';
-lines{end + 1} = '    printf ''Current hash utility is unavailable.\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'staged_resource_sha=$(sha256sum "$local_resource_manifest" | cut -d '' '' -f1)';
-lines{end + 1} = 'if [ "$staged_resource_sha" != "$expected_resource_sha256" ]; then';
-lines{end + 1} = '    printf ''Staged resource content changed after preflight (TOCTOU).\n'' >&2';
-lines{end + 1} = '    exit 72';
-lines{end + 1} = 'fi';
+if ~direct_mode
+    lines{end + 1} = 'if [ ! -s "$local_resource_manifest" ]; then';
+    lines{end + 1} = '    printf ''Staged resource manifest is missing.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'staged_resource_bytes=$(wc -c < "$local_resource_manifest" | tr -d '' '')';
+    lines{end + 1} = 'if [ "$staged_resource_bytes" != "$expected_resource_bytes" ]; then';
+    lines{end + 1} = '    printf ''Staged resource manifest changed after preflight (TOCTOU).\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if [ -z "$expected_resource_sha256" ]; then';
+    lines{end + 1} = '    printf ''Staged resource manifest hash is unavailable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if ! command -v sha256sum >/dev/null 2>&1; then';
+    lines{end + 1} = '    printf ''Current hash utility is unavailable.\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'staged_resource_sha=$(sha256sum "$local_resource_manifest" | cut -d '' '' -f1)';
+    lines{end + 1} = 'if [ "$staged_resource_sha" != "$expected_resource_sha256" ]; then';
+    lines{end + 1} = '    printf ''Staged resource content changed after preflight (TOCTOU).\n'' >&2';
+    lines{end + 1} = '    exit 72';
+    lines{end + 1} = 'fi';
+end
 % Preserve prepare -> alias/recenter -> external FreeSurfer normalization
 % -> compute. Preparation runs bundled code BEFORE the unchanged MLSC
 % shell contract (env -u LD_LIBRARY_PATH ... tcsh -f -c with source
 % /usr/local/freesurfer/nmr-stable53-env); normalization is never moved
-% into the payload and the launcher never runs inside tcsh. The generated
+% into the worker and the launcher never runs inside tcsh. The generated
 % launcher owns the Runtime environment; no global LD_LIBRARY_PATH is set.
 % Normalization consumes the PREPARE-validated handoff derivation
 % (selected input, normalization need, _normalized basename from
-% pseudo_CT_current_prepare/mlsc_current_payload handoff checks) resolved
+% pseudo_CT_current_prepare/pseudoct_worker handoff checks) resolved
 % here from controlled basenames without sourcing or evaluating the .mat
 % handoff: when PREPARE produced <base>_corrected.nii, the corrected file
 % normalizes to <base>_corrected_normalized.nii consumed by COMPUTE.
 lines{end + 1} = 'mlsc_record_progress ''pseudoCT|start''';
-lines{end + 1} = '"$current_runner" "$current_mcr_root" prepare "$local_job_manifest" "$local_resource_manifest"';
+lines{end + 1} = ['"$current_runner" "$current_mcr_root" prepare "$local_job_manifest"' worker_resource_arg];
 lines{end + 1} = 'mlsc_record_progress ''preparation|done''';
 lines{end + 1} = 'mlsc_record_progress ''alias_recenter|done''';
 lines{end + 1} = ['prepare_corrected=' q_corrected_name];
@@ -836,7 +877,7 @@ if needs_normalization
     lines{end + 1} = '    exit 73';
     lines{end + 1} = 'fi';
 end
-lines{end + 1} = '"$current_runner" "$current_mcr_root" compute "$local_job_manifest" "$local_resource_manifest"';
+lines{end + 1} = ['"$current_runner" "$current_mcr_root" compute "$local_job_manifest"' worker_resource_arg];
 lines{end + 1} = 'mlsc_record_progress ''alignment_mask|done''';
 lines{end + 1} = 'mlsc_record_progress ''segmentation|done''';
 lines{end + 1} = 'mlsc_record_progress ''bone|done''';
@@ -1041,7 +1082,7 @@ end
 function local_write_current_resource_manifest(resource_path, resources, atlas_dir)
 %LOCAL_WRITE_CURRENT_RESOURCE_MANIFEST Submitted resource manifest copy.
 %   Identical to the package manifest except atlas_dir, which is replaced by the
-%   resolved absolute directory the payload compares with the job manifest.
+%   resolved absolute directory the worker compares with the job manifest.
 resources.atlas_dir = atlas_dir;
 save(resource_path, 'resources', '-v6');
 end
@@ -1059,7 +1100,7 @@ job.check_aliasing = double(check_aliasing);
 job.recenter_before_normalization = recenter_text;
 job.bone_enabled = logical(bone_value);
 job.zero_background = zero_text;
-% Native event file for the remote payload (single writer: the payload runs
+% Native event file for the remote worker (single writer: the worker runs
 % while the orchestrator only reads). Empty path means no events.
 job.event_path = event_target.path;
 job.event_subject_id = event_target.subject_id;
@@ -1083,7 +1124,7 @@ end
 function name = local_corrected_variant_name(input_name)
 %LOCAL_CORRECTED_VARIANT_NAME PREPARE-corrected basename derivation.
 %   Mirrors pseudo_CT_current_prepare output_path and
-%   mlsc_current_payload local_corrected_variant: <base>_corrected<ext>.
+%   pseudoct_worker local_corrected_variant: <base>_corrected<ext>.
 %   R2010b only.
 name = input_name;
 try
@@ -1112,7 +1153,7 @@ end
 function expected = local_derived_normalized_name(selected)
 %LOCAL_DERIVED_NORMALIZED_NAME _normalized expectation derivation.
 %   Mirrors pseudo_CT_current_prepare local_expected_normalized and
-%   mlsc_current_payload local_derived_normalized: <base>_normalized<ext>.
+%   pseudoct_worker local_derived_normalized: <base>_normalized<ext>.
 %   R2010b only.
 expected = '';
 try

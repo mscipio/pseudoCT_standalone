@@ -1,80 +1,65 @@
 function report = pseudo_CT_run_lifecycle(varargin)
-%PSEUDO_CT_RUN_LIFECYCLE Existing workflow lifecycle behind public dispatch.
-%   RUN_PSEUDO_CT() opens the profile selection dialog, then the existing
-%   single-subject GUI (LOAD_MR_4_AC) for subject selection.
+%PSEUDO_CT_RUN_LIFECYCLE Internal run lifecycle behind pseudo_CT_orchestrate.
+%   REPORT = PSEUDO_CT_RUN_LIFECYCLE(NAME, VALUE, ...) runs the subjects of one
+%   profile. pseudo_CT_orchestrate calls it on submit, after validation. It is
+%   not a public entry point: users call run_pseudo_CT (MATLAB frontend) or
+%   bin/pseudoct, which go through pseudo_CT_orchestrate. Calling it with no
+%   arguments, or without a profile, stops with run_pseudo_CT:ProfileRequired.
+%   Named parameters are defined by pseudo_CT_lifecycle_arguments:
+%     'profile'          - Required. A canonical profile name (local,
+%                          local-mprage-only, mlsc, mlsc-mprage-only). Profiles
+%                          are discovered from src/config/profiles/.
+%     'subjects'         - MPRAGE filename(s) as a char or cell, or 'batch'.
+%     'umap_files'       - Optional UMAP path(s) paired with subjects. Empty
+%                          entries request local autodiscovery.
+%     'correct_aliasing' - 0 or 1. Omit to use the profile default.
+%     'recenter_before_normalization' - 0 or 1. Omit to use the profile default.
+%     'cleanup_on_success' - Logical or 0/1. Omit to use the profile default
+%                          (true in all current profiles). An explicit 0 keeps
+%                          the subject temporary folder and its intermediates
+%                          for comparison; 1 removes them after success. Never
+%                          changes a profile file.
+%     'mlsc_current_artifact_root' - Absolute folder of the operator-selected
+%                          compiled artifact. It selects the runner and manifest
+%                          paths: <root>/payload_build/run_pseudoct_worker.sh,
+%                          then <root>/mlsc_current_build.mat and
+%                          <root>/mlsc_current_resources.mat from source, or
+%                          <root>/build_manifest.mat and
+%                          <root>/resource_manifest.mat installed. Only the mlsc
+%                          and mlsc-mprage-only profiles accept it.
+%     'group_account', 'headless_mode', 'headless_credentials',
+%     'mlsc_host_key_provider' - MLSC submit inputs. Credentials are supplied
+%                          out of band and are never logged or stored in a
+%                          profile. A provider selects strict pinned host-key
+%                          verification.
+%   Deployed invocations with arguments are parsed by parse_deployed_arguments
+%   (the headless submit request).
 %
-%   RUN_PSEUDO_CT('profile', NAME) runs with the specified profile.
-%   RUN_PSEUDO_CT('profile', NAME, 'subjects', SUBJECT_LIST) batch mode.
+%   Stages per subject, in order: input preparation, optional MLSC submission
+%   and monitoring, or the local current runner (prepare, FreeSurfer
+%   normalization, compute), then DICOM output and promotion of final files
+%   into MR_PET (NIfTI, QC and version files) and MR/pseudo_muMAP (DICOM).
+%   DICOM is written with pseudo_CT_write_mu_map_dicom only when the profile's
+%   io_policy.output is 'nifti-and-dicom'; 'nifti-only' skips it.
 %
-%   Named parameters:
-%     'profile'          - Required in CLI/script mode. Valid profiles are
-%                          discovered from src/config/profiles/.
-%     'subjects'         - Cell or char array of MPRAGE filenames, or
-%                          the string 'batch' to open an SPM multi-select
-%                          file picker. Omit to use the single-subject GUI.
-%     'umap_files'       - Optional UMAP path or positionally paired cell
-%                          array; empty entries request local autodiscovery.
-%     'group_account'    - Optional MLSC group/account name selected at submit.
-%     'correct_aliasing' - 0 or 1 to override the profile's
-%                          anti-aliasing default. Omit to use the profile
-%                          default.
-%     'recenter_before_normalization'
-%                        - 0 or 1 to override the profile's recentering
-%                          default. Omit to use the profile default.
-%     'cleanup_on_success' - 0 or 1 (or logical) to override the profile's
-%                          cleanup_on_success default at runtime. Omit to
-%                          keep the profile default. Explicit 0 retains the
-%                          temporary working directory and retrievable
-%                          intermediates for comparison; explicit 1 removes
-%                          them on success. Never changes any profile file.
-%     'mlsc_current_artifact_root'
-%                        - Absolute directory supplying the operator-selected
-%                          compiled MLSC artifact (T007 build layout):
-%                            <root>/payload_build/run_mlsc_current_payload.sh
-%                            source: <root>/mlsc_current_build.mat and
-%                                    <root>/mlsc_current_resources.mat
-%                            installed: <root>/build_manifest.mat and
-%                                       <root>/resource_manifest.mat
-%                          No independent runner/build/resource overrides.
-%                          Omit to use the installation-relative compiled
-%                          artifact defaults, validated by content identity.
-%                          Only mlsc and mlsc-mprage-only may consume this option.
-%   The artifact root selects runner/build/resource manifest paths. Artifact
-%   checks recompute content hashes and validate runtime identity; wrong or
-%   incomplete paths fail closed. MCR_ROOT remains pinned by the current
-%   artifact contract and is never overridden.
+%   Outputs and temporary files (subject folder <subject>/MR_PET):
+%     MR_PET/              final NIfTI, QC TIFF and version text files
+%     MR/pseudo_muMAP/     final DICOM pseudo-muMAP (nifti-and-dicom profiles)
+%     MR_PET/tmp/          per-subject working folder for intermediates. Removed
+%                          after successful promotion when cleanup_on_success is
+%                          true; kept when promotion fails or cleanup is off.
+%   Progress and the run log are written through pseudo_CT_output; scientific
+%   and MLSC lifecycle events are appended as JSONL under MR_PET.
 %
-%   Profiles are auto-discovered from src/config/profiles/. Each .m
-%   file in that directory defines one execution profile. To add a new
-%   profile, add a new .m file to that directory.
-%
-%   Examples:
-%       run_pseudo_CT()
-%       run_pseudo_CT('profile', 'local')
-%       run_pseudo_CT('profile', 'mlsc', 'subjects', 'batch')
-%       run_pseudo_CT('profile', 'local', 'subjects', subject_list, ...
-%                     'correct_aliasing', 0)
-%       run_pseudo_CT('profile', 'local', 'subjects', subject_list, ...
-%                     'recenter_before_normalization', 0)
-%       run_pseudo_CT('profile', 'mlsc', ...
-%                     'mlsc_current_artifact_root', '/path/to/artifact')
-%
-%   RUN_PSEUDO_CT(DEFAULTS_MAT) is supported only in deployed mode.
-%   DEFAULTS_MAT should point to a MAT file containing the defaults
-%   structure expected by the compiled application (profile_name, profile,
-%   or execution_profile must name the canonical profile).
-%
-%   Outputs:
-%       - final DICOM pseudo-muMAP images are written to MR/pseudo_muMAP
-%         when the selected profile declares nifti-and-dicom output
-%       - final NIfTI/QC/version files are written to MR_PET
-%       - intermediate files are staged in MR_PET/tmp and removed on
-%         successful completion
+%   Side effects: creates the subject folders, writes the run log, may submit
+%   and monitor MLSC Slurm jobs, runs the compiled local runner, and removes
+%   temporary files on success. Errors use run_pseudo_CT:* identifiers.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11). The compiled application runs
+%   on MCR 7.14.
 %
 %   Maintained by Michele Scipioni, PhD
 %   mscipioni@mgh.harvard.edu
 %   Updated: July 23, 2026.
-%   Minimum supported MATLAB: R2010b (matches cluster's compiled-app runtime, MCR 7.11)
 
 %% === 0. Resolve repo root and add config/ui to path (before any calls) ===
 pathp = fileparts(fileparts(fileparts(mfilename('fullpath'))));
@@ -225,6 +210,9 @@ if isempty(resolved_jobs)
     error('pseudo_CT:ResolvedJobRequired', ...
         'Run execution requires jobs resolved by validation (validate, then submit).');
 end
+% A source checkout runs no application profile without an explicit development
+% artifact root; the refusal precedes any subject processing.
+pseudo_CT_require_application_layout(mlsc_current_artifact_root);
 jobs = resolved_jobs;
 collection_stats = struct('requested', length(jobs), 'skipped', 0, ...
     'skipped_subjects', {{}});
@@ -409,7 +397,7 @@ switch config.mode
             USERNAME = gui_credentials.username;
             clear gui_credentials
         else
-            [PASSWORD, USERNAME] = passwordEntryDialog('enterUserName', true, ...
+            [PASSWORD, USERNAME] = pseudo_CT_password_entry_dialog('enterUserName', true, ...
                 'ValidatePassword', true, 'PasswordLengthMax', 50, ...
                 'WindowName', sprintf('Login for: %s', config.mlsc.host));
         end
@@ -469,7 +457,7 @@ switch config.mode
                     'MLSC account selection requires an authenticated transport.');
             end
                 for ii = 1:length(jobs)
-                    % T005 MLSC user-facing events (non-secret only): 4 input
+                    % MLSC user-facing events (non-secret only): 4 input
                     % was stage 1 above; 5 submit is stage 2 below; 6
                     % accepted ID, 7 initial observed state, 8 transitions,
                     % 9 heartbeat, 10 compute milestones, and 11 terminal

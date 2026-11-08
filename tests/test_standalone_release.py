@@ -2,7 +2,8 @@
 """Synthetic tests for the single installed launcher bin/pseudoct.
 
 Covers bin/pseudoct (run, headless, resolve, --list-releases; gui and --orchestrate refused)
-and the installed payload runner scripts/run_mlsc_current_payload.sh.
+and the payload runner (source scripts/run_pseudoct_worker.sh, installed as
+runtimes/<LABEL>/payload/run_pseudoct_worker.sh).
 
 An installed package is assembled under PSEUDOCT_TEST_SCRATCH: a copy of the real
 bin/pseudoct and payload runner, the release catalog embedded in manifest.json, and
@@ -12,12 +13,19 @@ scenario. Fake MATLAB Runtime roots carry only the identity evidence the launche
 checks. No MATLAB, mcc, science or job is run; the licensed MATLAB is unreachable
 through PATH and PSEUDOCT_MATLAB.
 
+The launcher's fixed catalog base /usr/pubsw/common/matlab is replaced, in the test copy
+only, by a synthetic directory under the scratch base, so no test depends on the real
+/usr/pubsw tree. The production launcher is checked to define that base exactly once.
+The resolution table (release, matlab_version, D, scenario, result) is written to
+mcr-resolution-table.tsv in the scratch base.
+
     PSEUDOCT_TEST_SCRATCH=<executionDir> python3 -I -B -m unittest discover \
         -s tests -p 'test_standalone_release.py' -t tests -v
 """
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,15 +36,23 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOG_PATH = os.path.join(REPO, 'config', 'releases.json')
 LAUNCHER_SRC = os.path.join(REPO, 'bin', 'pseudoct')
-RUNNER_SRC = os.path.join(REPO, 'scripts', 'run_mlsc_current_payload.sh')
+RUNNER_SRC = os.path.join(REPO, 'scripts', 'run_pseudoct_worker.sh')
 BUILT = ('R2010b', 'R2014b')
 EXECUTABLES = {
-    'payload': 'payload/mlsc_current_payload',
+    'payload': 'payload/pseudoct_worker',
     'standalone': 'standalone/pseudoct_standalone',
 }
 # PATH without MATLAB: the python3 that runs the tests plus the system utilities.
 SYSTEM_PATH = os.pathsep.join([os.path.dirname(sys.executable), '/usr/bin', '/bin'])
 NO_MATLAB = '/nonexistent/matlab-must-not-run'
+PRODUCTION_CATALOG_BASE = '/usr/pubsw/common/matlab'
+BASE_LINE = 'catalog_mcr_base=' + PRODUCTION_CATALOG_BASE
+# Releases whose catalog directory is checked: the R2010b default and the five named
+# full-build entries. D is the first two dotted components of matlab_version.
+MULTI = ('R2010b', 'R2019a', 'R2019b', 'R2022a', 'R2022b', 'R2026a')
+EXPECTED_DIR = {'R2010b': '7.11', 'R2019a': '9.6', 'R2019b': '9.7',
+                'R2022a': '9.12', 'R2022b': '9.13', 'R2026a': '26.1'}
+RESOLUTION = []
 
 FAKE_RECORD = r'''{
   printf 'EXE %s\n' "$0"
@@ -102,11 +118,38 @@ def make_runtime(path, label, version=None):
     return path
 
 
-def build_package(root):
+def catalog_dir(label):
+    """Expected MATLAB Runtime directory name: first two dotted components of matlab_version."""
+    return '.'.join(BY_LABEL[label]['matlab_version'].split('.')[:2])
+
+
+def synthetic_launcher(catalog_base):
+    """bin/pseudoct text with only its fixed catalog base replaced by a synthetic directory."""
+    with open(LAUNCHER_SRC, encoding='utf-8') as handle:
+        lines = handle.read().split('\n')
+    found = [index for index, line in enumerate(lines) if line == BASE_LINE]
+    if len(found) != 1:
+        raise AssertionError('bin/pseudoct must define its catalog base exactly once')
+    lines[found[0]] = 'catalog_mcr_base=' + shlex.quote(catalog_base)
+    return '\n'.join(lines)
+
+
+def install_release(pkg, label):
+    """Complete installed release: the three executables and the payload runner."""
+    for target, rel in EXECUTABLES.items():
+        exe = os.path.join(pkg, 'runtimes', label, rel)
+        write(exe, FAKE_STANDALONE if target == 'standalone' else FAKE_PLAIN)
+        os.chmod(exe, 0o755)
+    runner = os.path.join(pkg, 'runtimes', label, 'payload', 'run_pseudoct_worker.sh')
+    shutil.copyfile(RUNNER_SRC, runner)
+    os.chmod(runner, 0o755)
+
+
+def build_package(root, catalog_base):
     """Installed layout: bin/pseudoct, payload runner, runtimes/<LABEL>/, manifest.json."""
     pkg = os.path.join(root, 'pseudoct-syn')
     os.makedirs(os.path.join(pkg, 'bin'), exist_ok=True)
-    shutil.copyfile(LAUNCHER_SRC, os.path.join(pkg, 'bin', 'pseudoct'))
+    write(os.path.join(pkg, 'bin', 'pseudoct'), synthetic_launcher(catalog_base))
     os.chmod(os.path.join(pkg, 'bin', 'pseudoct'), 0o755)
     manifest = {
         'schema': 'pseudo-CT.release-distribution/v1',
@@ -118,14 +161,16 @@ def build_package(root):
     }
     write(os.path.join(pkg, 'manifest.json'), json.dumps(manifest, sort_keys=True, indent=2) + '\n')
     for label in BUILT:
-        for target, rel in EXECUTABLES.items():
-            exe = os.path.join(pkg, 'runtimes', label, rel)
-            write(exe, FAKE_STANDALONE if target == 'standalone' else FAKE_PLAIN)
-            os.chmod(exe, 0o755)
-        runner = os.path.join(pkg, 'runtimes', label, 'payload', 'run_mlsc_current_payload.sh')
-        shutil.copyfile(RUNNER_SRC, runner)
-        os.chmod(runner, 0o755)
+        install_release(pkg, label)
     return pkg
+
+
+def tearDownModule():
+    table = os.path.join(scratch_base(), 'mcr-resolution-table.tsv')
+    with open(table, 'w', encoding='utf-8') as handle:
+        handle.write('release\tmatlab_version\tD\tscenario\tresult\n')
+        for row in RESOLUTION:
+            handle.write('\t'.join(row) + '\n')
 
 
 class StandaloneTestCase(unittest.TestCase):
@@ -135,12 +180,17 @@ class StandaloneTestCase(unittest.TestCase):
         self.home = os.path.join(self.base, 'home')
         os.makedirs(self.home)
         self.log = os.path.join(self.base, 'fake-invocations.log')
-        self.pkg = build_package(os.path.join(self.base, 'install'))
+        self.catalog_base = os.path.join(self.base, 'catalog-matlab')
+        self.pkg = build_package(os.path.join(self.base, 'install'), self.catalog_base)
         self.pkg_real = os.path.realpath(self.pkg)
         self.root = {label: make_runtime(os.path.join(self.base, 'mcr', label), label)
                      for label in BUILT}
         self.root_real = {label: os.path.realpath(path) for label, path in self.root.items()}
         self.launcher = os.path.join(self.pkg, 'bin', 'pseudoct')
+
+    def candidate(self, label):
+        """Catalog location of a release in the synthetic catalog base."""
+        return os.path.join(self.catalog_base, EXPECTED_DIR[label])
 
     def run_cmd(self, argv, env=None, cwd=None):
         base_env = {'PATH': SYSTEM_PATH, 'HOME': self.home, 'LANG': 'C', 'LC_ALL': 'C',
@@ -154,7 +204,7 @@ class StandaloneTestCase(unittest.TestCase):
         return self.run_cmd([launcher or self.launcher] + args, env=env, cwd=cwd)
 
     def invocations(self):
-        """Fake executable calls in order: dicts keyed by EXE, ARGS, LD, ROOT, REQ, RES."""
+        """Fake calls in order: dicts keyed by EXE, ARGS, LD, ROOT, RELEASE, MCR_ROOT, REQ, RES."""
         records = []
         if not os.path.exists(self.log):
             return records
@@ -199,7 +249,7 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault', 'R2014b\t8.4\t-'])
         self.assertEqual(self.invocations(), [])
-        os.remove(os.path.join(self.pkg, 'runtimes', 'R2014b', 'payload', 'mlsc_current_payload'))
+        os.remove(os.path.join(self.pkg, 'runtimes', 'R2014b', 'payload', 'pseudoct_worker'))
         rc, out, _err = self.pseudoct(['--list-releases'], env={})
         self.assertEqual(rc, 0)
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault'])
@@ -231,18 +281,18 @@ class StandaloneTestCase(unittest.TestCase):
              'sh', out], stdout=subprocess.PIPE, check=True).stdout.decode()
         self.assertEqual(sourced, '|'.join([
             self.exe('R2014b', 'standalone'), self.root_real['R2014b'],
-            os.path.join(self.pkg_real, 'runtimes', 'R2014b', 'payload', 'run_mlsc_current_payload.sh'),
+            os.path.join(self.pkg_real, 'runtimes', 'R2014b', 'payload', 'run_pseudoct_worker.sh'),
             self.pkg_real, 'R2014b', self.root_real['R2014b']]))
-        for env, expected in (
-                ({'PSEUDOCT_MCR_ROOT_R2014b': env_root, 'PSEUDOCT_MCR_ROOT': env_plain}, env_root),
-                ({'PSEUDOCT_MCR_ROOT': env_plain}, env_plain)):
-            rc, out, err = self.pseudoct(['resolve', '--mcr', 'R2014b'], env=env)
-            self.assertEqual(rc, 0, err)
-            self.assertIn("PSEUDOCT_MCR_ROOT='%s'" % os.path.realpath(expected), out)
-            self.assertIn("PSEUDOCT_RUNTIME_MCR_ROOT='%s'" % os.path.realpath(expected), out)
-        rc, _out, err = self.pseudoct(['resolve', '--mcr', 'R2014b'], env={})
-        self.assertEqual(rc, 69, err)
-        self.assertIn('no MATLAB Runtime root', err)
+        # Environment variables never select a root: without --mcr-root the only
+        # candidate is the catalog location <base>/8.4 (R2014b), here synthetic.
+        conventional = make_runtime(os.path.join(self.catalog_base, '8.4'), 'R2014b')
+        rc, out, err = self.pseudoct(['resolve', '--mcr', 'R2014b'],
+                                     env={'PSEUDOCT_MCR_ROOT_R2014b': env_root,
+                                          'PSEUDOCT_MCR_ROOT': env_plain})
+        self.assertEqual(rc, 0, err)
+        for decoy in (env_root, env_plain):
+            self.assertNotIn(os.path.realpath(decoy), out)
+        self.assertIn("PSEUDOCT_MCR_ROOT='%s'" % os.path.realpath(conventional), out)
         self.assertEqual(self.invocations(), [])
 
     def test_resolve_rejects_mismatch_absent_and_unknown_releases(self):
@@ -327,7 +377,7 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault', 'R2014b\t8.4\t-'])
 
     def test_payload_runner_execs_compiled_payload_with_its_runtime(self):
-        runner = os.path.join(self.pkg, 'runtimes', 'R2010b', 'payload', 'run_mlsc_current_payload.sh')
+        runner = os.path.join(self.pkg, 'runtimes', 'R2010b', 'payload', 'run_pseudoct_worker.sh')
         rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'phase', 'job.txt', 'res.txt'],
                                      env={})
         self.assertEqual(rc, 0, err)
@@ -335,8 +385,196 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(calls[-1]['EXE'], self.exe('R2010b', 'payload'))
         self.assertEqual(calls[-1]['ARGS'], 'phase job.txt res.txt')
         self.assertEqual(calls[-1]['LD'], self.ld_for(self.root_real['R2010b']))
+        # Installed direct mode: the resource manifest argument is optional.
         rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'phase', 'job.txt'], env={})
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.invocations()[-1]['ARGS'], 'phase job.txt')
+        rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'phase'], env={})
         self.assertEqual(rc, 2, err)
+
+    def test_jvm_directories_join_the_library_path_only_when_present(self):
+        # MCR 7.14 libjvm.so lives under sys/java/.../amd64/server. The launcher and the
+        # payload runner append the amd64 and amd64/server directories only when present.
+        label = 'R2010b'
+        root = self.root_real[label]
+        jre = os.path.join(root, 'sys', 'java', 'jre', 'glnxa64', 'jre', 'lib', 'amd64')
+        server = os.path.join(jre, 'server')
+        self.subject()  # creates the MR_PET/tmp folder that holds the request and result
+        request = os.path.join(self.base, 'subject', 'MR_PET', 'tmp', 'request.mat')
+        result = os.path.join(self.base, 'subject', 'MR_PET', 'tmp', 'result.mat')
+        write(request, 'synthetic request mat\n')
+        runner = os.path.join(self.pkg, 'runtimes', label, 'payload', 'run_pseudoct_worker.sh')
+
+        def launcher_ld():
+            rc, _out, err = self.pseudoct(['headless', '--mcr', label, '--mcr-root', root,
+                                           request, result], env={})
+            self.assertEqual(rc, 0, err)
+            return self.invocations()[-1]['LD']
+
+        def runner_ld():
+            rc, _out, err = self.run_cmd([runner, root, 'phase', 'job.txt'], env={})
+            self.assertEqual(rc, 0, err)
+            return self.invocations()[-1]['LD']
+
+        self.assertFalse(os.path.exists(server))
+        self.assertEqual(launcher_ld(), self.ld_for(root))
+        self.assertEqual(runner_ld(), self.ld_for(root))
+        os.makedirs(server)
+        expected = self.ld_for(root) + ':' + jre + ':' + server
+        self.assertEqual(launcher_ld(), expected)
+        self.assertEqual(runner_ld(), expected)
+
+    def test_cli_validate_and_run_reach_the_same_packaged_standalone_engine(self):
+        # The MATLAB GUI sends these same run validate / run run argv through the packaged
+        # launcher (tests/test_frontend_launch.m); here the CLI must reach the same engine.
+        mprage = self.subject()
+        expected_exe = self.exe('R2010b', 'standalone')
+        cases = (('validate', ['prepare_validate', 'headless', 'verify_result']),
+                 ('run', ['prepare_validate', 'headless', 'verify_result',
+                          'prepare_submit', 'headless', 'verify_result']))
+        for action, phases in cases:
+            if os.path.exists(self.log):
+                os.remove(self.log)
+            rc, out, err = self.pseudoct(['run', '--mcr', 'R2010b', '--mcr-root', self.root['R2010b'],
+                                          action, '--profile', 'local', '--mprage', mprage,
+                                          '--format', 'jsonl'], env={})
+            self.assertEqual(rc, 0, out + err)
+            calls = self.invocations()
+            self.assertEqual([c.get('ARGS') for c in calls], phases, action)
+            for call in calls:
+                self.assertEqual(call['EXE'], expected_exe, action)
+                self.assertEqual(call['ROOT'], self.pkg_real, action)
+                self.assertEqual(call['RELEASE'], 'R2010b', action)
+
+    def test_incomplete_installation_fails_closed_without_source_fallback(self):
+        shutil.rmtree(os.path.join(self.pkg, 'runtimes'))
+        mprage = self.subject()
+        rc, _out, err = self.pseudoct(['run', 'validate', '--profile', 'local', '--mprage', mprage],
+                                      env={})
+        self.assertEqual(rc, 69, err)
+        self.assertIn('incomplete', err)
+        self.assertIn('reinstall', err)
+        self.assertNotIn('PSEUDOCT_LAUNCHER', err)
+        self.assertNotIn('MATLAB', err)
+        rc, _out, err = self.pseudoct(['--list-releases'], env={})
+        self.assertEqual(rc, 69, err)
+        self.assertEqual(self.invocations(), [])
+
+    def test_installed_launcher_never_runs_a_launcher_from_the_environment(self):
+        # Installed roots always use their bundled engine: a PSEUDOCT_LAUNCHER sentinel
+        # must not run, and the bundled release executable is the one invoked.
+        marker = os.path.join(self.base, 'alternate-launcher-ran')
+        alternate = os.path.join(self.base, 'alternate-pseudoct')
+        write(alternate, '#!/bin/sh\n: > "%s"\nexit 0\n' % marker)
+        os.chmod(alternate, 0o755)
+        mprage = self.subject()
+        rc, out, err = self.pseudoct(['run', '--mcr', 'R2010b', '--mcr-root', self.root['R2010b'],
+                                      'validate', '--profile', 'local', '--mprage', mprage,
+                                      '--format', 'jsonl'], env={'PSEUDOCT_LAUNCHER': alternate})
+        self.assertEqual(rc, 0, out + err)
+        self.assertFalse(os.path.exists(marker), 'PSEUDOCT_LAUNCHER ran in an installed root')
+        self.assertEqual(self.invocations()[-1]['EXE'], self.exe('R2010b', 'standalone'))
+
+    # ------------------------------------------- catalog MCR discovery (A-002, T010)
+
+    def test_production_launcher_defines_the_fixed_catalog_base_once(self):
+        with open(LAUNCHER_SRC, encoding='utf-8') as handle:
+            self.assertEqual(handle.read().split('\n').count(BASE_LINE), 1)
+
+    def test_each_named_release_resolves_from_its_first_two_components(self):
+        for label in MULTI:
+            with self.subTest(label=label):
+                self.assertEqual(catalog_dir(label), EXPECTED_DIR[label])
+                install_release(self.pkg, label)
+                candidate = make_runtime(self.candidate(label), label)
+                rc, out, err = self.pseudoct(['resolve', '--mcr', label], env={})
+                self.assertEqual(rc, 0, err)
+                self.assertIn("PSEUDOCT_MCR_ROOT='%s'" % os.path.realpath(candidate), out)
+                RESOLUTION.append((label, BY_LABEL[label]['matlab_version'], EXPECTED_DIR[label],
+                                   'candidate present, identity valid',
+                                   'resolved ' + os.path.realpath(candidate)))
+
+    def test_resolved_candidate_reaches_the_selected_engine(self):
+        label = 'R2026a'
+        install_release(self.pkg, label)
+        candidate = make_runtime(self.candidate(label), label)
+        self.subject()
+        request = os.path.join(self.base, 'subject', 'MR_PET', 'tmp', 'request.mat')
+        result = os.path.join(self.base, 'subject', 'MR_PET', 'tmp', 'result.mat')
+        write(request, 'synthetic request mat\n')
+        rc, _out, err = self.pseudoct(['headless', '--mcr', label, request, result], env={})
+        self.assertEqual(rc, 0, err)
+        self.assert_single_call(label, 'standalone', os.path.realpath(candidate), 'headless')
+
+    def test_absent_candidate_fails_actionably_for_every_named_release(self):
+        for label in MULTI:
+            with self.subTest(label=label):
+                install_release(self.pkg, label)
+                rc, _out, err = self.pseudoct(['resolve', '--mcr', label], env={})
+                self.assertEqual(rc, 69, err)
+                self.assertIn('no MATLAB Runtime root for %s' % label, err)
+                self.assertIn('%s is not a directory' % self.candidate(label), err)
+                self.assertIn('--mcr-root', err)
+                RESOLUTION.append((label, BY_LABEL[label]['matlab_version'], EXPECTED_DIR[label],
+                                   'candidate absent', 'rc 69, names candidate and --mcr-root'))
+        self.assertEqual(self.invocations(), [])
+
+    def test_full_build_string_directory_is_never_the_candidate(self):
+        label = 'R2019a'
+        install_release(self.pkg, label)
+        make_runtime(os.path.join(self.catalog_base, '9.6.0.1072779'), label)
+        rc, _out, err = self.pseudoct(['resolve', '--mcr', label], env={})
+        self.assertEqual(rc, 69, err)
+        self.assertIn('%s is not a directory' % self.candidate(label), err)
+        RESOLUTION.append((label, BY_LABEL[label]['matlab_version'], EXPECTED_DIR[label],
+                           'full-build directory present, D absent',
+                           'rc 69; full-build directory ignored'))
+
+    def test_identity_mismatch_and_missing_library_fail_closed_for_every_release(self):
+        for label in MULTI:
+            with self.subTest(label=label):
+                install_release(self.pkg, label)
+                entry = BY_LABEL[label]
+                library = entry['runtime_identity']['library']
+                make_runtime(self.candidate(label), label, version='0.0')
+                rc, _out, err = self.pseudoct(['resolve', '--mcr', label], env={})
+                self.assertEqual(rc, 69, err)
+                self.assertIn("reports MCR '0.0'", err)
+                self.assertIn("%s requires '%s'" % (label, entry['mcr_version']), err)
+                self.assertIn('--mcr-root', err)
+                RESOLUTION.append((label, entry['matlab_version'], EXPECTED_DIR[label],
+                                   'identity mismatch (mcrversion.ver 0.0)',
+                                   'rc 69, names MCR and --mcr-root'))
+                shutil.rmtree(self.candidate(label))
+                make_runtime(self.candidate(label), label)
+                os.remove(os.path.join(self.candidate(label), 'runtime', 'glnxa64', library))
+                rc, _out, err = self.pseudoct(['resolve', '--mcr', label], env={})
+                self.assertEqual(rc, 69, err)
+                self.assertIn('runtime library %s not found' % library, err)
+                self.assertIn('--mcr-root', err)
+                RESOLUTION.append((label, entry['matlab_version'], EXPECTED_DIR[label],
+                                   'identity library absent',
+                                   'rc 69, names missing library and --mcr-root'))
+                shutil.rmtree(self.candidate(label))
+
+    def test_explicit_mcr_root_takes_precedence_over_the_candidate(self):
+        label = 'R2022b'
+        install_release(self.pkg, label)
+        candidate = make_runtime(self.candidate(label), label)
+        explicit = make_runtime(os.path.join(self.base, 'mcr-explicit-2022b'), label)
+        rc, out, err = self.pseudoct(['resolve', '--mcr', label, '--mcr-root', explicit], env={})
+        self.assertEqual(rc, 0, err)
+        self.assertIn("PSEUDOCT_MCR_ROOT='%s'" % os.path.realpath(explicit), out)
+        self.assertNotIn(os.path.realpath(candidate), out)
+        RESOLUTION.append((label, BY_LABEL[label]['matlab_version'], EXPECTED_DIR[label],
+                           'candidate valid, explicit --mcr-root', 'explicit root selected'))
+        bad = make_runtime(os.path.join(self.base, 'mcr-explicit-bad-2022b'), label, version='9.9')
+        rc, _out, err = self.pseudoct(['resolve', '--mcr', label, '--mcr-root', bad], env={})
+        self.assertEqual(rc, 69, err)
+        self.assertIn("reports MCR '9.9'", err)
+        RESOLUTION.append((label, BY_LABEL[label]['matlab_version'], EXPECTED_DIR[label],
+                           'candidate valid, explicit --mcr-root with wrong identity',
+                           'rc 69; candidate not substituted'))
 
 
 if __name__ == '__main__':

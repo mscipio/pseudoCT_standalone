@@ -1,5 +1,4 @@
 function [status_str, detail_str] = compare_nifti_data(hdr_local, hdr_lp, vol_local, vol_lp, tol)
-% Investigation tool — investigation-cleanup-release.
 %COMPARE_NIFTI_DATA Core NIfTI comparison — structured metrics, no file I/O.
 %   [STATUS, DETAIL] = COMPARE_NIFTI_DATA(HDR_LOCAL, HDR_LP, VOL_LOCAL, VOL_LP, TOL)
 %

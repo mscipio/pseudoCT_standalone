@@ -1,72 +1,43 @@
 function result = mlsc_lifecycle(subject, config, runtime, transport)
-%MLSC_LIFECYCLE Submit, monitor, and finalize one MLSC Slurm subject record.
-%   RESULT = MLSC_LIFECYCLE(SUBJECT, CONFIG, RUNTIME, TRANSPORT) reuses the
-%   T003 mlsc_backend submission seam, then uses injected query/cancel seams:
-%       TRANSPORT.query_squeue(JOB_ID)
-%       TRANSPORT.query_sacct(JOB_ID)
-%       TRANSPORT.cancel_job(JOB_ID)
-%       TRANSPORT.query_squeue_by_name(JOB_NAME)
-%       TRANSPORT.query_sacct_by_name(JOB_NAME)
-%   The callbacks return stable command output, never credentials or SSH
-%   internals.  TRANSPORT.sleep and TRANSPORT.clock are optional test seams;
-%   defaults are pause and now.  No real scheduler operation is performed by
-%   this function unless a caller supplies those runtime callbacks.
-%   query_squeue must use squeue --noheader --format=%T and query_sacct must
-%   use sacct --allocations --parsable2 with JobIDRaw, State, and
-%   ExitCode fields.
+%MLSC_LIFECYCLE Submit, monitor and finalize one MLSC Slurm subject.
+%   RESULT = MLSC_LIFECYCLE(SUBJECT, CONFIG, RUNTIME, TRANSPORT)
+%   Submits the subject through mlsc_backend, then polls the scheduler through
+%   the TRANSPORT callbacks: query_squeue(JOB_ID) with squeue --noheader
+%   --format=%T; query_sacct(JOB_ID) with sacct --allocations --parsable2
+%   (JobIDRaw, State, ExitCode); query_squeue_by_name(JOB_NAME) and
+%   query_sacct_by_name(JOB_NAME). cancel_job(JOB_ID) cancels the job.
+%   TRANSPORT.sleep and TRANSPORT.clock are optional test seams (default pause
+%   and now). Without caller-supplied callbacks, the function performs no
+%   scheduler operation. The callbacks return command output only, never
+%   credentials or SSH internals.
 %
-%   Scheduler-facing user output uses the pseudo_CT_output formatter with a
-%   non-secret RUNTIME.output_context (log routing/scope tags only; the
-%   numeric job ID is added as the job tag).  After an accepted numeric job
-%   ID, the first observed normalized scheduler state is emitted as observed
-%   (pending only when first observed pending, running directly when first
-%   already running, otherwise the legitimate normalized state), each later
-%   actual normalized state change is emitted once, a default 60-second
-%   heartbeat (RUNTIME.heartbeat_interval_seconds) reports job ID, state,
-%   and elapsed while pending/running from the existing poll loop and
-%   TRANSPORT.clock without extra queries or sleeps, and a terminal summary
-%   reports job ID, state, exit code (or unavailable marker), and elapsed.
-%   Output never changes polling cadence, scheduler queries, cancellation,
-%   accounting authority, timeout, or eligibility semantics.
+%   Progress: console lines come from pseudo_CT_output with
+%   RUNTIME.output_context (non-secret routing tags; the job ID is added as the
+%   job tag). They report the first observed state, each later state change, a
+%   heartbeat with job ID, state and elapsed time (RUNTIME.heartbeat_interval_seconds,
+%   default 60), and a terminal summary. Output does not change the polling
+%   cadence, the queries or the timeout.
 %
+%   Terminal state: sacct --allocations data is authoritative for the state and
+%   ExitCode. A COMPLETED state is success only when the node-local/copy-back
+%   verification passes and shared_subject_temp/att_map.nii exists and is
+%   non-empty. Terminal Slurm logs are archived to RUNTIME.log_archive_dir before
+%   local cleanup can remove the shared subject temp folder.
 %
-%   sacct --allocations/primary allocation data is authoritative for terminal
-%   state and ExitCode.  A scheduler COMPLETED state is not workflow success
-%   until the generated T003 node-local/copy-back contract is represented and
-%   shared_subject_temp/att_map.nii is present and non-empty.
-%   Terminal Slurm logs are archived to runtime.log_archive_dir before any
-%   local finalization can remove the shared subject temp.
+%   Scientific progress: the function reads only the per-submission file
+%   shared_subject_temp/.mlsc_progress_<correlation-id> (passed through the
+%   backend artifact), incrementally during each poll and once at the terminal
+%   state. It never scans the folder or infers the latest file. A missing, late,
+%   partial or unreadable file never fails the job. Only complete recognized
+%   records are emitted, once. result.progress records a secret-free
+%   incomplete-trailing flag and the pending byte count, never the trailing
+%   content. The durable progress archive holds only validated milestones, never
+%   raw source bytes.
 %
-%   The exact per-submission progress artifact selected by the current
-%   submission (shared_subject_temp/.mlsc_progress_<correlation-id>,
-%   passed explicitly through the backend artifact) is consumed with its
-%   incremental cursor during each existing scheduler poll and once at
-%   terminal without adding queries or sleeps and without directory
-%   scanning or latest-file inference.  Only that file is ever read; a
-%   stale prior-submission file that remains present or
-%   undeletable is never emitted.  A missing, late, partial, or unreadable
-%   file never fails the job; only complete enumerated records are emitted
-%   once, invalid input stays silent and secret-free.  A bounded
-%   secret-free incomplete-trailing indicator (logical flag plus
-%   pending-byte count, never the trailing content) is persisted in
-%   result.progress and terminal evidence so a terminal partial record
-%   remains diagnosable. Original backend stage IDs remain 3/8 for remote
-%   compute milestones and 4/8 for verify/copy-back in detailed logs. A
-%   Console stage labels preserve these explicit backend IDs and totals;
-%   scientific progress events are never assigned synthetic stage numbers.
-%   The durable archive is generated only
-%   from the validated recognized milestone sequence (order preserved,
-%   at-most-once, from the parser accepted output) and never copies raw
-%   source bytes, so malformed, unknown, secret-bearing, or
-%   incomplete-trailing input is never archived or echoed; evidence keeps
-%   only the incomplete-trailing flag plus pending-byte/ignored counts and
-%   never raw rejected content.  Archival is best-effort to the durable
-%   per-subject destination under its correlation-preserving name before
-%   local cleanup, independent of Slurm log capture with the same
-%   non-fatal policy; the raw source itself is left for the existing
-%   shared-temp success/failure preservation behavior but is never
-%   promoted.
-%
+%   Side effects: submits, polls and cancels the job through TRANSPORT, and writes
+%   the log and progress archives (best-effort; failures are non-fatal). Errors:
+%   pseudo_CT:MLSCPreflight for an invalid subject or config, and
+%   pseudo_CT:MLSCTransportRequired when a required callback is missing.
 %   Minimum supported MATLAB: R2010b.
 
 if nargin < 2 || ~isstruct(subject) || ~isstruct(config)
@@ -162,7 +133,7 @@ output_tracker = local_output_init(runtime, transport);
 [slurm_log_paths, slurm_log_cursors] = local_slurm_log_init( ...
     result.log_paths, job_id);
 slurm_log_state = struct();
-% Native scientific events (read-only here; the remote payload is the writer).
+% Native scientific events (read-only here; the remote worker is the writer).
 native_events_path = local_native_events_path(runtime);
 direct_stdout = local_direct_stdout_init();
 local_emit_accepted(runtime, job_id);
@@ -584,7 +555,8 @@ end
 function contract = local_contract_from_artifact(artifact)
 %LOCAL_CONTRACT_FROM_ARTIFACT Node-local/copy-back contract from script.
 %   Require the supported pinned launcher invocation, prepare BEFORE external
-%   normalization BEFORE compute, staged job/resource manifests,
+%   normalization BEFORE compute, staged job manifest plus resource manifest
+%   (manifest mode; installed direct mode stages the job manifest only),
 %   PREPARE-derived dynamic normalization (corrected selection without
 %   sourcing the handoff), three-output plus mandatory-evidence verify and
 %   copy-back, supported milestones, pinned startup recheck, FreeSurfer
@@ -618,10 +590,21 @@ end
 contract.represented = contract.node_local_processing && ...
     contract.shared_input_staging && contract.shared_output_staging && ...
     contract.no_scp_network_payload;
+% Installed direct mode (empty resource_manifest, see the generator) stages only
+% the job manifest; manifest mode additionally stages the resource manifest.
+direct_artifact = isstruct(artifact) && isfield(artifact, 'current_resource_manifest') && ...
+    ischar(artifact.current_resource_manifest) && isempty(artifact.current_resource_manifest);
+if direct_artifact
+    resource_staging_ok = isempty(strfind(script, 'resource_manifest')) && ...
+        isempty(strfind(script, 'local_resource_manifest'));
+else
+    resource_staging_ok = ~isempty(strfind(script, ...
+        'cp -- "$shared_resource_manifest" "$local_resource_manifest"'));
+end
 supported_ok = ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" prepare')) && ...
     ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" compute')) && ...
     ~isempty(strfind(script, 'cp -- "$shared_job_manifest" "$local_job_manifest"')) && ...
-    ~isempty(strfind(script, 'cp -- "$shared_resource_manifest" "$local_resource_manifest"')) && ...
+    resource_staging_ok && ...
     ~isempty(strfind(script, 'env -u LD_LIBRARY_PATH')) && ...
     ~isempty(strfind(script, 'tcsh -f -c')) && ...
     ~isempty(strfind(script, 'Fusion_MR_Pseudo_CT_validation.tiff')) && ...
@@ -2698,7 +2681,7 @@ end
 
 function direct = local_native_events_poll(path_name, direct, runtime, job_id)
 %LOCAL_NATIVE_EVENTS_POLL Present new native records of this job (read-only).
-%   The remote payload is the only writer; this reader never appends. A stage
+%   The remote worker is the only writer; this reader never appends. A stage
 %   already shown from stdout is not shown again. A missing or delayed file is
 %   non-fatal. A reader failure is reported once and stops native reading.
 context = struct();
@@ -2775,7 +2758,7 @@ function direct = local_scientific_stdout_poll(path_name, direct, version, ...
 %   WARN/ERROR events are dropped because the diagnostic path owns them. A
 %   reader failure, such as a shrinking file, is reported once as an ERROR and
 %   stops direct parsing for this job; it is never treated as missing stdout.
-%   Stdout stage events are shown only until the payload writes native records
+%   Stdout stage events are shown only until the worker writes native records
 %   (see pseudo_CT_scientific_present_once).
 try
     if ~isstruct(direct) || direct.failed || ~ischar(path_name) || ...
@@ -3748,7 +3731,7 @@ end
 
 function recognized = local_is_archivable_record(line)
 %LOCAL_IS_ARCHIVABLE_RECORD Enumerated records only, never free-form.
-%   Mirrors mlsc_progress local_is_record (including T004 current
+%   Mirrors mlsc_progress local_is_record (including current
 %   milestones) so the durable archive preserves the validated sequence.
 recognized = strcmp(line, 'stage_in|done') || ...
     strcmp(line, 'preparation|done') || ...

@@ -1,111 +1,78 @@
-function mlsc_current_payload(phase, job_manifest_path, resource_manifest_path)
-%MLSC_CURRENT_PAYLOAD Compiled-current prepare/compute payload (T002/T003).
-%   "mlsc-current" in manifest/evidence schemas is the compiled artifact
-%   namespace, not a selectable profile key.
-%   MLSC_CURRENT_PAYLOAD(PHASE, JOB_MANIFEST_PATH, RESOURCE_MANIFEST_PATH)
-%   runs one explicitly selected phase using scalar validated versioned
-%   manifests. PHASE is 'prepare' or 'compute' (case-insensitive, fixed
-%   argument order).
+function pseudoct_worker(phase, job_manifest_path, resource_manifest_path)
+%PSEUDOCT_WORKER Shared compiled prepare/compute worker for the current pipeline.
+%   PSEUDOCT_WORKER(PHASE, JOB_MANIFEST_PATH, RESOURCE_MANIFEST_PATH) runs one
+%   phase from scalar, versioned manifests (source checkouts and MLSC jobs).
+%   PSEUDOCT_WORKER(PHASE, JOB_MANIFEST_PATH) is installed direct mode: there is
+%   no resource manifest. The job atlas_dir is the packaged resources folder,
+%   and its required files are checked by pseudo_CT_check_installed_resources.
+%   PHASE is 'prepare' or 'compute' (case-insensitive). Run prepare first:
+%   it writes the handoff that compute consumes.
 %
-%   T003 ordering contract: preparation runs the bundled alias/recenter code
-%   (pseudo_CT_current_prepare) BEFORE the external FreeSurfer boundary.
-%   The MLSC shell contract (env -u LD_LIBRARY_PATH ... tcsh -f -c with
-%   source /usr/local/freesurfer/nmr-stable53-env) is owned by
-%   src/backends/mlsc/mlsc_generate_slurm_script.m. The local/legacy wrapper
-%   src/backends/shared/run_normalization_cmd.m and the legacy normalization path
-%   are preserved unchanged and are not used by this payload. This payload
-%   never normalizes the raw MPRAGE first, never calls run_launchpad_cmd,
-%   never submits nested jobs, and never reuses atlas-core remote SSH
-%   staging: prepare stops at the bounded handoff, and compute starts only
-%   after normalized-output verification. This file contains no GUI,
-%   credential, Ganymed/ssh2, scheduler, launchpad, catalog, resolver,
-%   legacy-defaults, or addpath roles by construction.
+%   The same compiled worker serves the local current runner
+%   (pseudo_CT_run_local_current_subject) and MLSC jobs. Each call runs one
+%   phase in its own MATLAB process. The "mlsc-current" token in job, resource
+%   and evidence schemas names the compiled artifact namespace; it is not a
+%   selectable profile key. The science config assembled here sets mode
+%   'mlsc' for that namespace only.
 %
-%   Prepare writes the bounded handoff mlsc_current_handoff.mat (fixed
-%   basename inside the job work_dir; never taken from manifest/handoff
-%   content) plus a human-readable mlsc_current_prepare_evidence.txt. The
-%   handoff is per-job data consumed only via load() with field-by-field
-%   validation: it is never sourced, eval'd, or executed as shell code, and
-%   its paths never reach a shell. Controlled basenames/flags:
-%   input_selected/normalized_expected are single-row .nii paths without
-%   '..', normalized_expected is exactly the derived '_normalized' variant
-%   of the selected input, and the normalization-needed gate
-%   (needs_normalization vs '_normalized.nii' presence) must be consistent.
-%   Compute verifies the normalized output exists before running science.
+%   Ordering: prepare runs the bundled alias/recenter code
+%   (pseudo_CT_current_prepare) before the external FreeSurfer normalization.
+%   The worker never runs FreeSurfer or submits jobs. The caller runs
+%   normalization: the MLSC batch script on MLSC, or
+%   pseudo_CT_run_normalization_cmd on the local path. Compute starts only
+%   after the normalized output is verified.
 %
-%   Resource authority (T003, simplified T009): the resource manifest
-%   identifies the expected current atlas list plus the required resource
-%   names, and the payload verifies those files exist on disk before either
-%   phase enters science (prepare or compute); any missing file fails
-%   closed. The manifest locates the current Batch_atlas tree via atlas_dir
-%   (must match the job atlas_dir) and declares atlas_list (expected
-%   *Atlas*.nii basenames) and resource_names (expected basenames for
-%   ch2.nii, all three batch MATs -- new_segment_batch.mat,
-%   dartel_existing_template_batch.mat, create_inverse_warped_batch.mat --
-%   Template_1..6.nii, and every listed atlas). No bundled bytes/datenum
-%   fingerprint equality is enforced anywhere (T009 removed the atlas,
-%   fixed-resource, TPM, and QC fingerprint gates after job 10505082 failed
-%   on an extracted-TPM fingerprint mismatch). The same physical
-%   Batch_atlas directory is allowed, but neither a legacy runner/defaults
-%   MAT nor the deployed atlas-local TPM.nii is authoritative: the headless
-%   path always uses the explicit SPM toolbox TPM.nii, independent of
-%   isdeployed. Evidence files record the actual on-disk identities
-%   (informational only, never gates).
+%   Prepare writes mlsc_current_handoff.mat (fixed basename in the job work_dir)
+%   and mlsc_current_prepare_evidence.txt. The handoff is loaded with
+%   field-by-field validation; it is never executed, and its paths never
+%   reach a shell. Input and normalized-output names are single-row .nii paths
+%   without '..'; the normalized name is the derived '_normalized' variant of
+%   the selected input; the needs_normalization flag must agree with whether
+%   that file exists.
 %
-%   Payload dependencies (T003 bounded audit, gates removed T009): the
-%   science path executes pseudo_CT_current_prepare +
-%   pseudo_CT_current_compute plus the one-hop transitives
-%   move_image_2_MNI/head_mask_mprage/reduce_bone_segment/
-%   quick_fusion_pseudo_ct/toverlay2/pca-resolver. T009 removed the
-%   exhaustive which()/root/MEX inventory gates (toolbox-root, SPM-root,
-%   vers-exact, src-root, aliasing-root, and native identity/arch/pending
-%   checks): missing operations now fail naturally through normal MATLAB
-%   error propagation when called, with no pre-science inventory pass.
-%   Atlas/batch/TPM/QC files are covered only by the existence checks in
-%   local_validate_atlas_resources, never by a code inventory.
+%   Resource checks are existence checks only. Manifest mode requires every
+%   name in resource_names and atlas_list to exist under atlas_dir. Direct mode
+%   runs the same check through pseudo_CT_check_installed_resources. No
+%   fingerprint or datenum gate is enforced. The headless path always uses the
+%   explicit SPM toolbox TPM.nii, whether or not the code is deployed.
 %
-%   This payload always runs the explicitly opt-in headless path
-%   (default-off for existing local callers): bundled SPM initialization
-%   plus in-process noninteractive cfg_util batch execution with explicit
-%   current SPM toolbox/Seg/TPM.nii resources, independent of isdeployed.
-%   It has no GUI, credential, Ganymed, scheduler, or runtime external
-%   MATLAB-code path dependency: no password dialogs, no ssh2/Ganymed
-%   calls, no job submission, no profile-file loading, no fwhm/DICOM
-%   finalization (config.fwhm stays in local DICOM finalization).
+%   Science calls pseudo_CT_current_prepare and pseudo_CT_current_compute, which
+%   call pseudo_CT_move_image_2_mni, pseudo_CT_head_mask_mprage,
+%   pseudo_CT_reduce_bone_segment, pseudo_CT_quick_fusion, pseudo_CT_overlay2
+%   and pseudo_CT_pca_resolver. A missing operation fails when it is called.
+%   The worker does not perform DICOM output or config.fwhm smoothing; the
+%   caller (pseudo_CT_run_lifecycle) performs DICOM output after compute.
 %
 %   Job manifest (.mat, scalar struct variable JOB):
 %     schema = 'pseudo-CT.mlsc-current-job/v1', manifest_version = 1,
 %     input_mprage (existing .nii path), work_dir (existing directory),
-%     atlas_dir (atlas/batch template directory),
-%     check_aliasing scalar 0/1, recenter_before_normalization ('Yes'/'No'
-%     or scalar logical), bone_enabled scalar logical,
-%     zero_background ('Yes'/'No').
-%   Resource manifest (.mat, scalar struct variable RESOURCES):
-%     schema = 'pseudo-CT.mlsc-current-resources/v1',
-%     manifest_version = 1, atlas_dir (must match job atlas_dir),
-%     atlas_list (cell vector of expected *Atlas*.nii basenames),
+%     atlas_dir (atlas/batch template directory), check_aliasing scalar 0/1,
+%     recenter_before_normalization ('Yes'/'No' or scalar logical),
+%     bone_enabled scalar logical, zero_background ('Yes'/'No').
+%   Resource manifest (.mat, scalar struct variable RESOURCES; manifest mode):
+%     schema = 'pseudo-CT.mlsc-current-resources/v1', manifest_version = 1,
+%     atlas_dir (must match job atlas_dir; a relative value resolves against
+%     the manifest folder), atlas_list (cell vector of *Atlas*.nii basenames),
 %     resource_names (cell vector covering ch2.nii, the three batch MATs,
-%     Template_1..6.nii, and every atlas in atlas_list). Extra
-%     gate-era fields (resource_fingerprints, tpm_fingerprint,
-%     qc_fingerprint, native_*) are ignored when present. Every listed
-%     file must exist before either phase enters science; no legacy
-%     runner/defaults MAT, catalog, or resolver fields exist here.
-%   Both manifests must be scalar (1x1) structs; anything else fails
-%   closed before science.
+%     Template_1..6.nii and every atlas in atlas_list). Extra fields from older
+%     fingerprint gates are ignored. Both manifests must be scalar (1x1)
+%     structs; anything else fails closed before science.
 %
-%   Emit contract: compute requires att_map.nii,
-%   Fusion_MR_Pseudo_CT_validation.tiff, and Pseudo_CT_AC_Version.txt
-%   (written by the shared compute helper) plus normalization evidence and
-%   an mlsc_current_output_verification.txt covering the verified
-%   normalized input and every required output. Every failure raises
-%   (nonzero propagation); no science runs on failed validation.
+%   Outputs: compute writes att_map.nii, Fusion_MR_Pseudo_CT_validation.tiff,
+%   Pseudo_CT_AC_Version.txt, normalization evidence and
+%   mlsc_current_output_verification.txt in the job work_dir. Any failed check
+%   raises an error; science does not run after a failed validation.
+%   Errors use the pseudo_CT:MLSCPayload* identifiers (artifact contract).
 %
-%   Minimum supported MATLAB: R2010b.
+%   Minimum supported MATLAB: R2010b (MATLAB 7.11). The compiled worker runs
+%   on MCR 7.14.
 
-if nargin ~= 3
+if nargin ~= 2 && nargin ~= 3
     error('pseudo_CT:MLSCPayloadUsage', ...
-        'Usage: mlsc_current_payload(phase, job_manifest_path, resource_manifest_path).');
+        'Usage: pseudoct_worker(phase, job_manifest_path[, resource_manifest_path]).');
 end
+% Two arguments: installed direct mode. Three arguments: manifest mode (MLSC/source).
+direct = nargin == 2;
 if ~ischar(phase) || size(phase, 1) ~= 1
     error('pseudo_CT:MLSCPayloadManifest', 'Phase must be a single row string.');
 end
@@ -117,37 +84,49 @@ end
 if ~ischar(job_manifest_path) || size(job_manifest_path, 1) ~= 1 || isempty(strtrim(job_manifest_path))
     error('pseudo_CT:MLSCPayloadManifest', 'Job manifest path must be a non-empty string.');
 end
-if ~ischar(resource_manifest_path) || size(resource_manifest_path, 1) ~= 1 || isempty(strtrim(resource_manifest_path))
-    error('pseudo_CT:MLSCPayloadManifest', 'Resource manifest path must be a non-empty string.');
+if ~direct
+    if ~ischar(resource_manifest_path) || size(resource_manifest_path, 1) ~= 1 || isempty(strtrim(resource_manifest_path))
+        error('pseudo_CT:MLSCPayloadManifest', 'Resource manifest path must be a non-empty string.');
+    end
 end
 if exist(job_manifest_path, 'file') ~= 2
     error('pseudo_CT:MLSCPayloadManifest', 'Job manifest not found: %s', job_manifest_path);
 end
-if exist(resource_manifest_path, 'file') ~= 2
+if ~direct && exist(resource_manifest_path, 'file') ~= 2
     error('pseudo_CT:MLSCPayloadManifest', 'Resource manifest not found: %s', resource_manifest_path);
 end
 
 job = local_load_scalar_struct(job_manifest_path, 'job', ...
     'pseudo-CT.mlsc-current-job/v1');
-resources = local_load_scalar_struct(resource_manifest_path, 'resources', ...
-    'pseudo-CT.mlsc-current-resources/v1');
 local_validate_job(job);
-% Manifest atlas_dir only: a relative value (current packages) resolves against
-% the manifest's own folder; an absolute value is used as written.
-if isfield(resources, 'atlas_dir')
-    resources.atlas_dir = local_resolve_manifest_atlas( ...
-        resource_manifest_path, resources.atlas_dir);
-end
-local_validate_resources(resources);
-if ~strcmp(local_strip_sep(job.atlas_dir), local_strip_sep(resources.atlas_dir))
-    error('pseudo_CT:MLSCPayloadManifest', ...
-        'Job and resource atlas directories do not match.');
+if direct
+    % Installed direct mode: the job atlas_dir is the packaged resources folder.
+    % Its required files are verified here, before any phase enters science.
+    % The handoff records an empty resource manifest path.
+    resource_manifest_path = '';
+    atlas_names = pseudo_CT_check_installed_resources(strtrim(job.atlas_dir));
+    resources = struct('atlas_dir', job.atlas_dir, 'atlas_list', {atlas_names}, ...
+        'resource_names', {{}});
+else
+    resources = local_load_scalar_struct(resource_manifest_path, 'resources', ...
+        'pseudo-CT.mlsc-current-resources/v1');
+    % Manifest atlas_dir only: a relative value (current packages) resolves against
+    % the manifest's own folder; an absolute value is used as written.
+    if isfield(resources, 'atlas_dir')
+        resources.atlas_dir = local_resolve_manifest_atlas( ...
+            resource_manifest_path, resources.atlas_dir);
+    end
+    local_validate_resources(resources);
+    if ~strcmp(local_strip_sep(job.atlas_dir), local_strip_sep(resources.atlas_dir))
+        error('pseudo_CT:MLSCPayloadManifest', ...
+            'Job and resource atlas directories do not match.');
+    end
 end
 atlas_dir = job.atlas_dir;
 local_validate_atlas_resources(atlas_dir, resources);
 
 % Effective science config assembled from validated manifests only. No
-% profile file is loaded here so the deployed payload never depends on
+% profile file is loaded here so the deployed worker never depends on
 % loose MATLAB code. pca_order matches local callable-first order.
 config = struct();
 config.mode = 'mlsc';
@@ -529,7 +508,7 @@ local_require_resource_names(resources.resource_names, resources.atlas_list);
 end
 
 function local_validate_atlas_resources(atlas_dir, resources)
-% T003 resource authority (existence-only since T009): verify
+% Resource authority (existence only): verify
 % manifest-declared expected files exist on disk before either phase enters
 % science; any missing file fails closed. Covers the expected atlas list,
 % ch2.nii, all three batch MATs, Template_1..6.nii, plus the bundled SPM8

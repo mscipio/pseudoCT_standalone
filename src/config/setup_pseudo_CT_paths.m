@@ -31,12 +31,23 @@ end
 
 layout = pseudo_CT_package_layout();
 installed = strcmp(layout.mode, 'installed');
+% Installed distribution: SPM's DICOM dictionary is packaged with the atlas
+% resources (config.atlas_root). spm_dicom_headers loads it by bare name during
+% input conversion inside this engine, so every installed purpose, validate
+% included, joins that folder to the path and verifies the dictionary first.
+% Source mode does not run this check.
+if installed
+    pseudo_CT_check_spm_dicom_dict(config.atlas_root);
+    % Installed resources are checked by file name, not by a manifest list: a
+    % missing required file fails closed here, naming the file.
+    pseudo_CT_check_installed_resources(config.atlas_root);
+end
 % Installed distributions: the converter, SPM and SPM override code is compiled
-% into the science payload (run_mlsc_current_payload), not into the headless
+% into the compiled worker (run_pseudoct_worker.sh), not into the headless
 % standalone that runs this setup. Checking those names here fails on the
 % standalone's own function table, so installed mode skips them for every
-% purpose. The payload's build manifest and runner checksum are validated by
-% the artifact check and the payload fails closed if its code is missing.
+% purpose. The runner, worker executable and standalone are identified by
+% SHA-256 at validation and submit; the worker fails closed if its code is missing.
 execution_only = installed;
 needs_converter = (strcmp(purpose, 'run') || has_inputs) && ~execution_only;
 % Any resolved input can be submitted through the same run setup, which
@@ -77,7 +88,7 @@ if needs_spm
     end
 end
 if strcmp(config.mode, 'mlsc')
-    local_validate_current_setup(config);
+    local_validate_current_setup(config, installed);
     if strcmp(purpose, 'run')
         mlsc_files = {config.mlsc.shell; config.mlsc.freesurfer_env};
     else
@@ -136,7 +147,14 @@ if ~installed
 end
 if strcmp(config.mode, 'mlsc') && ...
         ~strcmp(purpose, 'validate')
-    ssh2_root = fullfile(root_dir, 'external', 'ssh2_v2_m1_r5');
+    % Installed: the transport resolves from the validated installed package root
+    % (layout.root, as pseudo_CT_dependency_paths does), not from the caller's root_dir.
+    if installed
+        ssh2_base = layout.root;
+    else
+        ssh2_base = root_dir;
+    end
+    ssh2_root = fullfile(ssh2_base, 'external', 'ssh2_v2_m1_r5');
     if exist(ssh2_root, 'dir') ~= 7
         error('pseudo_CT:SSH2RootMissing', ...
             'Bundled SSH2 client source is missing: %s', ssh2_root);
@@ -163,6 +181,14 @@ if ~installed
 end
 end
 
+function cleared = local_manifests_cleared(current)
+%LOCAL_MANIFESTS_CLEARED True when both manifest paths are the empty direct-mode value.
+cleared = isfield(current, 'build_manifest') && ...
+    isfield(current, 'resource_manifest') && ...
+    ischar(current.build_manifest) && isempty(current.build_manifest) && ...
+    ischar(current.resource_manifest) && isempty(current.resource_manifest);
+end
+
 function local_require_capability(names, identifier, message)
 %LOCAL_REQUIRE_CAPABILITY Fail closed unless each compiled name is callable.
 for ii = 1:length(names)
@@ -172,17 +198,22 @@ for ii = 1:length(names)
 end
 end
 
-function local_validate_current_setup(config)
+function local_validate_current_setup(config, installed)
 %LOCAL_VALIDATE_CURRENT_SETUP Validate current artifact strings for setup.
-%   Requires the neutral config.current artifact strings. Artifact-file
-%   existence is checked by preflight and the execution validator. R2010b only.
+%   Requires the neutral config.current artifact strings. Installed direct mode
+%   (runtime selection cleared both manifest paths) needs no manifests: the
+%   empty values are accepted and no manifest is read. Source mode requires
+%   both manifest paths. Artifact-file existence is checked by preflight and the
+%   execution validator. R2010b only.
 if ~isfield(config, 'current') || ~isstruct(config.current) || ...
         numel(config.current) ~= 1
     error('pseudo_CT:InvalidProfile', ...
         'The MLSC current profile has no valid current artifact block.');
 end
-current_fields = {'runner'; 'mcr_root'; 'build_manifest'; ...
-    'resource_manifest'};
+current_fields = {'runner'; 'mcr_root'};
+if ~(installed && local_manifests_cleared(config.current))
+    current_fields = [current_fields; {'build_manifest'; 'resource_manifest'}];
+end
 for ii = 1:length(current_fields)
     value = config.current.(current_fields{ii});
     if ~ischar(value) || size(value, 1) ~= 1 || ...

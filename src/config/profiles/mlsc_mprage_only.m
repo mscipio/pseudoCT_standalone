@@ -1,7 +1,9 @@
 function config = mlsc_mprage_only()
-%MLSC_MPRAGE_ONLY MLSC MPRAGE-only profile.
-%   Reuse MLSC's artifact and scheduler contract; only the input,
-%   output, and GUI policies differ.
+%MLSC_MPRAGE_ONLY MLSC MPRAGE-only profile: Slurm submission, no UMAP reference.
+%   CONFIG = MLSC_MPRAGE_ONLY() returns the canonical 'mlsc-mprage-only'
+%   profile. It starts from MLSC() and changes only the reference, output and
+%   GUI policies, so the artifact and scheduler contract is the MLSC one.
+%   Minimum supported MATLAB: R2010b.
 
 config = mlsc();
 

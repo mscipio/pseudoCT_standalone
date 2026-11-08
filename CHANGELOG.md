@@ -1,8 +1,33 @@
 3.2.0
 
+## 3.2.0 — Prerelease audit and cleanup (unpublished)
+
+- Renames the shared science worker to `pseudoct_worker` (`src/science/current/pseudoct_worker.m`, formerly `mlsc_current_payload.m`) and its launcher to `run_pseudoct_worker.sh` (`scripts/run_pseudoct_worker.sh`, formerly `run_mlsc_current_payload.sh`), with all source, build, package, profile, Slurm and test references updated. Public commands, `run_pseudo_CT.m`, the headless engine `pseudoct_standalone`, scientific output and log names, and artifact schemas and configuration keys are unchanged.
+- Renames twelve internal helpers within their directories. Signatures and scientific bodies are unchanged; callers, build lists and tests were updated:
+
+  | Former name | Current name |
+  |---|---|
+  | `CT_2_att_map.m` | `pseudo_CT_ct_to_att_map.m` |
+  | `move_image_2_MNI.m` | `pseudo_CT_move_image_2_mni.m` |
+  | `head_mask_mprage.m` | `pseudo_CT_head_mask_mprage.m` |
+  | `reduce_bone_segment.m` | `pseudo_CT_reduce_bone_segment.m` |
+  | `pseudo_ct_princomp_legacy.m` | `pseudo_CT_princomp_legacy.m` |
+  | `quick_fusion_pseudo_ct.m` | `pseudo_CT_quick_fusion.m` |
+  | `toverlay2.m` (declared `toverlay`) | `pseudo_CT_overlay2.m` |
+  | `nii2dcm_header_copy_vb20_david.m` | `pseudo_CT_nii2dcm_header_copy.m` |
+  | `mMR_nii2mu_dicom_blur_david.m` | `pseudo_CT_mmr_nii2mu_dicom.m` |
+  | `run_normalization_cmd.m` | `pseudo_CT_run_normalization_cmd.m` |
+  | `ssh2_command_david.m` | `pseudo_CT_ssh2_command.m` |
+  | `passwordEntryDialog.m` | `pseudo_CT_password_entry_dialog.m` (shipped by the release driver) |
+
+- Installed-direct MLSC generation: when both manifest paths are empty, the generator no longer reads or copies manifests. It checks the packaged resources and uses the two-argument worker call. Source and manifest mode are unchanged. The installed MLSC submit path is implemented and offline-tested but is not independently verified against a scheduler.
+- Documentation: the authoritative Markdown was consolidated, with one description per topic and cross-links. MATLAB, Python and shell comments were corrected. MATLAB Runtime 7.14 (R2010b) is distinguished from the MATLAB 7.11 product version. `scripts/run_lint.m` is labelled as a developer-only tool that needs newer MATLAB.
+- Artifact override: the only artifact-root override exposed is `--current-artifact-root` (`mlsc_current_artifact_root` in MATLAB), and it is accepted only for the MLSC profiles. No Gate-A-record override is exposed.
+- Not included: no distribution package number is chosen, and no release, deployment or new scientific verification is claimed. The `compiled/` directory is an obsolete historical tree, superseded by `dist/` for new packages, and is never used at runtime. Source checkouts are development-only: an application validation or run from a checkout is refused with an actionable message to install the pseudoCT distribution (`pseudo_CT:SourceCheckoutDevelopmentOnly`), unless an explicit development artifact root is supplied for an MLSC profile (see tests/README.md, "Source checkouts are development-only"). Installed distributions resolve their bundled runtime.
+
 ## 3.2.0-rc2 — MLSC MPRAGE-only current artifact correction
 
-- Routes `mlsc-mprage-only` through the same current-lineage MLSC artifact and scheduler contract as `mlsc-current`, while retaining its MPRAGE-only, no-UMAP, NIfTI-only policies. Artifact-root and Gate-A-record overrides are accepted for both current MLSC profiles; missing or invalid artifacts still fail closed with no Aether fallback.
+- Routes `mlsc-mprage-only` through the same current-lineage MLSC artifact and scheduler contract as `mlsc-current`, while retaining its MPRAGE-only, no-UMAP, NIfTI-only policies. The artifact-root override is accepted for both current MLSC profiles. (Correction in 3.2.0: the Gate-A-record override named in this entry is not exposed by the launcher or the profiles.) Missing or invalid artifacts still fail closed with no Aether fallback.
 - Extends the exact v3.2.0-rc2 assembler/validator identity to the unchanged retained R2010b compiled payload. Provenance, package inventory, size, and SHA-256 checks are unchanged; no rebuild or scientific processing was performed.
 - Updates operator and installation documentation. Source version metadata remains 3.2.0; no production deployment is claimed.
 

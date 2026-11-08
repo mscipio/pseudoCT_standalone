@@ -1,5 +1,4 @@
 function [status_str, detail_str] = compare_hash_strings(h1, h2)
-% Investigation tool — investigation-cleanup-release.
 %COMPARE_HASH_STRINGS Judge equivalence of two pre-computed hash strings.
 %   [STATUS, DETAIL] = COMPARE_HASH_STRINGS(H1, H2) compares two hash
 %   strings H1 and H2, returning 'IDENTICAL' or 'DIVERGENT' in STATUS
@@ -8,12 +7,11 @@ function [status_str, detail_str] = compare_hash_strings(h1, h2)
 %   Sentinel values 'READ_ERROR' and 'MD5_UNAVAILABLE' indicate a failed
 %   hash computation.  Two identical sentinel values are NEVER reported
 %   as IDENTICAL — both sides failed and we cannot judge equivalence.
-%   This is the safety-critical guard against silent false-IDENITICAL
+%   This is the safety-critical guard against silent false-IDENTICAL
 %   reports when the underlying hash machinery is unavailable.
 %
-%   This function is CALLABLE FROM OUTSIDE diff_entrypoint_runs.m —
-%   it has no file-I/O, Java, or toolbox dependencies.  This makes the
-%   sentinel guard directly testable in smoke / unit tests.
+%   Called by diff_entrypoint_runs.m and usable on its own. It has no
+%   file-I/O, Java, or toolbox dependencies.
 %
 %   Minimum supported MATLAB: R2010b.
 

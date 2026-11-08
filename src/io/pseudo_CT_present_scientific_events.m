@@ -1,5 +1,11 @@
 function pseudo_CT_present_scientific_events(events, context)
-%PSEUDO_CT_PRESENT_SCIENTIFIC_EVENTS Reuse the canonical ten-stage presenter.
+%PSEUDO_CT_PRESENT_SCIENTIFIC_EVENTS Show scientific stage events on the console.
+%   PSEUDO_CT_PRESENT_SCIENTIFIC_EVENTS(EVENTS, CONTEXT) shows each event through
+%   pseudo_CT_output_console_visible, using the ten-stage presenter. EVENTS is a
+%   struct array from the scientific stream parser (stage, status, message and
+%   source fields). Inferred transitions get an '[inferred]' prefix. Nothing is
+%   printed when PSEUDOCT_OUTPUT_FORMAT is 'jsonl'.
+%   Side effects: prints to the console. Minimum supported MATLAB: R2010b.
 if nargin < 2, context = struct(); end
 for ii = 1:length(events)
     event = events(ii);

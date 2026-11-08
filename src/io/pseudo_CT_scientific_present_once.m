@@ -5,8 +5,8 @@ function shown = pseudo_CT_scientific_present_once(events, shown, origin, native
 %   EVENTS (see pseudo_CT_scientific_event_read) through the existing presenter.
 %
 %   ORIGIN 'stdout': events parsed from the compiled stdout stream. They are
-%   presented only while NATIVE_CAPABLE is false (the payload has not written
-%   native records, e.g. a payload built before native emission). Each shown
+%   presented only while NATIVE_CAPABLE is false (the worker has not written
+%   native records, e.g. a worker built before native emission). Each shown
 %   stage/status key is remembered in SHOWN.
 %   ORIGIN 'native': events from the per-run JSONL file. A native event whose
 %   stage/status was already shown from stdout is skipped, so each stage is
