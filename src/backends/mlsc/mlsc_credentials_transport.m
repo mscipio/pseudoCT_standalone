@@ -84,7 +84,21 @@ transport = struct('verify', @local_verify, ...
         % handshake before any credential use.
         try
             connection = local_open_verified_connection();
-        catch
+        catch ME
+            diagnostic = ME.message;
+            if ~isempty(password)
+                diagnostic = strrep(diagnostic, password, '<redacted>');
+            end
+            if ~isempty(username)
+                diagnostic = strrep(diagnostic, username, '<redacted>');
+            end
+            if isfield(config, 'mlsc') && isfield(config.mlsc, 'host')
+                diagnostic = strrep(diagnostic, config.mlsc.host, '<host>');
+            end
+            diagnostic = strrep(diagnostic, char(10), ' ');
+            diagnostic = strrep(diagnostic, char(13), ' ');
+            fprintf(2, 'MLSC_SSH2_CAUSE [%s]: %s\\n', ...
+                ME.identifier, diagnostic);
             connection = [];
             host_key_verifier = [];
             if strict_host_key_trust
