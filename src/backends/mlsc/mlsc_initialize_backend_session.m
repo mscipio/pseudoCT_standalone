@@ -50,25 +50,32 @@ session = struct('transport', [], 'authentication_status', 'not_attempted', ...
 try
     transport = mlsc_credentials_transport(config, username, password, ...
         host_key_provider);
-catch %#ok<CTCH>
+catch ME
     session.authentication_status = 'failed';
     session.preflight_status = 'failed';
     session.error_code = 'AUTHENTICATION_FAILED';
-    session.error_message = local_error_message(session.error_code);
+    session.error_message = [local_error_message(session.error_code) ' ' ...
+        local_transport_detail(ME, config, username, password)];
     return;
 end
 session.transport = transport;
 
+verification_error = '';
 try
     accepted = feval(transport.verify);
-catch %#ok<CTCH>
+catch ME
     accepted = false;
+    verification_error = local_transport_detail( ...
+        ME, config, username, password);
 end
 if ~islogical(accepted) || ~isscalar(accepted) || ~accepted
     session.authentication_status = 'failed';
     session.preflight_status = 'failed';
     session.error_code = 'AUTHENTICATION_FAILED';
     session.error_message = local_error_message(session.error_code);
+    if ~isempty(verification_error)
+        session.error_message = [session.error_message ' ' verification_error];
+    end
     local_close_transport(session.transport);
     session.transport = [];
     return;
@@ -131,6 +138,24 @@ end
 session.account_status = 'selected';
 session.preflight_status = 'ready';
 session.status = 'ready';
+end
+
+function detail = local_transport_detail(ME, config, username, password)
+detail = ME.message;
+if ischar(password) && ~isempty(password)
+    detail = strrep(detail, password, '<redacted>');
+end
+if ischar(username) && ~isempty(username)
+    detail = strrep(detail, username, '<user>');
+end
+if isstruct(config) && isfield(config, 'mlsc') && ...
+        isstruct(config.mlsc) && isfield(config.mlsc, 'host') && ...
+        ischar(config.mlsc.host) && ~isempty(config.mlsc.host)
+    detail = strrep(detail, config.mlsc.host, '<host>');
+end
+detail = strrep(detail, char(10), ' ');
+detail = strrep(detail, char(13), ' ');
+detail = ['Underlying SSH2 cause [' ME.identifier ']: ' detail];
 end
 
 function valid = local_credential_text(value)
