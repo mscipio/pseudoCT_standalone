@@ -55,8 +55,8 @@ config.presentation.order = 10;
 
 % FreeSurfer environment command.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';
-% Runtime library directory prepended for the FreeSurfer child process.
-config.normalization.child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
+% Runtime library directory prepended for the FreeSurfer child process; empty means no prepend.
+config.normalization.child_lib_path = '';
 % Host that runs FreeSurfer normalization.
 config.normalization.host = '127.0.0.1';
 % Use cluster submission for normalization: 'Yes' or 'No'.

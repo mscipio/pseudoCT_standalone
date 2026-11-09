@@ -176,7 +176,8 @@ class FrontendAllowlistTest(unittest.TestCase):
             self.assertFalse(ra.path_allowed(rel, labels), rel)
         self.assertTrue(ra.path_allowed('frontend/load_mr_4_AC.m', labels))
         self.assertTrue(ra.path_allowed('run_pseudo_CT.m', labels))
-        self.assertTrue(ra.path_allowed('runtimes/R2010b/standalone/pseudoct_standalone', labels))
+        self.assertTrue(ra.path_allowed('runtimes/R2010b/pseudoct_standalone', labels))
+        self.assertFalse(ra.path_allowed('runtimes/R2010b/standalone/pseudoct_standalone', labels))
 
 
 class HelpAllowlistTest(unittest.TestCase):
@@ -256,9 +257,9 @@ class VerifyTest(unittest.TestCase):
 
     def test_missing_executable_and_stale_sums_are_detected(self):
         pkg = make_package(self.base, version=FIXTURE_VERSION)
-        os.remove(os.path.join(pkg, 'runtimes', 'R2010b', 'payload', 'pseudoct_worker'))
+        os.remove(os.path.join(pkg, 'runtimes', 'R2010b', 'pseudoct_worker'))
         problems = ra.verify_package(pkg)
-        self.assertTrue(any('missing file: runtimes/R2010b/payload/pseudoct_worker' in p
+        self.assertTrue(any('missing file: runtimes/R2010b/pseudoct_worker' in p
                             for p in problems), problems)
         pkg2 = make_package(self.base, version='1.0.1')
         write(os.path.join(pkg2, ra.SUMS_NAME), 'bad\n')
@@ -319,7 +320,7 @@ class RuntimeManifestNegativeTest(unittest.TestCase):
         candidates = []
         for name in self.RUNTIME_MANIFESTS:
             candidates += [name, 'bin/' + name, 'frontend/' + name, 'help/' + name,
-                           'resources/' + name, 'runtimes/R2010b/payload/' + name,
+                           'resources/' + name, 'runtimes/R2010b/' + name,
                            'runtimes/R2010b/standalone/' + name]
         for rel in candidates:
             self.assertFalse(ra.path_allowed(rel, self.LABELS), rel)
@@ -358,8 +359,9 @@ class RuntimeManifestNegativeTest(unittest.TestCase):
 
 
 class Ssh2PackageInclusionTest(unittest.TestCase):
-    """AMEND-1: the MATLAB SSH2 transport ships under external/ssh2_v2_m1_r5/ with its
-    required MATLAB wrappers, the Ganymed JAR and the licence notices, and nothing else."""
+    """AMEND-1: the MATLAB SSH2 transport ships under external/ssh2_v2_m1_r5/ as exactly the
+    Ganymed JAR and the two licence notices. The loose MATLAB wrappers are compiled into the
+    engine and are never shipped as files, and nothing else under external/ is shipped."""
 
     LABELS = ('R2010b',)
     JAR = 'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar'
@@ -373,29 +375,33 @@ class Ssh2PackageInclusionTest(unittest.TestCase):
         return ra.SSH2_ROOT_REL + '/' + rel
 
     def test_jar_and_licence_notices_are_required_and_allowlisted(self):
+        self.assertEqual(set(ra.SSH2_FILES), set(self.NOTICES) | {self.JAR})
         for rel in self.NOTICES + (self.JAR,):
-            self.assertIn(rel, ra.SSH2_FILES)
             self.assertTrue(ra.path_allowed(self.package_path(rel), self.LABELS), rel)
             self.assertIn(self.package_path(rel), ra.required_paths(self.LABELS))
             self.assertTrue(os.path.isfile(os.path.join(ra.SSH2_SOURCE_ROOT, *rel.split('/'))), rel)
 
-    def test_allowlist_is_exactly_the_top_level_wrappers_jar_and_notices(self):
+    def test_allowlist_is_exactly_the_jar_and_two_notices(self):
         wrapper_dir = os.path.join(ra.SSH2_SOURCE_ROOT, 'ssh2_v2_m1_r5')
         wrappers = {'ssh2_v2_m1_r5/' + name for name in os.listdir(wrapper_dir)
                     if name.endswith('.m') and os.path.isfile(os.path.join(wrapper_dir, name))}
+        # The 19 wrappers still exist in the repository source; they are simply not shipped.
         self.assertEqual(len(wrappers), 19)
-        self.assertEqual(wrappers, {rel for rel in ra.SSH2_FILES if rel.endswith('.m')})
+        self.assertFalse(wrappers & set(ra.SSH2_FILES))
         source = set()
         for dirpath, _dirs, names in os.walk(ra.SSH2_SOURCE_ROOT):
             for name in names:
                 full = os.path.join(dirpath, name)
                 source.add(os.path.relpath(full, ra.SSH2_SOURCE_ROOT).replace(os.sep, '/'))
         allowed = {rel for rel in source if ra.path_allowed(self.package_path(rel), self.LABELS)}
-        self.assertEqual(allowed, set(ra.SSH2_FILES))
+        self.assertEqual(allowed, set(self.NOTICES) | {self.JAR})
         self.assertLess(len(allowed), len(source))
 
     def test_other_external_content_is_never_allowlisted(self):
-        for rel in ('ssh2_v2_m1_r5/examples/Basic.java',
+        for rel in ('ssh2_v2_m1_r5/ssh2.m',
+                    'ssh2_v2_m1_r5/ssh2_setup.m',
+                    'ssh2_v2_m1_r5/scp.m',
+                    'ssh2_v2_m1_r5/examples/Basic.java',
                     'ssh2_v2_m1_r5/examples/ssh2_examples.m',
                     'ssh2_v2_m1_r5/HISTORY.txt',
                     'ssh2_v2_m1_r5/README.txt',
@@ -408,20 +414,28 @@ class Ssh2PackageInclusionTest(unittest.TestCase):
             self.assertFalse(ra.path_allowed(self.package_path(rel), self.LABELS), rel)
         self.assertFalse(ra.path_allowed('external/spm8-r6313/spm.m', self.LABELS))
 
-    def test_package_without_a_licence_notice_fails_verification(self):
+    def test_package_missing_jar_or_licence_notice_fails_verification(self):
         pkg = make_package(self.base, version=FIXTURE_VERSION)
         self.assertEqual(ra.verify_package(pkg), [])
-        os.remove(os.path.join(pkg, *self.package_path('license.txt').split('/')))
-        problems = ra.verify_package(pkg)
-        self.assertTrue(any('missing file: external/ssh2_v2_m1_r5/license.txt' in p
-                            for p in problems), problems)
+        for rel in ra.SSH2_FILES:
+            full = os.path.join(pkg, *self.package_path(rel).split('/'))
+            with open(full, 'rb') as handle:
+                content = handle.read()
+            os.remove(full)
+            problems = ra.verify_package(pkg)
+            self.assertTrue(any('missing file: external/ssh2_v2_m1_r5/' + rel in p
+                                for p in problems), (rel, problems))
+            with open(full, 'wb') as handle:
+                handle.write(content)
+        self.assertEqual(ra.verify_package(pkg), [])
 
-    def test_extra_external_example_in_a_package_is_refused(self):
-        pkg = make_package(self.base, version='0.0.1-test')
-        write(os.path.join(pkg, *self.package_path('ssh2_v2_m1_r5/examples/Basic.java').split('/')),
-              'x\n')
-        problems = ra.verify_package(pkg)
-        self.assertTrue(any('ssh2_v2_m1_r5/examples/Basic.java' in p for p in problems), problems)
+    def test_extra_external_example_or_loose_wrapper_in_a_package_is_refused(self):
+        for index, rel in enumerate(('ssh2_v2_m1_r5/examples/Basic.java',
+                                     'ssh2_v2_m1_r5/ssh2_setup.m')):
+            pkg = make_package(self.base, version='0.0.%d-test' % (index + 1))
+            write(os.path.join(pkg, *self.package_path(rel).split('/')), 'x\n')
+            problems = ra.verify_package(pkg)
+            self.assertTrue(any(rel in p for p in problems), (rel, problems))
 
 
 if __name__ == '__main__':

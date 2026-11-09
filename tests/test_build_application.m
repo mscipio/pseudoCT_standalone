@@ -135,6 +135,61 @@ assert(~isempty(strfind(plan_text, 'source_dir = opt.spmroot;')), ...
 assert(~isempty(strfind(plan_text, '''TPM.nii''')), ...
     'The atlas resources must include TPM.nii.');
 
+% SSH2 closure by target: the standalone plan carries the SSH2 include path, the
+% 19 root wrappers and the Ganymed JAR; the worker plan carries none of them.
+plan_start = strfind(plan_text, 'function plan = local_compile_plan');
+plan_stop = strfind(plan_text, 'function local_check_compile_inputs');
+assert(numel(plan_start) == 1 && numel(plan_stop) == 1, ...
+    'local_compile_plan must be located exactly once.');
+plan_fn = plan_text(plan_start:plan_stop - 1);
+split_at = strfind(plan_fn, '% Compiled standalone dispatcher');
+assert(numel(split_at) == 1, 'The standalone plan marker must be found exactly once.');
+payload_text = plan_fn(1:split_at - 1);
+standalone_text = plan_fn(split_at:end);
+assert(isempty(strfind(payload_text, 'ssh2')) && isempty(strfind(payload_text, 'ganymed')), ...
+    'The worker plan must not contain SSH2 or Ganymed inputs.');
+assert(~isempty(strfind(standalone_text, 'opt.dicom2niftiroot; ssh2_dir}')), ...
+    'The standalone -I list must include the SSH2 directory.');
+ssh2_wrapper_names = {'scp', 'scp_get', 'scp_put', 'scp_simple_get', 'scp_simple_put', ...
+    'sftp', 'sftp_get', 'sftp_put', 'sftp_simple_get', 'sftp_simple_put', ...
+    'ssh2', 'ssh2_close', 'ssh2_command', 'ssh2_command_response', 'ssh2_config', ...
+    'ssh2_config_publickey', 'ssh2_main', 'ssh2_setup', 'ssh2_simple_command'};
+for kk = 1:numel(ssh2_wrapper_names)
+    assert(~isempty(strfind(standalone_text, ['''' ssh2_wrapper_names{kk} ''''])), ...
+        'The standalone plan must list SSH2 wrapper %s.', ssh2_wrapper_names{kk});
+end
+assert(~isempty(strfind(standalone_text, 'ssh2_wrappers; {ssh2_jar}])')), ...
+    'The standalone -a list must include the SSH2 wrappers and the JAR.');
+assert(~isempty(strfind(standalone_text, 'ssh2_jar = fullfile(ssh2_dir, ''ganymed-ssh2-m1'', ''ganymed-ssh2-m1.jar'');')), ...
+    'The Ganymed JAR must be the bundled ganymed-ssh2-m1.jar.');
+
+% dicom2nifti VERSION: readVersion needs the VERSION text file at the CTF root, so
+% the standalone plan (the only target reaching readVersion) passes it as a -a
+% input. The dry run above already checks that every -a input exists.
+assert(~isempty(strfind(standalone_text, ...
+    'dicom2nifti_version = fullfile(opt.dicom2niftiroot, ''VERSION'');')), ...
+    'The standalone plan must define the dicom2nifti VERSION input.');
+assert(~isempty(strfind(standalone_text, 'local_pairs(''-a'', {dicom2nifti_version})')), ...
+    'The standalone -a list must include the dicom2nifti VERSION file.');
+assert(isempty(strfind(payload_text, 'dicom2nifti_version')), ...
+    'The worker plan must not carry the dicom2nifti VERSION input.');
+
+% No installed-reachable first-party file may name the development checkout.
+% Scanned: src/ (all .m), bin/pseudoct and scripts/run_pseudoct_worker.sh.
+% Site paths (/usr/pubsw, /autofs/cluster/matlab) are not checkout paths and are
+% not asserted here.
+checkout_literals = {'piano_mMR_devel', 'pseudoCT_standalone', 'Biograph_mMR', 'catanagp'};
+scanned = [local_m_files(fullfile(repo, 'src')); ...
+    {fullfile(repo, 'bin', 'pseudoct'); fullfile(repo, 'scripts', 'run_pseudoct_worker.sh')}];
+for kk = 1:numel(scanned)
+    file_text = local_read_text(scanned{kk});
+    for ll = 1:numel(checkout_literals)
+        assert(isempty(strfind(file_text, checkout_literals{ll})), ...
+            'Installed-reachable file %s names the development checkout (%s).', ...
+            scanned{kk}, checkout_literals{ll});
+    end
+end
+
 % The dictionary check (used by the worker before any SPM call): missing,
 % unreadable and present cases, in a scratch folder.
 addpath(fullfile(repo, 'src', 'science', 'current'), '-begin');
@@ -226,6 +281,24 @@ if fid == -1
 end
 cleanup_fid = onCleanup(@() fclose(fid)); %#ok<NASGU>
 text = fscanf(fid, '%c');
+end
+
+function files = local_m_files(root_dir)
+%LOCAL_M_FILES Every .m file under ROOT_DIR, recursively (package folders included).
+files = {};
+listed = dir(root_dir);
+for kk = 1:numel(listed)
+    name = listed(kk).name;
+    if any(strcmp(name, {'.', '..'}))
+        continue;
+    end
+    full_path = fullfile(root_dir, name);
+    if listed(kk).isdir
+        files = [files; local_m_files(full_path)]; %#ok<AGROW>
+    elseif length(name) > 2 && strcmp(name(end - 1:end), '.m')
+        files{end + 1, 1} = full_path; %#ok<AGROW>
+    end
+end
 end
 
 function hex = local_sha256(path_text)

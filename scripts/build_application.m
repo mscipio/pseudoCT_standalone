@@ -19,15 +19,18 @@ function report = build_application(release, varargin)
 %     'LockSha256'        Optional expected SHA-256 of dependencies.lock.json.
 %
 %   Build mode requires a clean git tree and the MATLAB Runtime root.
-%   Exactly two compiled targets: payload/ (the pseudoct_worker executable) and
-%   standalone/ (pseudoct_standalone, the headless engine dispatcher). The
+%   Exactly two compiled targets, written to build-private folders payload/
+%   (the pseudoct_worker executable) and standalone/ (pseudoct_standalone, the
+%   headless engine dispatcher). release_application.py installs them flat as
+%   runtimes/<LABEL>/pseudoct_worker and runtimes/<LABEL>/pseudoct_standalone. The
 %   MATLAB frontend (run_pseudo_CT.m and frontend/) is not compiled here; it is
 %   not one of the two compiled targets.
-%   Package layout mirrors an install root, so bin/pseudoct (the only public
-%   launcher) resolves its siblings by relative path: bin/ (pseudoct), src/
-%   (interpreted runtime source), payload/, standalone/, resources/,
-%   application_manifest.txt and SHA256SUMS (see
-%   verify_application_package). Compile support for any release is
+%   The build output is a private staging tree, not the installed layout: bin/
+%   (pseudoct), src/ (interpreted runtime source), payload/, standalone/,
+%   resources/, application_manifest.txt and SHA256SUMS (see
+%   verify_application_package). The installed distribution is assembled from
+%   these outputs by release_application.py, which maps them to the flat
+%   runtimes/<LABEL>/ layout. Compile support for any release is
 %   UNVERIFIED until a real build is run; this file defines no support table.
 %
 %   Example: build_application('R2010b', 'OutputRoot', '<output-root>')
@@ -194,10 +197,30 @@ plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'pseudoc
 % (spm_run_coreg_reslice, in <spm>/config, which calls spm_reslice). The config
 % folder is on the -I path so that call is found statically; the reslice MEX
 % spm_slice_vol is listed with -a because static analysis cannot see MEX calls.
+% SSH2 closure, standalone only. The headless CLI reaches ssh2 through
+% pseudo_CT_run_lifecycle -> mlsc_initialize_backend_session -> mlsc_credentials_transport
+% and pseudo_CT_run_normalization_cmd -> pseudo_CT_ssh2_command. The worker does not
+% reach it. The 19 root wrappers and the Ganymed JAR are -a inputs; ssh2_setup derives
+% the JAR path from its own location (mfilename), which is unverified in a compiled CTF.
+ssh2_dir = fullfile(repo, 'external', 'ssh2_v2_m1_r5', 'ssh2_v2_m1_r5');
+ssh2_names = {'scp'; 'scp_get'; 'scp_put'; 'scp_simple_get'; 'scp_simple_put'; ...
+    'sftp'; 'sftp_get'; 'sftp_put'; 'sftp_simple_get'; 'sftp_simple_put'; ...
+    'ssh2'; 'ssh2_close'; 'ssh2_command'; 'ssh2_command_response'; 'ssh2_config'; ...
+    'ssh2_config_publickey'; 'ssh2_main'; 'ssh2_setup'; 'ssh2_simple_command'};
+ssh2_wrappers = cellfun(@(nm) fullfile(ssh2_dir, [nm '.m']), ssh2_names, 'UniformOutput', false);
+ssh2_jar = fullfile(ssh2_dir, 'ganymed-ssh2-m1', 'ganymed-ssh2-m1.jar');
+% dicom2nifti VERSION. readVersion (+dicom2nifti/+io/readVersion.m) reads
+% rootDir/VERSION, rootDir being three fileparts above its own mfilename, so the
+% file must sit at the CTF root beside +dicom2nifti. It is a non-M text file that
+% -I dependency analysis does not supply, so it is an explicit -a input. Only the
+% standalone reaches readVersion (dcm2nii -> dicom2nifti.api.run ->
+% writeVersionLog); the worker closure does not. Compiled placement: UNVERIFIED.
+dicom2nifti_version = fullfile(opt.dicom2niftiroot, 'VERSION');
 plan.standalone_args = [{'-m', fullfile(repo, 'src', 'cli', 'pseudoct_standalone.m'), ...
     '-d', fullfile(stage, 'standalone'), '-v'}, ...
-    local_pairs('-I', [src_dirs; {spm; fullfile(spm, 'config'); opt.aliasingroot; opt.dicom2niftiroot}]), ...
-    local_pairs('-a', {fullfile(spm, 'spm_slice_vol.mexa64')})];
+    local_pairs('-I', [src_dirs; {spm; fullfile(spm, 'config'); opt.aliasingroot; opt.dicom2niftiroot; ssh2_dir}]), ...
+    local_pairs('-a', [{fullfile(spm, 'spm_slice_vol.mexa64')}; ssh2_wrappers; {ssh2_jar}]), ...
+    local_pairs('-a', {dicom2nifti_version})];
 % Every entrypoint and -I/-a input, except the generated cfggen directory.
 all_args = [plan.payload_args, plan.standalone_args];
 inputs = {};

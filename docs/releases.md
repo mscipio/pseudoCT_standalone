@@ -63,9 +63,10 @@ pseudoct-<version>/
   run_pseudo_CT.m                                    MATLAB frontend (copied from the repository)
   frontend/                                          MATLAB frontend files (copied verbatim)
   help/index.html, help/style.css                    help documents from docs/help (docs/help/assets/ is never shipped)
-  runtimes/<LABEL>/payload/pseudoct_worker           compiled science worker (shared by local and MLSC)
-  runtimes/<LABEL>/payload/run_pseudoct_worker.sh    worker runner (copy of scripts/run_pseudoct_worker.sh)
-  runtimes/<LABEL>/standalone/pseudoct_standalone    compiled headless engine (dispatcher)
+  runtimes/<LABEL>/pseudoct_worker                   compiled science worker (shared by local and MLSC)
+  runtimes/<LABEL>/run_pseudoct_worker.sh            worker runner (copy of scripts/run_pseudoct_worker.sh)
+  runtimes/<LABEL>/pseudoct_standalone               compiled headless engine (dispatcher)
+  external/ssh2_v2_m1_r5/                            Ganymed JAR and two licence notices (no loose SSH2 .m files)
   resources/                                         atlas and template files, and SPM's DICOM dictionary (spm_dicom_dict.mat, copied unchanged)
   manifest.json                                      catalog manifest read by bin/pseudoct (embeds the release catalog)
   SHA256SUMS                                         sorted checksums, includes manifest.json
@@ -81,9 +82,17 @@ pseudoct-<version>/
   content. The release check does not depend on whether a checkout has it; any other
   extra file in `frontend/` still fails.
 - The distribution contains no `src/`, no tests, no build tools, no logs and no `app/`
-  GUI executable. Under `external/` it contains only `external/ssh2_v2_m1_r5/`: the SSH2
-  MATLAB files, the Ganymed jar and the licence notices. No other `external/` content is
-  shipped. `--verify DIR` of the driver refuses anything outside the allowlist.
+  GUI executable. Under `external/` it contains only the three files in the driver's
+  `SSH2_FILES`: the Ganymed JAR (`external/ssh2_v2_m1_r5/ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar`),
+  the SSH2 `license.txt` and the Ganymed `LICENSE.txt`. No loose SSH2 `.m` files are installed.
+  The 19 root SSH2 wrappers are compiled into `pseudoct_standalone` only, with the JAR as an
+  `-a` input; the worker does not reach SSH2. Loading the JAR and wrappers from the compiled
+  engine is **not yet verified** and awaits an approved RC6 build. No other `external/` content
+  is shipped. `--verify DIR` of the driver refuses anything outside the allowlist.
+- The dicom2nifti `VERSION` file (`external/dicom2nifti-1.2.5/VERSION`) is an explicit `-a`
+  compile input of `pseudoct_standalone` only, intended to sit at the CTF root beside
+  `+dicom2nifti`, where `readVersion` looks for it. Third-party `readVersion.m` is unchanged.
+  Its placement in the compiled engine is **unverified** until an approved RC6 build.
 - **No build or resource manifest is shipped.** The compiled-current build and resource
   manifests (`mlsc_current_build.mat` and `mlsc_current_resources.mat`) belong to source
   checkouts only. `manifest.json` is the release catalog, not a build manifest.
@@ -122,11 +131,11 @@ pseudoct --help
   operations with exit `64`.
 - `run validate|run` is the CLI (validate, or validate and submit) with the same
   options, text/JSONL output and exit codes as in [Headless API and CLI](headless-cli.md).
-- `headless` keeps the two-positional contract and runs `standalone/pseudoct_standalone
+- `headless` keeps the two-positional contract and runs `runtimes/<LABEL>/pseudoct_standalone
   headless` with `PSEUDOCT_REQUEST_MAT` and `PSEUDOCT_RESULT_MAT`.
 - `resolve` validates one release and prints single-quoted, sourceable lines:
   `PSEUDOCT_EXE='...'` (the standalone dispatcher), `PSEUDOCT_MCR_ROOT='...'`,
-  `PSEUDOCT_RUNNER='...'` (`runtimes/<LABEL>/payload/run_pseudoct_worker.sh`),
+  `PSEUDOCT_RUNNER='...'` (`runtimes/<LABEL>/run_pseudoct_worker.sh`),
   `PSEUDOCT_INSTALL_ROOT='...'` and `PSEUDOCT_RUNTIME_RELEASE='<LABEL>'`. This is the one
   runtime-selection mechanism; MATLAB callers use it.
 - Every installed operation that runs a release (`run`, `headless`)
@@ -141,9 +150,9 @@ pseudoct --help
 
 ### Release and MATLAB Runtime root selection
 
-- A release is complete only when all three artifacts exist and are executable:
-  `payload/pseudoct_worker`, `payload/run_pseudoct_worker.sh` and
-  `standalone/pseudoct_standalone`.
+- A release is complete only when all three artifacts exist and are executable, each
+  directly in `runtimes/<LABEL>/`: `pseudoct_worker`, `run_pseudoct_worker.sh` and
+  `pseudoct_standalone`.
 - The MATLAB Runtime root is `--mcr-root <dir>` when given; otherwise the catalog
   location `/usr/pubsw/common/matlab/<D>` of the selected release, where `<D>` is the
   first two dotted components of its `matlab_version` (`9.6.0.1072779` → `9.6`,
@@ -158,7 +167,8 @@ pseudoct --help
 
 ### Worker runner and installed-direct identity
 
-`payload/run_pseudoct_worker.sh` is installed beside `pseudoct_worker`. It takes
+`runtimes/<LABEL>/run_pseudoct_worker.sh` is installed beside `pseudoct_worker` and
+`pseudoct_standalone`. It takes
 `<mcr_root> <phase> <job_manifest> [<resource_manifest>]`, sets the Runtime library
 path from `mcr_root` and execs the compiled worker from its own directory. The
 repository source of this runner is `scripts/run_pseudoct_worker.sh` (renamed in
@@ -172,10 +182,14 @@ resource is missing.
 
 Installed-direct identity is a packaged-layout trust model:
 
-- the runner is pinned by SHA-256, and the runtime checks in
+- the runner is pinned by SHA-256 (`runner_path` and `runner_sha256` in the
+  `artifact_identity` of the run), and the runtime checks in
   [Runtime identity](#runtime-identity) apply;
-- the compiled worker and standalone executables are **not** independently hashed
-  in direct mode, as in the earlier baseline.
+- the compiled worker (`pseudoct_worker`) and standalone (`pseudoct_standalone`) are
+  also hashed into that identity, beside the runner: `payload_path` and
+  `payload_sha256` for the worker, and `standalone_path` and `standalone_sha256` for
+  the standalone. Both are taken from the runner's directory. The manifest fields
+  (`build_manifest_*` and `resource_manifest_*`) are empty in this mode.
 
 Source checkouts keep manifest mode (`mlsc_current_build.mat` and
 `mlsc_current_resources.mat`, or their text forms), with full SHA-256 checks of the
@@ -190,6 +204,11 @@ arguments (POSIX single-quoted; no secret ever appears on a command line), runs
 `bin/pseudoct run validate|run ... --format jsonl` in a child environment without MATLAB's
 library and path variables, and displays the result. No validation or science runs in
 MATLAB.
+
+`run_pseudo_CT.m` delegates only to `bin/pseudoct`, for argument mode and for the window's
+Validate and Submit. The packaged frontend contains GUI and launch-bridge files, plus the
+credential helpers (`pseudo_CT_credentials.m`, the password entry dialog and `passwordTools/`)
+only. None of them is a scientific or SSH2 backend.
 
 - `run_pseudo_CT('Profile', P, 'MPRAGE', FILE, ...)` validates by default; `'Action',
   'submit'` runs the launcher's `run` action. `'Runtime'` and `'McrRoot'` select the
@@ -213,7 +232,7 @@ the output directory and validates it. Publication is non-overwriting:
 
 1. After each release's runtime and the resources are staged, the driver copies the
    release executables and runner. No build or resource manifest is generated: installed
-   resources are verified by file name at setup and in the payload, and integrity is
+   resources are verified by file name at setup and by the worker, and integrity is
    covered by `SHA256SUMS` and `--verify`.
 2. An exclusive lock file `.pseudoct-release.lock` is created with `O_EXCL` in the
    output directory; a held or stale lock is refused and never removed automatically.
@@ -255,6 +274,7 @@ evidence is in [Scientific notes](scientific-notes.md#bounded-comparison-evidenc
 | MLSC installed submit | Implemented and offline-tested. **Not independently verified** against a live scheduler or cluster. |
 | Compiled R2010b local run | Maintainer-reported comparison against v3.0.2; see [Scientific notes](scientific-notes.md#bounded-comparison-evidence). The comparison record is not included in this repository. |
 | Changed sources (v3.2.0) | Not built. The `compiled/` tree is obsolete and its executables still carry the pre-rename names. Source checkouts do not resolve it: an application run from a checkout is refused with a message to install the distribution. Rebuilding `compiled/` is not a fix. See [tests](../tests/README.md#source-checkouts-are-development-only). |
+| RC6 packaging and runtime changes (flat `runtimes/<LABEL>/`, SSH2 closure, dicom2nifti `VERSION`) | Not built. Compiled-engine behaviour is **unverified**: SSH2 JAR and wrapper loading, JVM use and `VERSION` placement in the CTF. These need an approved RC6 build. |
 | `build_application` real builds and packaged distribution | Not verified in this audit. No package has been assembled or verified for v3.2.0. |
 
 ### Staging path and temporary directories

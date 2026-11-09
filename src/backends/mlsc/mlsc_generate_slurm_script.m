@@ -859,6 +859,14 @@ lines{end + 1} = '        ;;';
 lines{end + 1} = 'esac';
 if needs_normalization
     tcsh_program = 'source "$MLSC_FREESURFER_ENV"; mri_normalize "$TMPDIR/$MLSC_INPUT_NAME" "$TMPDIR/$MLSC_NORMALIZED_NAME"';
+    % Advisory native stage-4 records written by this script (see
+    % local_native_stage_shell). Empty identity means no native writes.
+    native_fields = local_native_stage_fields(local_native_event_target(runtime));
+    lines{end + 1} = ['native_event_file=' local_shell_quote(native_fields.path)];
+    lines{end + 1} = ['native_run_id=' local_shell_quote(native_fields.run_id)];
+    lines{end + 1} = ['native_subject=' local_shell_quote(native_fields.subject)];
+    lines{end + 1} = ['native_profile=' local_shell_quote(native_fields.profile)];
+    lines = [lines local_native_stage_shell()];
     lines{end + 1} = 'case "$prepare_selected" in';
     lines{end + 1} = '    *_normalized.nii)';
     lines{end + 1} = '        normalize_needed=0';
@@ -869,12 +877,24 @@ if needs_normalization
     lines{end + 1} = 'esac';
     lines{end + 1} = 'if [ "$normalize_needed" -eq 1 ]; then';
     lines{end + 1} = '    mlsc_record_progress ''normalize|start''';
-    lines{end + 1} = ['    env -u LD_LIBRARY_PATH MLSC_FREESURFER_ENV=' q_freesurfer_env ' "MLSC_INPUT_NAME=$prepare_selected" "MLSC_NORMALIZED_NAME=$prepare_expected" tcsh -f -c ''' tcsh_program ''''];
+    lines{end + 1} = '    mlsc_stage_event workflow.normalize 4 STARTED ''FreeSurfer MPRAGE normalization started.''';
+    lines{end + 1} = '    normalize_rc=0';
+    lines{end + 1} = ['    env -u LD_LIBRARY_PATH MLSC_FREESURFER_ENV=' q_freesurfer_env ' "MLSC_INPUT_NAME=$prepare_selected" "MLSC_NORMALIZED_NAME=$prepare_expected" tcsh -f -c ''' tcsh_program ''' || normalize_rc=$?'];
+    lines{end + 1} = '    if [ "$normalize_rc" -ne 0 ]; then';
+    lines{end + 1} = '        mlsc_stage_event workflow.normalize 4 FAILED ''FreeSurfer MPRAGE normalization exited with an error.''';
+    lines{end + 1} = '        exit "$normalize_rc"';
+    lines{end + 1} = '    fi';
     lines{end + 1} = '    mlsc_record_progress ''normalize|done''';
+    lines{end + 1} = 'else';
+    lines{end + 1} = '    mlsc_stage_event workflow.normalize 4 SKIPPED ''Normalization input already normalized; skipped.''';
     lines{end + 1} = 'fi';
     lines{end + 1} = 'if [ "$normalize_needed" -eq 1 ] && [ ! -s "$TMPDIR/$prepare_expected" ]; then';
+    lines{end + 1} = '    mlsc_stage_event workflow.normalize 4 FAILED ''FreeSurfer MPRAGE normalization produced no non-empty output.''';
     lines{end + 1} = '    printf ''Node-local normalized output is missing or empty.\n'' >&2';
     lines{end + 1} = '    exit 73';
+    lines{end + 1} = 'fi';
+    lines{end + 1} = 'if [ "$normalize_needed" -eq 1 ]; then';
+    lines{end + 1} = '    mlsc_stage_event workflow.normalize 4 COMPLETED ''FreeSurfer MPRAGE normalization completed.''';
     lines{end + 1} = 'fi';
 end
 lines{end + 1} = ['"$current_runner" "$current_mcr_root" compute "$local_job_manifest"' worker_resource_arg];
@@ -1119,6 +1139,46 @@ try
 catch %#ok<CTCH>
     target = struct('path', '', 'run_id', '', 'subject_id', '', 'profile', '');
 end
+end
+
+function fields = local_native_stage_fields(target)
+%LOCAL_NATIVE_STAGE_FIELDS Run-file identity for the script's stage-4 writer.
+%   Returns empty fields unless the target is a valid run file whose run id,
+%   subject and profile are plain tokens (no shell or JSON escaping needed).
+fields = struct('path', '', 'run_id', '', 'subject', '', 'profile', '');
+if ~isstruct(target) || ~isfield(target, 'path') || isempty(target.path)
+    return;
+end
+if isempty(regexp(target.run_id, '^[0-9]{8}T[0-9]{6}Z-[0-9a-f-]+$', 'once')) || ...
+        isempty(regexp(target.subject_id, '^subject-[0-9]+$', 'once')) || ...
+        isempty(regexp(target.profile, '^[A-Za-z0-9_.-]+$', 'once'))
+    return;
+end
+fields.path = target.path;
+fields.run_id = target.run_id;
+fields.subject = target.subject_id;
+fields.profile = target.profile;
+end
+
+function lines = local_native_stage_shell()
+%LOCAL_NATIVE_STAGE_SHELL Advisory bash writer for stage-4 records (no-op unless
+%   native_event_file is set). Appends one JSON line in the worker's schema
+%   (pseudoct.scientific_event v1, source mlsc-lifecycle). It never changes the
+%   job's exit status: a failed append is ignored.
+lines = {};
+lines{end + 1} = 'mlsc_stage_event() {';
+lines{end + 1} = '    [ -n "$native_event_file" ] || return 0';
+lines{end + 1} = '    local ev_seq=1';
+lines{end + 1} = '    if [ -f "$native_event_file" ]; then';
+lines{end + 1} = '        ev_seq=$(( $(wc -l < "$native_event_file") + 1 ))';
+lines{end + 1} = '    fi';
+lines{end + 1} = ['    printf ''%s\n'' "{\"schema\":\"pseudoct.scientific_event\",\"schema_version\":1,' ...
+    '\"run_id\":\"$native_run_id\",\"subject\":\"$native_subject\",\"profile\":\"$native_profile\",' ...
+    '\"seq\":$ev_seq,\"timestamp_utc\":\"$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)\",' ...
+    '\"event_type\":\"stage\",\"stage_id\":\"$1\",\"stage_index\":$2,\"stage_count\":10,' ...
+    '\"status\":\"$3\",\"outcome\":null,\"message\":\"$4\",\"source\":\"mlsc-lifecycle\",' ...
+    '\"job_id\":null,\"error_identifier\":null,\"error_message\":null}" >> "$native_event_file" || true'];
+lines{end + 1} = '}';
 end
 
 function name = local_corrected_variant_name(input_name)

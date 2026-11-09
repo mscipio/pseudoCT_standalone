@@ -33,8 +33,8 @@ selection, the frontend allowlist against `frontend/`, `--verify` of a synthetic
 package and the dry-run plan) and the single installed launcher `bin/pseudoct` (run,
 headless, resolve, `--list-releases`, precedence and mismatch rejection; `gui` and
 `run --orchestrate` refused) with fake compiled executables and fake MATLAB Runtime
-evidence. They also include the installed payload runner, which needs no MATLAB, mcc
-or jobs. Run the two release and launcher suites with `-p test_release_application.py`
+evidence. They also include the installed worker runner (`run_pseudoct_worker.sh`), which needs
+no MATLAB, mcc or jobs. Run the two release and launcher suites with `-p test_release_application.py`
 and `-p test_standalone_release.py` as shown.
 
 The unittest commands above and the equivalent pytest run execute the same tests, so

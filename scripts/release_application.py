@@ -11,17 +11,17 @@ assembles one distribution directory from the verified build output only:
       frontend/<allowlisted files>                  (MATLAB frontend, copied verbatim)
       help/index.html, help/style.css               (help documents from docs/help/;
                                                      docs/help/assets/ is never shipped)
-      external/ssh2_v2_m1_r5/<SSH2_FILES>           (MATLAB SSH2 transport: wrappers,
-                                                     Ganymed JAR, licence notices)
-      runtimes/<LABEL>/payload/pseudoct_worker (compiled science worker)
-      runtimes/<LABEL>/payload/run_pseudoct_worker.sh  (runner, copied)
-      runtimes/<LABEL>/standalone/pseudoct_standalone (compiled headless engine)
+      external/ssh2_v2_m1_r5/<SSH2_FILES>           (Ganymed JAR and licence notices;
+                                                     no loose SSH2 .m wrappers)
+      runtimes/<LABEL>/pseudoct_worker              (compiled science worker)
+      runtimes/<LABEL>/run_pseudoct_worker.sh       (runner, copied)
+      runtimes/<LABEL>/pseudoct_standalone          (compiled headless engine)
       resources/                                    (atlas and template files)
       manifest.json                                 (catalog copy read by bin/pseudoct)
       SHA256SUMS                                    (inventory, includes the manifest)
 
 No src/ tree, science source or other external/ content is shipped, except the frontend
-files copied from src/ (FRONTEND_FROM_SRC) and the SSH2 transport files (SSH2_FILES).
+files copied from src/ (FRONTEND_FROM_SRC) and the SSH2 JAR and licence notices (SSH2_FILES).
 --verify refuses any file outside this allowlist.
 Publication is non-overwriting and takes an exclusive lock file in the output directory.
 
@@ -65,14 +65,20 @@ LOCK_NAME = '.pseudoct-release.lock'
 # long staging paths broke the compiled CTF extraction.
 MAX_STAGE_PATH = 240
 
-# The two compiled executables of every release (build_application.m targets).
-BUILDER_TARGETS = ('payload/pseudoct_worker', 'standalone/pseudoct_standalone')
+# The two compiled executables of every release. The first element is the build-private
+# staging path that build_application.m writes under its output (payload/ and standalone/
+# folders, never installed as such); the second is the flat installed name under
+# runtimes/<LABEL>/. The mapping is applied only in assemble().
+BUILDER_TARGETS = (('payload/pseudoct_worker', 'pseudoct_worker'),
+                   ('standalone/pseudoct_standalone', 'pseudoct_standalone'))
 BUILDER_FIELDS = ('release', 'matlab_release', 'arch', 'compiler', 'source_commit',
                   'source_dirty', 'source_set_sha256', 'lock_sha256')
 BUILDER_SCRIPT = os.path.join(REPO_ROOT, 'scripts', 'build_application.m')
-RUNNER_REL = 'payload/run_pseudoct_worker.sh'
+# Installed name of the runner; it is copied from RUNNER_SOURCE, which has no staging folder.
+RUNNER_NAME = 'run_pseudoct_worker.sh'
 RUNNER_SOURCE = os.path.join(REPO_ROOT, 'scripts', 'run_pseudoct_worker.sh')
-RUNTIME_FILES = BUILDER_TARGETS + (RUNNER_REL,)
+# Flat installed files of one runtime directory runtimes/<LABEL>/.
+RUNTIME_FILES = tuple(installed for _staged, installed in BUILDER_TARGETS) + (RUNNER_NAME,)
 
 LAUNCHER_REL = 'bin/pseudoct'
 LAUNCHER_SOURCE = os.path.join(REPO_ROOT, 'bin', 'pseudoct')
@@ -114,35 +120,20 @@ def frontend_source(rel):
 HELP_DIR = os.path.join(REPO_ROOT, 'docs', 'help')
 HELP_FILES = ('index.html', 'style.css')
 # Bundled MATLAB SSH2 transport (AMEND-1, D-A001). Paths are relative to SSH2_SOURCE_ROOT and
-# are shipped at the same relative path under external/ssh2_v2_m1_r5/ in the package, which is
-# where pseudo_CT_dependency_paths and setup_pseudo_CT_paths look. Shipped: every top-level
-# MATLAB wrapper (not examples/), the Ganymed JAR that ssh2_setup.m adds to the Java path, and
-# the two licence notices. Not shipped: examples, javadoc, Java sources, HISTORY, README, FAQ.
+# are shipped at the same relative path under external/ssh2_v2_m1_r5/ in the package. Shipped:
+# only the Ganymed JAR and the two licence notices (license.txt and the Ganymed LICENSE.txt).
+# The top-level MATLAB wrappers (ssh2.m, ssh2_setup.m, ...) are NOT shipped as loose files: they
+# are compiled into the standalone and worker executables (build_application.m -I/-a inputs), so
+# the installed engine reaches them through the CTF, not through this package. The JAR keeps its
+# package path under ssh2_v2_m1_r5/ganymed-ssh2-m1/, the location ssh2_setup derives it from; that
+# this location resolves from the compiled CTF is unverified until the compiled-engine check.
+# Not shipped: wrappers, examples, javadoc, Java sources, HISTORY, README, FAQ.
 SSH2_ROOT_REL = 'external/ssh2_v2_m1_r5'
 SSH2_SOURCE_ROOT = os.path.join(REPO_ROOT, *SSH2_ROOT_REL.split('/'))
 SSH2_FILES = (
     'license.txt',
     'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar',
     'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1-source/LICENSE.txt',
-    'ssh2_v2_m1_r5/scp.m',
-    'ssh2_v2_m1_r5/scp_get.m',
-    'ssh2_v2_m1_r5/scp_put.m',
-    'ssh2_v2_m1_r5/scp_simple_get.m',
-    'ssh2_v2_m1_r5/scp_simple_put.m',
-    'ssh2_v2_m1_r5/sftp.m',
-    'ssh2_v2_m1_r5/sftp_get.m',
-    'ssh2_v2_m1_r5/sftp_put.m',
-    'ssh2_v2_m1_r5/sftp_simple_get.m',
-    'ssh2_v2_m1_r5/sftp_simple_put.m',
-    'ssh2_v2_m1_r5/ssh2.m',
-    'ssh2_v2_m1_r5/ssh2_close.m',
-    'ssh2_v2_m1_r5/ssh2_command.m',
-    'ssh2_v2_m1_r5/ssh2_command_response.m',
-    'ssh2_v2_m1_r5/ssh2_config.m',
-    'ssh2_v2_m1_r5/ssh2_config_publickey.m',
-    'ssh2_v2_m1_r5/ssh2_main.m',
-    'ssh2_v2_m1_r5/ssh2_setup.m',
-    'ssh2_v2_m1_r5/ssh2_simple_command.m',
 )
 # Atlas and template files build_application.m copies from the atlas directory, and
 # SPM's DICOM dictionary copied unchanged from the SPM root.
@@ -447,19 +438,18 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
             elif prov != source:
                 raise ReleaseError('%s: source provenance differs from an earlier release build'
                                    % label)
-            for rel in BUILDER_TARGETS:
-                if not os.path.isfile(os.path.join(built, *rel.split('/'))):
-                    raise ReleaseError('%s: required executable missing: %s' % (label, rel))
+            for staged, _installed in BUILDER_TARGETS:
+                if not os.path.isfile(os.path.join(built, *staged.split('/'))):
+                    raise ReleaseError('%s: required executable missing: %s' % (label, staged))
             digests = collect_resources(label, built)
             if resource_digests is None:
                 resource_digests, resource_src = digests, built
             elif digests != resource_digests:
                 raise ReleaseError('%s: builder resources differ from the first release' % label)
-            for rel in BUILDER_TARGETS:
-                copy_file(os.path.join(built, *rel.split('/')),
-                          os.path.join(pkg, 'runtimes', label, *rel.split('/')), 0o755)
-            copy_file(RUNNER_SOURCE, os.path.join(pkg, 'runtimes', label, *RUNNER_REL.split('/')),
-                      0o755)
+            for staged, installed in BUILDER_TARGETS:
+                copy_file(os.path.join(built, *staged.split('/')),
+                          os.path.join(pkg, 'runtimes', label, installed), 0o755)
+            copy_file(RUNNER_SOURCE, os.path.join(pkg, 'runtimes', label, RUNNER_NAME), 0o755)
             releases_meta.append({
                 'label': label,
                 'matlab_version': entry['matlab_version'],

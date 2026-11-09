@@ -154,14 +154,14 @@ fi
 catalog_mcr_base=/usr/pubsw/common/matlab
 
 # Artifacts every installed release must provide (kept in step with the driver).
-RELEASE_ARTIFACTS='payload/pseudoct_worker payload/run_pseudoct_worker.sh standalone/pseudoct_standalone'
+RELEASE_ARTIFACTS='pseudoct_worker run_pseudoct_worker.sh pseudoct_standalone'
 
 # Catalog reader: list | default | resolve LABEL. Installed mode lists complete releases only.
 CATALOG_PY='
 import json, os, re, shlex, sys
 path, key, command, label, root, mode = sys.argv[1:7]
-REQUIRED = ["payload/pseudoct_worker",
-            "payload/run_pseudoct_worker.sh", "standalone/pseudoct_standalone"]
+REQUIRED = ["pseudoct_worker",
+            "run_pseudoct_worker.sh", "pseudoct_standalone"]
 def fail(message, code):
     sys.stderr.write("pseudoct: " + message + "\n")
     sys.exit(code)
@@ -296,7 +296,7 @@ select_release() {
         { SEL_ERROR="MATLAB Runtime at $mcr_abs $where reports MCR '$found'; $sel_label requires '$CAT_MCR_VERSION'"; return "$EXIT_RUNTIME"; }
     SEL_RELEASE=$sel_label
     SEL_EXE=$release_dir/$sel_rel
-    SEL_RUNNER=$release_dir/payload/run_pseudoct_worker.sh
+    SEL_RUNNER=$release_dir/run_pseudoct_worker.sh
     SEL_MCR_ROOT=$mcr_abs
     SEL_LD_PATH=$mcr_abs/runtime/glnxa64:$mcr_abs/bin/glnxa64:$mcr_abs/sys/os/glnxa64
     # MCR 7.14 libjvm.so lives under sys/java/.../amd64/server: add the Runtime's Java
@@ -370,7 +370,7 @@ op_resolve() {
     [ "${#REST_ARGS[@]}" -eq 0 ] || fail_op 'resolve takes only --mcr and --mcr-root' "$EXIT_USAGE"
     require_installed resolve
     selection_label
-    select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" standalone/pseudoct_standalone ||
+    select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" pseudoct_standalone ||
         release_fail $?
     printf 'PSEUDOCT_EXE=%s\n' "$(quoted "$SEL_EXE")"
     printf 'PSEUDOCT_MCR_ROOT=%s\n' "$(quoted "$SEL_MCR_ROOT")"
@@ -418,7 +418,7 @@ op_headless() {
 
     if [ "$installed" -eq 1 ]; then
         selection_label
-        select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" standalone/pseudoct_standalone ||
+        select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" pseudoct_standalone ||
             release_fail $?
         standalone_exe=$SEL_EXE
         mcr_ld_path=$SEL_LD_PATH
@@ -623,7 +623,7 @@ op_run() {
     else
         selection_label
         rc=0
-        select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" standalone/pseudoct_standalone || rc=$?
+        select_release "$SEL_LABEL" "$SEL_OPT_HAVE_ROOT" "$SEL_OPT_ROOT" pseudoct_standalone || rc=$?
         if [ "$rc" -ne 0 ]; then
             error_record "$rc" "${SEL_ERROR:-The selected MATLAB Runtime is unavailable or does not match its release.}"
         fi
@@ -930,6 +930,12 @@ TABLE_ROW = re.compile(
     r"([ \t]+(?:ACTIVE|DONE|SKIPPED|INFO|WARN|ERROR|CANCELLED|VERIFIED)\b.*)$",
     re.S)
 
+# Wrapped presenter rows have blank TIME, SUBJECT and STAGE cells and repeat
+# STATUS at column 25. Their indentation is part of the table layout, so they
+# are forwarded unstripped and are never treated as compiled markers.
+TABLE_CONTINUATION = re.compile(
+    r"^ {25}(?:ACTIVE|DONE|SKIPPED|INFO|WARN|ERROR|CANCELLED|VERIFIED) ")
+
 def table_row_stage(text):
     return TABLE_ROW.match(text)
 
@@ -1087,7 +1093,8 @@ def write_line(channel, raw, diagnostics):
         return
     if channel == "stdout" and BARE_COMPILED_MARKER.search(candidate) and \
             not candidate.lstrip().startswith("{") and \
-            not table_row_stage(candidate.rstrip("\r\n")):
+            not table_row_stage(candidate.rstrip("\r\n")) and \
+            not TABLE_CONTINUATION.match(text.rstrip("\r\n")):
         # Compiled-runner and SPM batch [n/m] markers are log-only: they are
         # not orchestration stages and never appear in public output. Public
         # presenter table rows and JSON progress records are exempt.
@@ -1166,6 +1173,9 @@ def write_line(channel, raw, diagnostics):
         try:
             value = json.loads(candidate)
         except Exception:
+            if TABLE_CONTINUATION.match(text.rstrip("\r\n")):
+                forward_line(text, "stdout")
+                return
             body = candidate.rstrip("\r\n")
             forward_line(remap_table_row(body) + candidate[len(body):], "stdout")
         else:

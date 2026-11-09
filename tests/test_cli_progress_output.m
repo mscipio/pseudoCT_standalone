@@ -47,7 +47,7 @@ assert(~isempty(regexp([base_a ext_a], ...
 console_text_component = evalc(['pseudo_CT_output(''INFO'', context, ', ...
     '''[recentering] Skipped as configured.'');']);
 assert(~isempty(regexp(console_text_component, ...
-    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] INFO\s+\[subject 2/5\] \[stage 4/8\] \[recentering\] Skipped as configured\.', 'once')));
+    '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] INFO\s+\[subject 2/5\] \[recentering\] Skipped as configured\.', 'once')));
 
 entry_source = local_read(fullfile(root_dir, 'run_pseudo_CT.m'));
 run_source = local_read(fullfile(root_dir, 'src', 'orchestration', ...
@@ -207,6 +207,117 @@ end
 rmpath(stub_dir);
 assert(dimension_failed, 'DICOM dimension mismatch must propagate as an error.');
 
+% Console table for an MPRAGE-only profile from synthetic presenter events (no
+% science run). Every configured stage has one numbered row with a STATUS, the
+% number appears only on a stage's first row, and every table line keeps STATUS.
+previous_format = getenv('PSEUDOCT_OUTPUT_FORMAT');
+setenv('PSEUDOCT_OUTPUT_FORMAT', '');
+pseudo_CT_output_console_visible('RESET');
+base = struct('console_profile', 'local-mprage-only', 'live', true, ...
+    'workflow_event', true, 'stage_count', 10, 'source', 'orchestrator', ...
+    'subject_index', 1, 'subject_count', 1);
+table_text = '';
+table_text = [table_text local_table_event(base, 'INFO', 'Preparing input MPRAGE.', ...
+    struct('stage_status', 'START', 'stage_index', 1, 'operation_id', 'workflow.input_prepare'))];
+table_text = [table_text local_table_event(base, 'SUCCESS', 'Input MPRAGE prepared.', ...
+    struct('stage_status', 'DONE', 'stage_index', 1, 'operation_id', 'workflow.input_prepare'))];
+table_text = [table_text local_table_event(base, 'INFO', '[recentering] Not required.', struct())];
+table_text = [table_text local_table_event(base, 'SUCCESS', ...
+    '[aliasing correction] Successfully applied.', struct())];
+table_text = [table_text local_table_event(base, 'INFO', 'Normalizing MPRAGE with FreeSurfer.', ...
+    struct('stage_status', 'START', 'stage_index', 4, 'operation_id', 'workflow.normalize'))];
+table_text = [table_text local_table_event(base, 'SUCCESS', 'MPRAGE normalization completed.', ...
+    struct('stage_status', 'DONE', 'stage_index', 4, 'operation_id', 'workflow.normalize'))];
+table_text = [table_text local_table_event(base, 'INFO', 'Aligning MPRAGE.', ...
+    struct('stage_status', 'START', 'stage_index', 5, 'operation_id', 'workflow.align_mask'))];
+table_text = [table_text local_table_event(base, 'SUCCESS', 'Alignment completed.', ...
+    struct('stage_status', 'DONE', 'stage_index', 5, 'operation_id', 'workflow.align_mask'))];
+% Stage 6 emits no event: while the subject runs it must not get a SKIPPED row; its single gap row appears only at the verified completion.
+table_text = [table_text local_table_event(base, 'INFO', 'Segmenting.', ...
+    struct('stage_status', 'START', 'stage_index', 7, 'operation_id', 'workflow.dartel'))];
+table_text = [table_text local_table_event(base, 'SUCCESS', 'Registration completed.', ...
+    struct('stage_status', 'DONE', 'stage_index', 7, 'operation_id', 'workflow.dartel'))];
+table_text = [table_text local_table_event(base, 'INFO', 'Attenuation map.', ...
+    struct('stage_status', 'START', 'stage_index', 8, 'operation_id', 'workflow.attenuation_qc'))];
+table_text = [table_text local_table_event(base, 'SUCCESS', 'Attenuation map generated.', ...
+    struct('stage_status', 'DONE', 'stage_index', 8, 'operation_id', 'workflow.attenuation_qc'))];
+table_text = [table_text local_table_event(base, 'INFO', ...
+    'DICOM output skipped by MPRAGE-only policy.', ...
+    struct('stage_status', 'SKIPPED', 'stage_index', 9, 'operation_id', 'workflow.dicom_output', ...
+    'reason', 'profile_policy:mprage_only'))];
+table_text = [table_text local_table_event(base, 'INFO', ...
+    'Full-mode output finalization skipped by MPRAGE-only policy.', ...
+    struct('stage_status', 'SKIPPED', 'stage_index', 10, ...
+    'operation_id', 'workflow.full_output_finalize'))];
+table_text = [table_text local_table_event(base, 'INFO', 'Promoting final NIfTI outputs.', ...
+    struct('stage_status', 'START', 'operation_id', 'output.promote_nifti'))];
+table_text = [table_text local_table_event(base, 'SUCCESS', 'Outputs promoted.', ...
+    struct('stage_status', 'DONE', 'operation_id', 'output.promote_nifti'))];
+table_text = [table_text local_table_event(base, 'SUCCESS', 'Subject completed (elapsed 0:00:09).', ...
+    struct('completion_verified', true))];
+pseudo_CT_output_console_visible('RESET');
+setenv('PSEUDOCT_OUTPUT_FORMAT', previous_format);
+
+table_lines = regexp(table_text, '\n', 'split');
+assert(~isempty(strfind(table_text, 'TIME     SUBJECT STAGE   STATUS    MESSAGE')));
+body = {};
+for ii = 1:length(table_lines)
+    if ~isempty(table_lines{ii}) && isempty(regexp(table_lines{ii}, '^(TIME|-{20,})', 'once'))
+        body{end + 1} = table_lines{ii}; %#ok<AGROW>
+    end
+end
+for ii = 1:length(body)
+    assert(~isempty(regexp(body{ii}, ...
+        '^.{25}(ACTIVE|DONE|SKIPPED|INFO|WARN|ERROR|CANCELLED|VERIFIED) ', 'once')), ...
+        'Table row without STATUS: %s', body{ii});
+end
+% A wrapped message must have produced at least one continuation line.
+continuation_rows = 0;
+for ii = 1:length(body)
+    if strcmp(body{ii}(1:8), '        ')
+        continuation_rows = continuation_rows + 1;
+    end
+end
+assert(continuation_rows >= 1);
+expected_status = {'ACTIVE'; 'SKIPPED'; 'DONE'; 'ACTIVE'; 'ACTIVE'; 'SKIPPED'; ...
+    'ACTIVE'; 'ACTIVE'; 'SKIPPED'; 'SKIPPED'};
+for k = 1:10
+    hits = [];
+    for ii = 1:length(body)
+        if ~isempty(strfind(body{ii}, sprintf('[%d/10]', k)))
+            hits(end + 1) = ii; %#ok<AGROW>
+        end
+    end
+    assert(length(hits) == 1, 'Stage %d numbered on %d rows', k, length(hits));
+    assert(strcmp(strtrim(body{hits}(26:34)), expected_status{k}), ...
+        'Stage %d first row is not %s: %s', k, expected_status{k}, body{hits});
+end
+stage7_row = 0;
+for ii = 1:length(body)
+    if ~isempty(strfind(body{ii}, '[7/10]'))
+        stage7_row = ii;
+    end
+end
+completion_row = 0;
+for ii = 1:length(body)
+    if ~isempty(strfind(body{ii}, 'Subject completed'))
+        completion_row = ii;
+    end
+end
+% No gap row while the subject runs: the row before stage 7 is not a gap row.
+assert(stage7_row > 1 && ...
+    isempty(regexp(body{stage7_row - 1}, 'SKIPPED\s+SPM New Segment not run', 'once')));
+% The gap row for stage 6 comes at the verified completion, right before it.
+assert(completion_row > 1 && ...
+    ~isempty(regexp(body{completion_row - 1}, 'SKIPPED\s+SPM New Segment not run', 'once')));
+suppressed_rows = 0;
+for ii = 1:length(body)
+    if ~isempty(strfind(body{ii}, 'Full-mode output finalization skipped'))
+        suppressed_rows = suppressed_rows + 1;
+    end
+end
+assert(suppressed_rows == 1);
+
 new_sources = {run_source, helper_source, profile_source, promote_source, ...
     dicom_source, prepare_source};
 for ii = 1:length(new_sources)
@@ -226,6 +337,20 @@ for ii = 1:length(lines)
     if ~isempty(trimmed) && trimmed(1) ~= '%' && ~isempty(strfind(trimmed, needle))
         count = count + 1;
     end
+end
+end
+
+function text = local_table_event(base, level, message, extra)
+% Presenter text for one synthetic event merged over BASE; '' when not shown.
+ctx = base;
+names = fieldnames(extra);
+for ii = 1:length(names)
+    ctx.(names{ii}) = extra.(names{ii});
+end
+text = '';
+[visible, console_text] = pseudo_CT_output_console_visible(level, message, ctx);
+if visible
+    text = [console_text char(10)];
 end
 end
 

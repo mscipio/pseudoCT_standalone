@@ -6,7 +6,7 @@ function [sts] = pseudo_CT_run_normalization_cmd(cmd, ssh2_conn, varargin)
 %   normalized NIfTI path that the command must create.
 %   SSH2_CONN is the connection struct; its hostname selects the path. 127.0.0.1
 %   and localhost run CMD on this machine with system(), prefixed by
-%   config.normalization.source_command and child_lib_path. Any other host runs
+%   config.normalization.source_command and, when non-empty, child_lib_path. Any other host runs
 %   the command through pseudo_CT_ssh2_command, then checks the file with ls.
 %   CONFIG is the selected profile struct. OUTPUT_CONTEXT is an optional logging
 %   struct.
@@ -81,10 +81,6 @@ if source_command(end) == ';'
     source_command = strtrim(source_command(1:end-1));
 end
 
-if isempty(child_lib_path)
-    child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
-end
-
 % --- Shell-safe input validation for ALL interpolated command strings ---
 % child_lib_path, source_command, and cmd are all interpolated into tcsh/sh
 % command strings below.  Validate each for shell metacharacters before
@@ -103,8 +99,17 @@ if ~isempty(regexp(cmd, shell_meta, 'once'))
         'Normalization command contains shell metacharacters: %s', cmd);
 end
 
+% Empty child_lib_path means no LD_LIBRARY_PATH prepend (no empty colon component).
 if length(source_command) >= 6 && strcmpi(source_command(1:6), 'source')
-    local_cmd = sprintf('tcsh -f -c "setenv LD_LIBRARY_PATH %s:$LD_LIBRARY_PATH; %s; %s"', child_lib_path, source_command, cmd);
+    if isempty(child_lib_path)
+        local_cmd = sprintf('tcsh -f -c "%s; %s"', source_command, cmd);
+    else
+        local_cmd = sprintf('tcsh -f -c "setenv LD_LIBRARY_PATH %s:$LD_LIBRARY_PATH; %s; %s"', child_lib_path, source_command, cmd);
+    end
 else
-    local_cmd = sprintf('/bin/sh -c "LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; export LD_LIBRARY_PATH; %s; %s"', child_lib_path, source_command, cmd);
+    if isempty(child_lib_path)
+        local_cmd = sprintf('/bin/sh -c "%s; %s"', source_command, cmd);
+    else
+        local_cmd = sprintf('/bin/sh -c "LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; export LD_LIBRARY_PATH; %s; %s"', child_lib_path, source_command, cmd);
+    end
 end

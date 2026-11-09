@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run the shared compiled worker (pseudoct_worker) with the MATLAB Runtime recorded for it.
-#   Installed distribution: this file is shipped as runtimes/<LABEL>/payload/
-#   run_pseudoct_worker.sh beside the compiled pseudoct_worker. Arguments:
+#   Installed distribution: this file is shipped as runtimes/<LABEL>/run_pseudoct_worker.sh
+#   beside the compiled pseudoct_worker. Arguments:
 #   <mcr_root> <phase> <job_manifest> [<resource_manifest>]. The resource manifest is
 #   omitted in direct mode (the worker verifies the packaged resources itself). The Runtime
 #   library path is set from mcr_root, and the worker runs from its own directory.
@@ -32,7 +32,7 @@ done
 script_dir=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd -P)
 
 if [ -x "$script_dir/pseudoct_worker" ]; then
-    # Installed layout (runtimes/<LABEL>/payload/): the compiled worker of the selected Runtime.
+    # Installed layout (runtimes/<LABEL>/): the compiled worker of the selected Runtime.
     if [ "$#" -ne 3 ] && [ "$#" -ne 4 ]; then
         echo "Usage: $0 <mcr_root> <phase> <job_manifest> [<resource_manifest>]" >&2
         exit 2

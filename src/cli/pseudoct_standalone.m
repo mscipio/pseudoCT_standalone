@@ -1,7 +1,8 @@
 function status = pseudoct_standalone(varargin)
 %PSEUDOCT_STANDALONE Compiled dispatcher for standalone CLI and headless runs.
 %   STATUS = PSEUDOCT_STANDALONE(MODE) is the single standalone compile target
-%   (built by scripts/build_application.m into standalone/pseudoct_standalone).
+%   (built by scripts/build_application.m into its staging standalone/ folder;
+%   installed flat as runtimes/<LABEL>/pseudoct_standalone).
 %   It only delegates; no serialization or validation is duplicated here:
 %     prepare_validate, prepare_submit, verify_result, store_credentials
 %         -> PSEUDOCT_CLI_BRIDGE(MODE), operations read from the environment.

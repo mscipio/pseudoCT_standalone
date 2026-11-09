@@ -46,15 +46,18 @@ local_require_absolute_dir(artifact_root, ...
     'mlsc_current_artifact_root must be an absolute directory.');
 root = local_strip_sep(artifact_root);
 layout = pseudo_CT_package_layout();
+% Source mode: root is a development compiled tree, whose runner sits in
+% payload_build/. Installed mode: root is a flat runtimes/<LABEL>/ folder.
 if strcmp(layout.mode, 'installed')
     build_manifest_name = 'build_manifest.mat';
     resource_manifest_name = 'resource_manifest.mat';
+    runner_path = fullfile(root, 'run_pseudoct_worker.sh');
 else
     build_manifest_name = 'mlsc_current_build.mat';
     resource_manifest_name = 'mlsc_current_resources.mat';
+    runner_path = fullfile(root, 'payload_build', 'run_pseudoct_worker.sh');
 end
-config.current.runner = fullfile(root, 'payload_build', ...
-    'run_pseudoct_worker.sh');
+config.current.runner = runner_path;
 config.current.build_manifest = fullfile(root, ...
     build_manifest_name);
 config.current.resource_manifest = fullfile(root, ...

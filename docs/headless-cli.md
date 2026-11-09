@@ -133,6 +133,16 @@ This is the single authoritative description of validation and submission.
 - **Progress**: `--format text` prints progress to the console; `--format jsonl`
   emits one JSON record per line (progress and final result records). The result
   record carries the exit code and, for MLSC, the job IDs and run-log paths.
+- **Console stages** (`--format text`; this is the authoritative description): every
+  configured stage appears for each subject, including stages that did not run.
+  A stage with no work shows `SKIPPED` with its reason where known (MPRAGE-only profiles
+  skip stages 9 and 10 by policy); otherwise the reason is `not run`. The stage number
+  `[n/10]` is printed once per stage, on that stage's first row: its start row, or its
+  `SKIPPED` row when it has no start row. Later rows and wrapped lines leave it blank.
+  `STATUS` is on every row, including wrapped lines. Scientific events, outputs and JSONL
+  records are unchanged; only the text rendering differs.
+  - **Known limitation (MLSC):** post-processing for stage 5 is not reported as a numbered
+    stage. Its work appears as `not reported` rather than as a numbered stage 5 row.
 - **Intermediates**: `<subject>/MR_PET/tmp/` holds per-subject working files. They
   are removed after successful promotion when `cleanup_on_success` is true, and
   kept when promotion fails or cleanup is off. The CLI's private invocation

@@ -97,7 +97,7 @@ function subject = local_new_subject(idx)
 subject = struct('index', idx, 'stage_state', zeros(1, 10), ...
     'label_shown', false(1, 10), 'seen', {{}}, ...
     'has_held', false, 'held', struct(), ...
-    'terminal', false, 'last_ts', '');
+    'terminal', false, 'last_ts', '', 'unnumbered', false);
 end
 
 function idx = local_subject_index(context)
@@ -426,7 +426,8 @@ function c = local_cand(S, row, status, stage, op, kind, text, category)
 c = struct('status', status, 'stage', stage, 'op', op, 'kind', kind, ...
     'text', text, 'category', category, 'src', S.src, 'ts', '', 'orig', '', ...
     'job', '', 'file', S.file, 'lines', [], 'live', S.live, 'dedupe', '', ...
-    'reason', '', 'context', S.context, 'level', 'INFO', 'observed', false);
+    'reason', '', 'context', S.context, 'level', 'INFO', 'observed', false, ...
+    'presentation_only', false);
 if isstruct(row)
     if isfield(row, 'level')
         c.level = row.level;
@@ -593,10 +594,16 @@ end
 if isfield(context, 'operation_id') && strcmp(context.operation_id, 'output.promote_nifti')
     n = 10;
 end
-% The lifecycle's full-mode policy skip is not a skip of NIfTI promotion.
-% Suppress only this explicit, different operation; never guess from profile.
+% The lifecycle's full-mode policy skip is not a skip of NIfTI promotion. It is
+% shown as a presentation-only SKIPPED row: text console only, never admitted,
+% no stage transition and no event record. Matched explicitly; never guessed
+% from profile.
 if n == 10 && strcmp(canon, 'SKIPPED') && local_is_mprage_only(S.profile) && ...
         strcmp(row.message, 'Full-mode output finalization skipped by MPRAGE-only policy.')
+    c = local_parent(S, row, 10, 'SKIPPED', ...
+        'Full-mode output finalization skipped (MPRAGE-only policy)');
+    c.presentation_only = true;
+    cands = {c};
     return;
 end
 text = row.message;
@@ -969,6 +976,29 @@ end
 function [out, S] = local_admit_core(S, c)
 % Decides whether a candidate is shown now, and updates the stage state.
 out = {};
+if c.presentation_only
+    % Text-only policy row: no record is written, but a SKIPPED row sets the
+    % stage state when shown, so the same stage's native SKIPPED record (or a
+    % repeat of this row) is not shown again. A stage that already has an admitted
+    % status is not given a second SKIPPED row.
+    slot = S.subject_slot;
+    if ~(S.terminal || S.subjects(slot).terminal)
+        if c.stage > 0 && strcmp(c.status, 'SKIPPED')
+            if S.subjects(slot).stage_state(c.stage) ~= 0
+                return;
+            end
+            S.subjects(slot).stage_state(c.stage) = 3;
+        end
+        if ~isempty(c.dedupe)
+            if any(strcmp(c.dedupe, S.subjects(slot).seen))
+                return;
+            end
+            S.subjects(slot).seen{end + 1} = c.dedupe;
+        end
+        out = {c};
+    end
+    return;
+end
 if any(strcmp(c.status, {'CANCELLED'; 'ERROR'}))
     S.subjects(S.subject_slot).terminal = true;
     S.subjects(S.subject_slot).has_held = false;
@@ -1075,6 +1105,7 @@ console_line = '';
 event_record = local_unavailable_event();
 jsonl = strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl');
 rows = {};
+have_record = false;
 for ci = 1:length(emitted)
     c = emitted{ci};
     % Live rows never display a time earlier than the previous displayed row
@@ -1082,7 +1113,7 @@ for ci = 1:length(emitted)
     % admission time is shown; the source time stays in original_timestamp.
     % Replay keeps source times unchanged.
     slot = S.subject_slot;
-    if c.live && ~isempty(c.ts)
+    if ~c.presentation_only && c.live && ~isempty(c.ts)
         last = S.subjects(slot).last_ts;
         if ~isempty(last) && local_ts_before(c.ts, last)
             c.orig = c.ts;
@@ -1093,16 +1124,39 @@ for ci = 1:length(emitted)
         end
         S.subjects(slot).last_ts = c.ts;
     end
-    current_record = local_event_struct(S, c);
-    if ci == 1
-        event_record = current_record;
+    if ~c.presentation_only
+        % Records and JSON lines are unchanged; presentation-only rows add none.
+        current_record = local_event_struct(S, c);
+        if ~have_record
+            event_record = current_record;
+            have_record = true;
+        end
+        S.records(end + 1) = current_record;
+        if jsonl
+            local_emit_json_event(current_record);
+        end
     end
-    S.records(end + 1) = current_record;
-    if jsonl
-        local_emit_json_event(current_record);
-    else
+    if ~jsonl
+        % Text console only: configured stages with no row yet for this
+        % subject are shown as SKIPPED around the row that reveals them.
+        gaps = local_gap_candidates(S, c, 'before');
+        for gi = 1:length(gaps)
+            [txt, S] = local_text_row(S, gaps{gi});
+            rows{end + 1} = txt; %#ok<AGROW>
+        end
         [txt, S] = local_text_row(S, c);
         rows{end + 1} = txt; %#ok<AGROW>
+        % Unnumbered stage work (e.g. MLSC post-processing) seen for this subject:
+        % later gaps cannot be attributed, so they read 'not reported', not 'not run'.
+        if c.stage == 0 && ~c.presentation_only && local_is_stage_work_op(c.op) && ...
+                ~any(strcmp(c.status, {'WARN'; 'ERROR'; 'CANCELLED'}))
+            S.subjects(slot).unnumbered = true;
+        end
+        gaps = local_gap_candidates(S, c, 'after');
+        for gi = 1:length(gaps)
+            [txt, S] = local_text_row(S, gaps{gi});
+            rows{end + 1} = txt; %#ok<AGROW>
+        end
     end
 end
 if ~isempty(emitted)
@@ -1113,6 +1167,74 @@ if ~isempty(rows)
     for ri = 2:length(rows)
         console_line = [console_line char(10) rows{ri}]; %#ok<AGROW>
     end
+end
+end
+
+function gaps = local_gap_candidates(S, c, where)
+% Presentation-only SKIPPED rows for configured stages with no evidence at all.
+% A gap row is shown only when the subject is terminal and the stage has no row
+% yet and no admitted evidence (stage_state 0 covers native records and stdout
+% events alike). While the subject is running there are no gap rows: a stage
+% that has not been reported is pending, not skipped.
+%   'before': only before a subject completion (terminal, all stages considered).
+%   'after' : only after a terminal ERROR/CANCELLED of stage k, for stages k+1..10
+%             (sequential stages after a terminal failure cannot have run). An
+%             unattributed failure (stage 0) shows no gap rows.
+% Gap rows never change stage state, records or JSON. MPRAGE-only policy stages
+% 9 and 10 keep their policy SKIPPED rows (see local_gap_text).
+gaps = {};
+slot = S.subject_slot;
+subject = S.subjects(slot);
+shown = subject.label_shown;
+wanted = [];
+if strcmp(where, 'before')
+    % Gap rows only for a verified completion, or a live one (unchanged live
+    % behaviour). A replayed, unverified 'Subject completed' shows no gap rows.
+    if strcmp(c.kind, 'subject_completed') && ...
+            (strcmp(c.status, 'VERIFIED') || local_flag(c.context, 'completion_verified') || c.live)
+        wanted = 1:10;
+    end
+else
+    if any(strcmp(c.status, {'CANCELLED'; 'ERROR'})) && c.stage > 0
+        wanted = (c.stage + 1):10;
+    end
+end
+wanted = wanted(~shown(wanted) & subject.stage_state(wanted) == 0);
+for ii = 1:length(wanted)
+    k = wanted(ii);
+    g = c;
+    g.status = 'SKIPPED';
+    g.stage = k;
+    g.op = '';
+    g.kind = 'presentation_gap';
+    g.category = local_stage_category(k);
+    g.text = local_gap_text(S.profile, k, S.subjects(slot).unnumbered);
+    g.dedupe = '';
+    g.reason = '';
+    g.presentation_only = true;
+    gaps{end + 1} = g; %#ok<AGROW>
+end
+end
+
+function yes = local_is_stage_work_op(op)
+% Unnumbered operations that belong to a workflow stage's work.
+yes = ischar(op) && (strcmp(op, 'output.postprocess') || ...
+    strncmp(op, 'scientific.', 11) || strncmp(op, 'transport.', 10) || ...
+    strncmp(op, 'backend.', 8) || strncmp(op, 'prepare.', 8));
+end
+
+function text = local_gap_text(profile, k, unnumbered)
+% Reason only where the profile policy is known. Otherwise 'not run', or
+% 'not reported' when unnumbered operation work occurred since the last
+% numbered row (that work may belong to this stage; it is not attributed here).
+if local_is_mprage_only(profile) && k == 9
+    text = 'Full-mode DICOM output skipped (MPRAGE-only policy)';
+elseif local_is_mprage_only(profile) && k == 10
+    text = 'Full-mode output finalization skipped (MPRAGE-only policy)';
+elseif unnumbered
+    text = [local_stage_label(k) ' not reported'];
+else
+    text = [local_stage_label(k) ' not run'];
 end
 end
 
@@ -1267,6 +1389,10 @@ if ~S.header_done
     text = [text sprintf('%-8s %-7s %-7s %-9s %s', 'TIME', 'SUBJECT', 'STAGE', 'STATUS', 'MESSAGE') char(10)];
     text = [text repmat('-', 1, 123) char(10)];
 end
+% The number is printed once per stage and subject, on that stage's first row
+% (its start row when one exists; a stage with no start row shows it on its
+% SKIPPED row). Later rows and wrapped lines never repeat it; STATUS is kept
+% on every line.
 label = '';
 if c.stage > 0 && ~S.subjects(S.subject_slot).label_shown(c.stage)
     label = sprintf('[%d/10]', c.stage);
@@ -1278,6 +1404,7 @@ if length(c.ts) >= 19
 end
 prefix = sprintf('%-8s %-7s %-7s %-9s ', stamp, ...
     sprintf('S%02d', local_subject_index(c.context)), label, c.status);
+continuation = sprintf('%-8s %-7s %-7s %-9s ', '', '', '', c.status);
 lead = '';
 body = c.text;
 while ~isempty(body) && body(1) == ' '
@@ -1289,7 +1416,7 @@ for wi = 1:length(words)
     if wi == 1
         line = [prefix lead words{wi}];
     else
-        line = [repmat(' ', 1, length(prefix)) words{wi}];
+        line = [continuation words{wi}];
     end
     text = [text line char(10)]; %#ok<AGROW>
 end

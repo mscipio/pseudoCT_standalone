@@ -276,10 +276,10 @@ function atlas = local_resolve_atlas_dir(manifest_path, atlas_text)
 %   Absolute atlas_dir (older/source manifests) is returned without
 %   resolution, as before. A relative value is resolved against the folder of
 %   the manifest file, then canonicalised. Both forms carry no trailing slash.
-%   Worked example: manifest /pkg/runtimes/R2019b/payload/resource_manifest.mat
-%   with atlas_dir '../../../resources' gives fullfile('/pkg/runtimes/R2019b/payload',
-%   '../../../resources') = '/pkg/runtimes/R2019b/payload/../../../resources';
-%   canonicalising pops payload, R2019b and runtimes, giving '/pkg/resources'.
+%   Worked example: manifest /pkg/runtimes/R2019b/resource_manifest.mat
+%   with atlas_dir '../../resources' gives fullfile('/pkg/runtimes/R2019b',
+%   '../../resources') = '/pkg/runtimes/R2019b/../../resources';
+%   canonicalising pops R2019b and runtimes, giving '/pkg/resources'.
 if ~ischar(atlas_text) || size(atlas_text, 1) ~= 1
     error('pseudo_CT:MLSCCurrentManifest', ...
         'Resource atlas_dir must be a single path string.');

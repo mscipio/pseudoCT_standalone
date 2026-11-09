@@ -443,7 +443,7 @@ function atlas = local_resolve_manifest_atlas(manifest_path, atlas_text)
 %   Same rule as the MLSC validator: absolute values pass through (trailing
 %   separators stripped); relative values resolve against the manifest folder
 %   and are canonicalised ('.', '..', empty segments removed). Worked example:
-%   /pkg/runtimes/R2019b/payload/resource_manifest.mat with '../../../resources'
+%   /pkg/runtimes/R2019b/resource_manifest.mat with '../../resources'
 %   canonicalises to /pkg/resources.
 if ~ischar(atlas_text) || size(atlas_text, 1) ~= 1 || isempty(strtrim(atlas_text))
     error('pseudo_CT:MLSCPayloadManifest', ...

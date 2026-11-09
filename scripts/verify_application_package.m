@@ -80,8 +80,10 @@ for kk = 1:numel(listed)
         error('pseudo_CT:PackageTampered', 'SHA-256 mismatch for %s.', listed{kk});
     end
 end
-% The compiled standalone dispatcher is optional for older packages, but a
-% standalone/ directory must contain its executable.
+% This verifies the build staging tree only (build_application.m calls it on its
+% output), where the compiled dispatcher is nested under standalone/. Installed
+% distributions are flat (runtimes/<LABEL>/pseudoct_standalone) and are verified
+% by release_application.py. A standalone/ directory must contain its executable.
 if exist(fullfile(package_dir, 'standalone'), 'dir') == 7 && ...
         exist(fullfile(package_dir, 'standalone', 'pseudoct_standalone'), 'file') ~= 2
     error('pseudo_CT:PackageIncomplete', ...

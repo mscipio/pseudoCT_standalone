@@ -64,8 +64,8 @@ config.presentation.order = 15;
 
 % FreeSurfer environment used inside the remote batch shell.
 config.normalization.source_command = 'source /usr/local/freesurfer/nmr-stable53-env';
-% Runtime library directory for the FreeSurfer child process.
-config.normalization.child_lib_path = '/autofs/cluster/matlab/current/sys/os/glnxa64';
+% Runtime library directory for the FreeSurfer child process; empty means no prepend.
+config.normalization.child_lib_path = '';
 % Host that runs MLSC processing and FreeSurfer normalization.
 config.normalization.host = 'mlsc.nmr.mgh.harvard.edu';
 % Use Slurm submission for normalization: 'Yes' or 'No'.

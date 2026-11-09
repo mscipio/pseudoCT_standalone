@@ -23,6 +23,12 @@ end
 if ~isfield(state, 'payload')
     state.payload = 0;
 end
+% COVERED(k) is true once any native record carries canonical stage_index k.
+% Stage-less records (for example the worker's prepare/compute phase records)
+% never set it, so they never establish stage coverage.
+if ~isfield(state, 'covered')
+    state.covered = false(1, 10);
+end
 events = local_empty_events();
 if exist(path, 'file') ~= 2
     return;
@@ -57,8 +63,12 @@ for ii = 1:length(lines) - 1
     end
     state.records = state.records + 1;
     if isfield(rec, 'source') && strcmp(rec.source, 'payload')
-        % Worker-written records show that this worker emits natively.
+        % Worker-written records (stage-less phase records included). Kept as a
+        % diagnostic count only: it does NOT establish stage coverage.
         state.payload = state.payload + 1;
+    end
+    if local_is_canonical_stage(rec)
+        state.covered(rec.stage_index) = true;
     end
     event = local_presenter_event(rec, path);
     if ~isempty(event)
@@ -81,20 +91,30 @@ template = struct('subject', subject, ...
     'transition_kind', 'explicit');
 end
 
-function event = local_presenter_event(rec, path)
-% Stage records with a canonical index and a directly observed status only.
-event = [];
+function yes = local_is_canonical_stage(rec)
+% Stage record with a canonical index 1..10 (any status).
+yes = false;
 if ~isfield(rec, 'event_type') || ~strcmp(rec.event_type, 'stage')
     return;
 end
-if ~isfield(rec, 'stage_index') || ~isfield(rec, 'status') || ...
-        ~isnumeric(rec.stage_index) || ~isscalar(rec.stage_index)
+if ~isfield(rec, 'stage_index') || ~isnumeric(rec.stage_index) || ...
+        ~isscalar(rec.stage_index) || ~isfinite(rec.stage_index)
+    return;
+end
+yes = rec.stage_index >= 1 && rec.stage_index <= 10 && ...
+    rec.stage_index == fix(rec.stage_index);
+end
+
+function event = local_presenter_event(rec, path)
+% Stage records with a canonical index and a directly observed status only.
+event = [];
+if ~local_is_canonical_stage(rec)
+    return;
+end
+if ~isfield(rec, 'status')
     return;
 end
 index = rec.stage_index;
-if index < 1 || index > 10
-    return;
-end
 if isfield(rec, 'stage_id') && strcmp(rec.stage_id, 'dartel') && ...
         strcmp(rec.status, 'COMPLETED')
     % The DARTEL-only completion is detail, not the end of canonical stage 7
@@ -109,6 +129,8 @@ switch rec.status
         status = 'DONE';
     case 'FAILED'
         status = 'ERROR';
+    case 'SKIPPED'
+        status = 'SKIPPED';
     otherwise
         return;
 end

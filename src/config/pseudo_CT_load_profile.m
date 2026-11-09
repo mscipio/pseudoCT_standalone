@@ -216,6 +216,7 @@ for ii = 1:length(string_fields)
             field_name, profile_name);
     end
 end
+% Profile-contract/source-mode string only; installed runs take the MCR root from pseudo_CT_runtime_select.
 pinned = '/usr/pubsw/common/matlab/7.11';
 if ~strcmp(strip_sep(current.mcr_root), pinned)
     error('pseudo_CT:InvalidProfile', ...

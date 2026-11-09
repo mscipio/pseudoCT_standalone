@@ -5,9 +5,12 @@ function ok = pseudo_CT_scientific_event(target, rec)
 %   pseudo_CT_scientific_event_target). REC is a scalar struct whose fields
 %   are all optional:
 %     event_type       'stage' (default) or 'run'
-%     stage_id         lowercase identifier, e.g. 'segment' (stage records)
+%     stage_id         lowercase identifier, e.g. 'segment' or the canonical
+%                      'workflow.recenter' form (stage records)
 %     stage_index      canonical ten-stage index 1..10, or [] when none
-%     status           'STARTED', 'COMPLETED', 'FAILED' or '' (stage records)
+%     status           'STARTED', 'COMPLETED', 'FAILED', 'SKIPPED' or ''
+%                      (stage records). SKIPPED is an observed policy or
+%                      not-required outcome and carries its reason in message.
 %     outcome          'SUCCEEDED', 'FAILED', 'CANCELLED' (run records only)
 %     message          short human text (redacted, truncated to 240 chars)
 %     source           'local-orchestrator', 'payload' (the compiled
@@ -95,14 +98,14 @@ stage_id = local_text(rec, 'stage_id', '');
 source = local_text(rec, 'source', '');
 job_id = local_text(rec, 'job_id', '');
 if ~any(strcmp(event_type, {'stage'; 'run'})) || ...
-        ~any(strcmp(status, {''; 'STARTED'; 'COMPLETED'; 'FAILED'})) || ...
+        ~any(strcmp(status, {''; 'STARTED'; 'COMPLETED'; 'FAILED'; 'SKIPPED'})) || ...
         ~any(strcmp(outcome, {''; 'SUCCEEDED'; 'FAILED'; 'CANCELLED'})) || ...
         ~any(strcmp(source, {'local-orchestrator'; 'payload'; 'mlsc-lifecycle'})) || ...
         (~isempty(job_id) && isempty(regexp(job_id, '^[0-9]+$', 'once')))
     return;
 end
 if strcmp(event_type, 'stage')
-    if ~isempty(outcome) || isempty(regexp(stage_id, '^[a-z_]+$', 'once'))
+    if ~isempty(outcome) || isempty(regexp(stage_id, '^(workflow\.)?[a-z_]+$', 'once'))
         return;
     end
     if isfield(rec, 'stage_index') && ~isempty(rec.stage_index)

@@ -557,11 +557,10 @@ if isfield(config, 'current') && isstruct(config.current)
         ischar(config.current.resource_manifest) && isempty(config.current.resource_manifest);
     if direct
         % Direct mode binds the executables the manifests used to attest: the
-        % worker beside the runner and the standalone of the same release.
+        % worker and the standalone beside the runner of the same release.
         runner_dir = fileparts(config.current.runner);
         payload_path = fullfile(runner_dir, 'pseudoct_worker');
-        standalone_path = fullfile(fileparts(runner_dir), 'standalone', ...
-            'pseudoct_standalone');
+        standalone_path = fullfile(runner_dir, 'pseudoct_standalone');
         identity.payload_path = payload_path;
         identity.payload_sha256 = local_direct_sha256(payload_path);
         identity.standalone_path = standalone_path;

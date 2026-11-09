@@ -1058,11 +1058,14 @@ pseudo_CT_scientific_event(event_target, struct('stage_id', 'normalize', ...
 end
 
 function capable = local_native_capable(stream_state)
-%LOCAL_NATIVE_CAPABLE True once the worker has written native records for this run.
-capable = false;
+%LOCAL_NATIVE_CAPABLE Per-stage native coverage (1x10 logical) for this run.
+%   Stage-less worker records never count; see pseudo_CT_scientific_event_read.
+capable = false(1, 10);
 if stream_state.isKey('native_reader')
     reader = stream_state('native_reader');
-    capable = isstruct(reader) && isfield(reader, 'payload') && reader.payload > 0;
+    if isstruct(reader) && isfield(reader, 'covered')
+        capable = reader.covered;
+    end
 end
 end
 
@@ -1084,7 +1087,10 @@ try
     stream_state('native_reader') = reader;
     keep = true(length(events), 1);
     for ii = 1:length(events)
-        keep(ii) = ~any(strcmp(events(ii).status, {'WARN'; 'ERROR'})) && ...
+        % Worker-originated stage FAILED records are shown once here as stage
+        % error rows. Orchestrator-owned records (local-orchestrator) are excluded:
+        % the orchestrator prints its own stage-4 failure row.
+        keep(ii) = ~strcmp(events(ii).status, 'WARN') && ...
             ~strcmp(events(ii).source.version, 'local-orchestrator');
     end
     events = events(keep);
@@ -1104,6 +1110,20 @@ try
     stream_state('scientific_shown') = pseudo_CT_scientific_present_once( ...
         events, shown, 'native', true, output_context, ...
         strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
+    % Stage error rows also reach the run log: log-only here, because the
+    % presenter shows the console row. Same row rule as the MLSC transport.
+    for ii = 1:length(events)
+        if ~strcmp(events(ii).status, 'ERROR')
+            continue;
+        end
+        row = output_context;
+        row.workflow_event = true;
+        row.console_detail_only = true;
+        row.console_detail_remote = true;
+        row.stage_index = events(ii).stage.index;
+        row.stage_count = 10;
+        pseudo_CT_output('ERROR', row, '%s', events(ii).message);
+    end
 catch ME
     if ~stream_state.isKey('native_failed')
         stream_state('native_failed') = true;

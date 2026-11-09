@@ -2,11 +2,11 @@
 """Synthetic tests for the single installed launcher bin/pseudoct.
 
 Covers bin/pseudoct (run, headless, resolve, --list-releases; gui and --orchestrate refused)
-and the payload runner (source scripts/run_pseudoct_worker.sh, installed as
-runtimes/<LABEL>/payload/run_pseudoct_worker.sh).
+and the runner (source scripts/run_pseudoct_worker.sh, installed as
+runtimes/<LABEL>/run_pseudoct_worker.sh).
 
 An installed package is assembled under PSEUDOCT_TEST_SCRATCH: a copy of the real
-bin/pseudoct and payload runner, the release catalog embedded in manifest.json, and
+bin/pseudoct and runner, the release catalog embedded in manifest.json, and
 fake compiled executables under runtimes/<LABEL>/. Each fake records its argv,
 LD_LIBRARY_PATH, PSEUDOCT_INSTALL_ROOT and request/result environment, and behaves per
 scenario. Fake MATLAB Runtime roots carry only the identity evidence the launcher
@@ -39,8 +39,8 @@ LAUNCHER_SRC = os.path.join(REPO, 'bin', 'pseudoct')
 RUNNER_SRC = os.path.join(REPO, 'scripts', 'run_pseudoct_worker.sh')
 BUILT = ('R2010b', 'R2014b')
 EXECUTABLES = {
-    'payload': 'payload/pseudoct_worker',
-    'standalone': 'standalone/pseudoct_standalone',
+    'payload': 'pseudoct_worker',
+    'standalone': 'pseudoct_standalone',
 }
 # PATH without MATLAB: the python3 that runs the tests plus the system utilities.
 SYSTEM_PATH = os.pathsep.join([os.path.dirname(sys.executable), '/usr/bin', '/bin'])
@@ -135,18 +135,18 @@ def synthetic_launcher(catalog_base):
 
 
 def install_release(pkg, label):
-    """Complete installed release: the three executables and the payload runner."""
+    """Complete installed release: the two flat executables and the runner."""
     for target, rel in EXECUTABLES.items():
         exe = os.path.join(pkg, 'runtimes', label, rel)
         write(exe, FAKE_STANDALONE if target == 'standalone' else FAKE_PLAIN)
         os.chmod(exe, 0o755)
-    runner = os.path.join(pkg, 'runtimes', label, 'payload', 'run_pseudoct_worker.sh')
+    runner = os.path.join(pkg, 'runtimes', label, 'run_pseudoct_worker.sh')
     shutil.copyfile(RUNNER_SRC, runner)
     os.chmod(runner, 0o755)
 
 
 def build_package(root, catalog_base):
-    """Installed layout: bin/pseudoct, payload runner, runtimes/<LABEL>/, manifest.json."""
+    """Installed layout: bin/pseudoct, runtimes/<LABEL>/ (flat), manifest.json."""
     pkg = os.path.join(root, 'pseudoct-syn')
     os.makedirs(os.path.join(pkg, 'bin'), exist_ok=True)
     write(os.path.join(pkg, 'bin', 'pseudoct'), synthetic_launcher(catalog_base))
@@ -249,7 +249,7 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault', 'R2014b\t8.4\t-'])
         self.assertEqual(self.invocations(), [])
-        os.remove(os.path.join(self.pkg, 'runtimes', 'R2014b', 'payload', 'pseudoct_worker'))
+        os.remove(os.path.join(self.pkg, 'runtimes', 'R2014b', 'pseudoct_worker'))
         rc, out, _err = self.pseudoct(['--list-releases'], env={})
         self.assertEqual(rc, 0)
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault'])
@@ -281,7 +281,7 @@ class StandaloneTestCase(unittest.TestCase):
              'sh', out], stdout=subprocess.PIPE, check=True).stdout.decode()
         self.assertEqual(sourced, '|'.join([
             self.exe('R2014b', 'standalone'), self.root_real['R2014b'],
-            os.path.join(self.pkg_real, 'runtimes', 'R2014b', 'payload', 'run_pseudoct_worker.sh'),
+            os.path.join(self.pkg_real, 'runtimes', 'R2014b', 'run_pseudoct_worker.sh'),
             self.pkg_real, 'R2014b', self.root_real['R2014b']]))
         # Environment variables never select a root: without --mcr-root the only
         # candidate is the catalog location <base>/8.4 (R2014b), here synthetic.
@@ -377,7 +377,7 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault', 'R2014b\t8.4\t-'])
 
     def test_payload_runner_execs_compiled_payload_with_its_runtime(self):
-        runner = os.path.join(self.pkg, 'runtimes', 'R2010b', 'payload', 'run_pseudoct_worker.sh')
+        runner = os.path.join(self.pkg, 'runtimes', 'R2010b', 'run_pseudoct_worker.sh')
         rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'phase', 'job.txt', 'res.txt'],
                                      env={})
         self.assertEqual(rc, 0, err)
@@ -403,7 +403,7 @@ class StandaloneTestCase(unittest.TestCase):
         request = os.path.join(self.base, 'subject', 'MR_PET', 'tmp', 'request.mat')
         result = os.path.join(self.base, 'subject', 'MR_PET', 'tmp', 'result.mat')
         write(request, 'synthetic request mat\n')
-        runner = os.path.join(self.pkg, 'runtimes', label, 'payload', 'run_pseudoct_worker.sh')
+        runner = os.path.join(self.pkg, 'runtimes', label, 'run_pseudoct_worker.sh')
 
         def launcher_ld():
             rc, _out, err = self.pseudoct(['headless', '--mcr', label, '--mcr-root', root,

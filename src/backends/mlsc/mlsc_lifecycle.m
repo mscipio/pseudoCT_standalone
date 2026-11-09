@@ -2693,14 +2693,36 @@ try
     context = local_output_context(runtime, job_id);
     [events, direct.native] = pseudo_CT_scientific_event_read(path_name, ...
         direct.native);
-    direct.native_capable = direct.native.payload > 0;
+    direct.native_capable = direct.native.covered;
     keep = true(numel(events), 1);
     for ii = 1:numel(events)
-        keep(ii) = ~any(strcmp(events(ii).status, {'WARN'; 'ERROR'}));
+        if any(events(ii).stage.index == [1 9 10]) && ...
+                strcmp(events(ii).source.version, 'mlsc-lifecycle')
+            % Stages 1, 9 and 10 are printed by the orchestrator itself
+            % (pseudo_CT_run_lifecycle); its mlsc-lifecycle records are not presented.
+            keep(ii) = false;
+        elseif strcmp(events(ii).status, 'ERROR')
+            % A native stage FAILED is shown once as a stage error row (stages
+            % 1-8, e.g. the generated script's stage 4). Failures the orchestrator
+            % already prints itself are excluded: local-orchestrator records and
+            % stages 9-10.
+            keep(ii) = events(ii).stage.index <= 8 && ...
+                ~strcmp(events(ii).source.version, 'local-orchestrator');
+        else
+            keep(ii) = ~strcmp(events(ii).status, 'WARN');
+        end
+    end
+    if isfield(context, 'subject_index')
+        % Only this subject's records: the run file may hold other subjects' records.
+        keep = keep & strcmp({events.subject}', ...
+            sprintf('subject-%d', context.subject_index));
     end
     events = events(keep);
+    presented = local_presented_mask(events, direct.shown, 'native', ...
+        direct.native_capable);
     direct.shown = pseudo_CT_scientific_present_once(events, direct.shown, ...
         'native', true, context, true);
+    direct = local_transport_rows(direct, events, presented, context);
     if ~isempty(events)
         direct = local_direct_stdout_settle(direct, events);
     end
@@ -2748,7 +2770,7 @@ direct = struct('state', struct('reader', [], 'parser', []), ...
     'shown', containers.Map(), 'native', [], 'native_capable', false, ...
     'native_failed', false, ...
     'failed', false, 'pending', {repmat({''}, 1, 4)}, ...
-    'satisfied', false(1, 4));
+    'satisfied', false(1, 4), 'logged', false(1, 10));
 end
 
 function direct = local_scientific_stdout_poll(path_name, direct, version, ...
@@ -2786,8 +2808,11 @@ try
     end
     events = events(keep);
     if ~isempty(events)
+        presented = local_presented_mask(events, direct.shown, 'stdout', ...
+            direct.native_capable);
         direct.shown = pseudo_CT_scientific_present_once(events, direct.shown, ...
             'stdout', direct.native_capable, context, true);
+        direct = local_transport_rows(direct, events, presented, context);
         direct = local_direct_stdout_settle(direct, events);
     end
 catch %#ok<CTCH>
@@ -2809,6 +2834,82 @@ switch ME.identifier
         detail = 'Scientific stdout parser failed';
     otherwise
         detail = 'Scientific stdout processing failed';
+end
+end
+
+function presented = local_presented_mask(events, shown, origin, native_capable)
+%LOCAL_PRESENTED_MASK Rows pseudo_CT_scientific_present_once will show.
+%   Same rule as the presenter, evaluated before its call: a stdout row is shown
+%   unless native records already cover its stage; a native row is shown unless
+%   its stage|status key is already in SHOWN. The run-log rows are exactly these.
+presented = false(numel(events), 1);
+for ii = 1:numel(events)
+    if strcmp(origin, 'stdout')
+        presented(ii) = ~local_native_covers(native_capable, events(ii).stage.index);
+    else
+        key = sprintf('%d|%s', events(ii).stage.index, events(ii).status);
+        presented(ii) = ~shown.isKey(key);
+    end
+end
+end
+
+function covered = local_native_covers(native_capable, index)
+%LOCAL_NATIVE_COVERS Mirror of pseudo_CT_scientific_present_once coverage.
+covered = false;
+if ~isnumeric(index) || ~isscalar(index) || index < 1 || index > 10 || ...
+        index ~= fix(index)
+    return;
+end
+if isscalar(native_capable)
+    covered = logical(native_capable);
+elseif numel(native_capable) >= index
+    covered = logical(native_capable(index));
+end
+end
+
+function direct = local_transport_rows(direct, events, presented, context)
+%LOCAL_TRANSPORT_ROWS Append the presented remote scientific rows to the run log.
+%   Each presented row is written once through pseudo_CT_output, the same log
+%   path as every other scientific row (the presenter itself writes no file).
+%   Log-only: console_detail_* suppress the console echo, because the presenter
+%   has already shown the row. Stages 1, 9 and 10 are not transported: the
+%   orchestrator writes its own numbered rows for them through this same path.
+%   The stage number is printed on the first row of each stage for this job,
+%   matching the console rule; later rows of that stage carry no number.
+for ii = 1:numel(events)
+    if ~presented(ii)
+        continue;
+    end
+    index = events(ii).stage.index;
+    if index < 2 || index > 8
+        continue;
+    end
+    row = context;
+    row.workflow_event = true;
+    row.console_detail_only = true;
+    row.console_detail_remote = true;
+    if direct.logged(index)
+        if isfield(row, 'stage_index')
+            row = rmfield(row, 'stage_index');
+        end
+        if isfield(row, 'stage_count')
+            row = rmfield(row, 'stage_count');
+        end
+    else
+        direct.logged(index) = true;
+        row.stage_index = index;
+        row.stage_count = 10;
+    end
+    level = 'INFO';
+    if strcmp(events(ii).status, 'DONE')
+        level = 'SUCCESS';
+    elseif strcmp(events(ii).status, 'ERROR')
+        level = 'ERROR';
+    end
+    try
+        pseudo_CT_output(level, row, '%s', events(ii).message);
+    catch %#ok<CTCH>
+    end
 end
 end
 
@@ -3479,27 +3580,37 @@ end
 end
 
 function context = local_stage_output_context(runtime, job_id, stage_index)
+%LOCAL_STAGE_OUTPUT_CONTEXT Context for one aggregate progress row.
+%   A producer number becomes a public stage only through the MLSC stage map.
+%   An unmapped producer number (stage-in, alias-recenter, verify, copy-back)
+%   is an operational row: it carries no stage number and no denominator.
 context = local_output_context(runtime, job_id);
+public_stage = 0;
+public_total = 0;
 try
     if isnumeric(stage_index) && isscalar(stage_index) && ...
             isfinite(stage_index) && stage_index == floor(stage_index) && ...
-            stage_index >= 1
-        context.stage_index = stage_index;
-        context.stage_count = 8;
-        if isfield(context, 'stage_map') && ...
-                isstruct(context.stage_map) && ...
-                isfield(context.stage_map, 'producer_total') && ...
-                context.stage_map.producer_total > 0
-            [~, public_stage, public_total] = pseudo_CT_stage_map( ...
-                context.stage_map, stage_index, ...
-                context.stage_map.producer_total);
-            if public_stage > 0
-                context.stage_index = public_stage;
-                context.stage_count = public_total;
-            end
-        end
+            stage_index >= 1 && isfield(context, 'stage_map') && ...
+            isstruct(context.stage_map) && ...
+            isfield(context.stage_map, 'producer_total') && ...
+            context.stage_map.producer_total > 0
+        [~, public_stage, public_total] = pseudo_CT_stage_map( ...
+            context.stage_map, stage_index, ...
+            context.stage_map.producer_total);
     end
 catch %#ok<CTCH>
+    public_stage = 0;
+end
+if public_stage > 0
+    context.stage_index = public_stage;
+    context.stage_count = public_total;
+else
+    if isfield(context, 'stage_index')
+        context = rmfield(context, 'stage_index');
+    end
+    if isfield(context, 'stage_count')
+        context = rmfield(context, 'stage_count');
+    end
 end
 end
 

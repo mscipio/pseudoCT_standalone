@@ -23,8 +23,7 @@
       "bin/pseudoct",
       "run_pseudo_CT.m",
       "frontend/",
-      "runtimes/<LABEL>/payload/ (pseudoct_worker, run_pseudoct_worker.sh)",
-      "runtimes/<LABEL>/standalone/ (pseudoct_standalone)",
+      "runtimes/<LABEL>/ (pseudoct_worker, run_pseudoct_worker.sh, pseudoct_standalone)",
       "resources/",
       "manifest.json",
       "SHA256SUMS"

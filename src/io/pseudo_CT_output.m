@@ -46,8 +46,12 @@ if isfield(context, 'subject_index') && isfield(context, 'subject_count') && ...
     tags = [tags sprintf('[subject %d/%d] ', ...
         context.subject_index, context.subject_count)]; %#ok<AGROW>
 end
+% The stage number is printed once per run log and subject: on that stage's
+% first row (its START row, or its SKIPPED row when no START exists). Later rows
+% of the same stage carry the status and message without the number.
 if isfield(context, 'stage_index') && isfield(context, 'stage_count') && ...
-        ~isempty(context.stage_index) && ~isempty(context.stage_count)
+        ~isempty(context.stage_index) && ~isempty(context.stage_count) && ...
+        local_claim_stage_number(context)
     tags = [tags sprintf('[stage %d/%d] ', ...
         context.stage_index, context.stage_count)]; %#ok<AGROW>
 end
@@ -173,4 +177,49 @@ if stage_number > 0
     context.stage_index = stage_number;
     context.stage_count = stage_total;
 end
+end
+
+function first = local_claim_stage_number(context)
+% True on the first row of this stage for this run log and subject. Called once
+% per row, after the public stage mapping, so local and MLSC rows share one rule.
+% A context without a run log has no run identity: its rows keep their number.
+persistent numbered;
+first = true;
+key = local_run_key(context);
+if isempty(key)
+    return;
+end
+if ~isa(numbered, 'containers.Map')
+    numbered = containers.Map();
+end
+key = sprintf('%s|stage%d', key, context.stage_index);
+if isKey(numbered, key)
+    first = false;
+else
+    numbered(key) = true;
+end
+end
+
+function key = local_run_key(context)
+% Run log identity plus subject index; '' when the context names no run log.
+key = '';
+if isfield(context, 'log_files') && ~isempty(context.log_files)
+    files = context.log_files;
+    if ischar(files)
+        files = {files};
+    end
+    if iscellstr(files)
+        key = sprintf('%s;', files{:});
+    end
+elseif isfield(context, 'log_file') && ischar(context.log_file)
+    key = context.log_file;
+end
+if isempty(key)
+    return;
+end
+subject = '';
+if isfield(context, 'subject_index') && ~isempty(context.subject_index)
+    subject = local_to_char(context.subject_index);
+end
+key = [key '|subject' subject];
 end

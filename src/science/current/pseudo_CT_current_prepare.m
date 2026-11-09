@@ -188,12 +188,27 @@ if already_preprocessed
         '[recentering] Skipped because input is already normalized/moved.');
     pseudo_CT_output('INFO', stage_ctx, ...
         '[aliasing correction] Skipped because input is already normalized/moved.');
+    local_stage_event(output_context, 'workflow.recenter', 2, 'SKIPPED', ...
+        'Recentering skipped: input is already normalized or moved.');
+    local_stage_event(output_context, 'workflow.alias_correct', 3, 'SKIPPED', ...
+        'Aliasing correction skipped: input is already normalized or moved.');
 elseif aliasing_requested || recentering_requested
     % Use external correct_aliasing package for independent alias correction
     % and centering.
     [path_in, name_in, ext_in] = fileparts(selected_input);
     output_path = fullfile(path_in, [name_in, '_corrected', ext_in]);
 
+    % Entry to the one correct_aliasing call that performs the requested
+    % operations (a real pre-operation point; sub-operation progress inside
+    % the package is not observable, so ACTIVE marks this call's entry).
+    if recentering_requested
+        local_stage_event(output_context, 'workflow.recenter', 2, 'STARTED', ...
+            'Recentering MPRAGE before normalization.');
+    end
+    if aliasing_requested
+        local_stage_event(output_context, 'workflow.alias_correct', 3, 'STARTED', ...
+            'Aliasing correction started.');
+    end
     result = correct_aliasing(deblank(P(1, :)), output_path, ...
         'AliasCorrection', aliasing_requested, ...
         'Centering', recentering_requested, ...
@@ -268,11 +283,17 @@ elseif aliasing_requested || recentering_requested
     stage_ctx = local_stage_context(output_context, 1);
     if ~recentering_requested
         pseudo_CT_output('INFO', stage_ctx, '[recentering] Skipped as configured.');
+        local_stage_event(output_context, 'workflow.recenter', 2, 'SKIPPED', ...
+            'Recentering skipped as configured.');
     elseif accepted && has_output && ~isempty(recentering_performed)
         if recentering_performed
             pseudo_CT_output('SUCCESS', stage_ctx, '[recentering] Successfully applied.');
+            local_stage_event(output_context, 'workflow.recenter', 2, 'COMPLETED', ...
+                'Recentering successfully applied.');
         else
             pseudo_CT_output('INFO', stage_ctx, '[recentering] Not required.');
+            local_stage_event(output_context, 'workflow.recenter', 2, 'SKIPPED', ...
+                'Recentering not required for this input.');
         end
     else
         error_msg = result_message;
@@ -286,16 +307,24 @@ elseif aliasing_requested || recentering_requested
             error_msg = 'The facade did not report an outcome for the requested operation';
         end
         pseudo_CT_output('ERROR', stage_ctx, '[recentering] Failed: %s.', error_msg);
+        local_stage_event(output_context, 'workflow.recenter', 2, 'FAILED', ...
+            sprintf('Recentering failed: %s.', error_msg));
     end
 
     % Log aliasing outcome
     if ~aliasing_requested
         pseudo_CT_output('INFO', stage_ctx, '[aliasing correction] Skipped as configured.');
+        local_stage_event(output_context, 'workflow.alias_correct', 3, 'SKIPPED', ...
+            'Aliasing correction skipped as configured.');
     elseif accepted && has_output && ~isempty(aliasing_performed)
         if aliasing_performed
             pseudo_CT_output('SUCCESS', stage_ctx, '[aliasing correction] Successfully applied.');
+            local_stage_event(output_context, 'workflow.alias_correct', 3, 'COMPLETED', ...
+                'Aliasing correction successfully applied.');
         else
             pseudo_CT_output('INFO', stage_ctx, '[aliasing correction] Not required.');
+            local_stage_event(output_context, 'workflow.alias_correct', 3, 'SKIPPED', ...
+                'Aliasing correction not required for this input.');
         end
     else
         error_msg = result_message;
@@ -309,6 +338,8 @@ elseif aliasing_requested || recentering_requested
             error_msg = 'The facade did not report an outcome for the requested operation';
         end
         pseudo_CT_output('ERROR', stage_ctx, '[aliasing correction] Failed: %s.', error_msg);
+        local_stage_event(output_context, 'workflow.alias_correct', 3, 'FAILED', ...
+            sprintf('Aliasing correction failed: %s.', error_msg));
     end
 
     % Preserve early-return behavior
@@ -322,11 +353,15 @@ elseif aliasing_requested || recentering_requested
 elseif ~recentering_requested
     stage_ctx = local_stage_context(output_context, 1);
     pseudo_CT_output('INFO', stage_ctx, '[recentering] Skipped as configured.');
+    local_stage_event(output_context, 'workflow.recenter', 2, 'SKIPPED', ...
+        'Recentering skipped as configured.');
     if aliasing_requested
         pseudo_CT_output('INFO', stage_ctx, '[aliasing correction] Skipped because pre-normalization preprocessing is disabled.');
     else
         pseudo_CT_output('INFO', stage_ctx, '[aliasing correction] Skipped as configured.');
     end
+    local_stage_event(output_context, 'workflow.alias_correct', 3, 'SKIPPED', ...
+        'Aliasing correction skipped as configured.');
 end
 
 P_out = P;
@@ -444,6 +479,20 @@ end
 if isempty(code_version)
     error('pseudo_CT:VersionUnavailable', ...
         'The pseudoCT version could not be read from CHANGELOG.md line 1.');
+end
+end
+
+function local_stage_event(output_context, stage_id, stage_index, status, message)
+% Advisory native record for one observed recenter/alias outcome. No-op without
+% an event target. Never changes the preparation result or its outputs.
+if isstruct(output_context) && isfield(output_context, 'event_target') && ...
+        isstruct(output_context.event_target) && ...
+        isfield(output_context.event_target, 'path') && ...
+        ~isempty(output_context.event_target.path)
+    rec = struct('event_type', 'stage', 'stage_id', stage_id, ...
+        'stage_index', stage_index, 'status', status, 'message', message, ...
+        'source', 'payload');
+    pseudo_CT_scientific_event(output_context.event_target, rec);
 end
 end
 
