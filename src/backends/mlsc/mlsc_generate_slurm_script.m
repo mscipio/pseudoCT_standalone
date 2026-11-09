@@ -22,14 +22,14 @@ function artifact = mlsc_generate_slurm_script(subject, config, runtime)
 %
 %   Current artifact, source and manifest mode (CONFIG.current.build_manifest
 %   and resource_manifest set): the script stages the shared input, the job
-%   manifest and the resource manifest to node-local $TMPDIR. It runs prepare
-%   (bundled alias/recenter) before the unchanged external FreeSurfer tcsh step,
-%   then compute, then verified copy-back. The launcher is called as
-%   <runner> <pinned MCR_ROOT> <phase> <job_manifest> <resource_manifest>.
+%   manifest and the resource manifest to node-local $TMPDIR. It invokes the
+%   complete prepare/normalize/compute pipeline once, then performs verified
+%   copy-back. The launcher is called as
+%   <runner> <pinned MCR_ROOT> <job_manifest> <resource_manifest>.
 %   Installed direct mode (both manifest paths empty, set by
 %   pseudo_CT_runtime_select): no build or resource manifest is read, hashed or
 %   staged. The job atlas_dir is CONFIG.atlas_root, checked before generation.
-%   The launcher is called as <runner> <pinned MCR_ROOT> <phase> <job_manifest>.
+%   The launcher is called as <runner> <pinned MCR_ROOT> <job_manifest>.
 %
 %   Scheduler values come from CONFIG.mlsc (profiles/mlsc.m: partition basic,
 %   1 node, 1 task, 4 CPUs, 8G memory, 2 hours). OMP_NUM_THREADS and
@@ -346,19 +346,15 @@ end
 end
 
 function artifact = local_generate_current(subject, config, runtime, preflight)
-%LOCAL_GENERATE_CURRENT Slurm script for the current worker job.
+%LOCAL_GENERATE_CURRENT Slurm script for one current pipeline invocation.
 %   Reuses the generic prologue (TMPDIR,
 %   shared checks, progress file, MCR_CACHE_ROOT, OMP/MKL derived from
-%   allocation without enforcement) and the unchanged external FreeSurfer
-%   tcsh contract. Stages shared input plus job/resource manifests to
-%   $TMPDIR (direct mode: job manifest only), runs prepare BEFORE
-%   normalization then compute via the pinned launcher <runner> <MCR_ROOT>
-%   <phase> <job> [<resources>] (direct mode omits <resources>), verifies the
+%   allocation without enforcement). Stages shared input plus job/resource
+%   manifests to $TMPDIR (direct mode: job manifest only), runs the complete
+%   pipeline once via <runner> <MCR_ROOT> <job> [<resources>] (direct mode
+%   omits <resources>), verifies the
 %   three required outputs plus mandatory evidence (exit nonzero on missing
-%   even if launcher exit 0), and copies back before exit. Normalization
-%   uses the PREPARE-validated handoff derivation (selected input,
-%   normalization need, _normalized basename) resolved at runtime from
-%   controlled basenames without sourcing/evaluating the .mat handoff.
+%   even if launcher exit 0), and copies back before exit.
 %   No SCP, no global LD_LIBRARY_PATH, no catalog/resolver.
 current = config.current;
 mlsc = config.mlsc;
@@ -368,14 +364,6 @@ shared_temp = local_strip_trailing_separators(shared_temp);
 check_aliasing = preflight.check_aliasing;
 input_name = preflight.input_name;
 normalized_name = preflight.normalized_name;
-needs_normalization = preflight.needs_normalization;
-% PREPARE-validated derivation (mirrors pseudo_CT_current_prepare and
-% pseudoct_worker handoff checks): the corrected variant and its
-% _normalized expectation. The runtime shell selects between raw and
-% corrected via existence + controlled-basename validation, never by
-% sourcing/evaluating the .mat handoff.
-corrected_name = local_corrected_variant_name(input_name);
-corrected_normalized_name = local_derived_normalized_name(corrected_name);
 pinned = mlsc_current_validate('pinned_mcr_root');
 runner_path = strtrim(current.runner);
 mcr_root = strtrim(current.mcr_root);
@@ -427,7 +415,8 @@ end
 shared_job_manifest = fullfile(shared_temp, job_manifest_name);
 local_write_current_job_manifest(shared_job_manifest, input_name, ...
     atlas_dir, check_aliasing, recenter_text, bone_value, zero_text, ...
-    local_native_event_target(runtime));
+    local_native_event_target(runtime), config.normalization.source_command, ...
+    config.normalization.child_lib_path);
 % Relocated installs only: the cluster copies the resource manifest into
 % node-local storage, where a relative atlas_dir would not resolve, so the
 % submitted copy carries the resolved absolute directory and is the file
@@ -483,9 +472,6 @@ q_shared_input = local_shell_quote(shared_input);
 q_shared_temp = local_shell_quote(shared_temp);
 q_input_name = local_shell_quote(input_name);
 q_normalized_name = local_shell_quote(normalized_name);
-q_corrected_name = local_shell_quote(corrected_name);
-q_corrected_normalized = local_shell_quote(corrected_normalized_name);
-q_freesurfer_env = local_shell_quote(mlsc.freesurfer_env);
 q_runner = local_shell_quote(runner_path);
 q_mcr_root = local_shell_quote(mcr_root);
 q_shared_job = local_shell_quote(shared_job_manifest);
@@ -497,12 +483,12 @@ q_stdout_log_path = local_shell_quote(stdout_log_path);
 q_stderr_log_path = local_shell_quote(stderr_log_path);
 % One assembly path: shared directives/vars/progress/
 % TMPDIR/env/staging/sbatch via generic helpers; narrow current
-% worker/manifest/output-contract branches below.
-% Direct mode passes the two-argument worker form (no resource manifest).
+% pipeline/manifest/output-contract branches below.
+% Direct mode invokes the runner with only the job manifest (no resource manifest).
 if direct_mode
-    worker_resource_arg = '';
+    pipeline_resource_arg = '';
 else
-    worker_resource_arg = ' "$local_resource_manifest"';
+    pipeline_resource_arg = ' "$local_resource_manifest"';
 end
 lines = {};
 lines = local_append_generic(lines, local_generic_directives(mlsc, ...
@@ -769,7 +755,7 @@ lines{end + 1} = '    printf ''Current job manifest is unavailable.\n'' >&2';
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
 % Shared env/staging via the single generic path; narrow current manifest
-% staging follows as the worker/manifest branch before cd/stage-in.
+% staging follows as the pipeline/manifest branch before cd/stage-in.
 lines = local_append_generic(lines, local_generic_env_pre());
 lines{end + 1} = ['local_job_manifest="$TMPDIR/' job_manifest_name '"'];
 if ~direct_mode
@@ -809,95 +795,13 @@ if ~direct_mode
     lines{end + 1} = '    exit 72';
     lines{end + 1} = 'fi';
 end
-% Preserve prepare -> alias/recenter -> external FreeSurfer normalization
-% -> compute. Preparation runs bundled code BEFORE the unchanged MLSC
-% shell contract (env -u LD_LIBRARY_PATH ... tcsh -f -c with source
-% /usr/local/freesurfer/nmr-stable53-env); normalization is never moved
-% into the worker and the launcher never runs inside tcsh. The generated
-% launcher owns the Runtime environment; no global LD_LIBRARY_PATH is set.
-% Normalization consumes the PREPARE-validated handoff derivation
-% (selected input, normalization need, _normalized basename from
-% pseudo_CT_current_prepare/pseudoct_worker handoff checks) resolved
-% here from controlled basenames without sourcing or evaluating the .mat
-% handoff: when PREPARE produced <base>_corrected.nii, the corrected file
-% normalizes to <base>_corrected_normalized.nii consumed by COMPUTE.
+% One compiled pipeline invocation owns prepare, FreeSurfer normalization
+% and compute. The pipeline launcher owns the Runtime environment; its
+% normalization child clears LD_LIBRARY_PATH before sourcing FreeSurfer.
 lines{end + 1} = 'mlsc_record_progress ''pseudoCT|start''';
-lines{end + 1} = ['"$current_runner" "$current_mcr_root" prepare "$local_job_manifest"' worker_resource_arg];
+lines{end + 1} = ['"$current_runner" "$current_mcr_root" "$local_job_manifest"' pipeline_resource_arg];
 lines{end + 1} = 'mlsc_record_progress ''preparation|done''';
 lines{end + 1} = 'mlsc_record_progress ''alias_recenter|done''';
-lines{end + 1} = ['prepare_corrected=' q_corrected_name];
-lines{end + 1} = ['prepare_corrected_normalized=' q_corrected_normalized];
-lines{end + 1} = 'prepare_selected="$input_name"';
-lines{end + 1} = 'prepare_expected="$normalized_name"';
-lines{end + 1} = 'if [ -f "$TMPDIR/$prepare_corrected" ]; then';
-lines{end + 1} = '    prepare_selected="$prepare_corrected"';
-lines{end + 1} = '    prepare_expected="$prepare_corrected_normalized"';
-lines{end + 1} = 'fi';
-lines{end + 1} = 'case "$prepare_selected" in';
-lines{end + 1} = '    *..*|*/*)';
-lines{end + 1} = '        printf ''PREPARE-selected input is not a controlled basename.\n'' >&2';
-lines{end + 1} = '        exit 72';
-lines{end + 1} = '        ;;';
-lines{end + 1} = '    *.nii)';
-lines{end + 1} = '        ;;';
-lines{end + 1} = '    *)';
-lines{end + 1} = '        printf ''PREPARE-selected input is not a controlled basename.\n'' >&2';
-lines{end + 1} = '        exit 72';
-lines{end + 1} = '        ;;';
-lines{end + 1} = 'esac';
-lines{end + 1} = 'case "$prepare_expected" in';
-lines{end + 1} = '    *..*|*/*)';
-lines{end + 1} = '        printf ''PREPARE-expected output is not a controlled basename.\n'' >&2';
-lines{end + 1} = '        exit 72';
-lines{end + 1} = '        ;;';
-lines{end + 1} = '    *_normalized.nii)';
-lines{end + 1} = '        ;;';
-lines{end + 1} = '    *)';
-lines{end + 1} = '        printf ''PREPARE-expected output is not a controlled basename.\n'' >&2';
-lines{end + 1} = '        exit 72';
-lines{end + 1} = '        ;;';
-lines{end + 1} = 'esac';
-if needs_normalization
-    tcsh_program = 'source "$MLSC_FREESURFER_ENV"; mri_normalize "$TMPDIR/$MLSC_INPUT_NAME" "$TMPDIR/$MLSC_NORMALIZED_NAME"';
-    % Advisory native stage-4 records written by this script (see
-    % local_native_stage_shell). Empty identity means no native writes.
-    native_fields = local_native_stage_fields(local_native_event_target(runtime));
-    lines{end + 1} = ['native_event_file=' local_shell_quote(native_fields.path)];
-    lines{end + 1} = ['native_run_id=' local_shell_quote(native_fields.run_id)];
-    lines{end + 1} = ['native_subject=' local_shell_quote(native_fields.subject)];
-    lines{end + 1} = ['native_profile=' local_shell_quote(native_fields.profile)];
-    lines = [lines local_native_stage_shell()];
-    lines{end + 1} = 'case "$prepare_selected" in';
-    lines{end + 1} = '    *_normalized.nii)';
-    lines{end + 1} = '        normalize_needed=0';
-    lines{end + 1} = '        ;;';
-    lines{end + 1} = '    *)';
-    lines{end + 1} = '        normalize_needed=1';
-    lines{end + 1} = '        ;;';
-    lines{end + 1} = 'esac';
-    lines{end + 1} = 'if [ "$normalize_needed" -eq 1 ]; then';
-    lines{end + 1} = '    mlsc_record_progress ''normalize|start''';
-    lines{end + 1} = '    mlsc_stage_event workflow.normalize 4 STARTED ''FreeSurfer MPRAGE normalization started.''';
-    lines{end + 1} = '    normalize_rc=0';
-    lines{end + 1} = ['    env -u LD_LIBRARY_PATH MLSC_FREESURFER_ENV=' q_freesurfer_env ' "MLSC_INPUT_NAME=$prepare_selected" "MLSC_NORMALIZED_NAME=$prepare_expected" tcsh -f -c ''' tcsh_program ''' || normalize_rc=$?'];
-    lines{end + 1} = '    if [ "$normalize_rc" -ne 0 ]; then';
-    lines{end + 1} = '        mlsc_stage_event workflow.normalize 4 FAILED ''FreeSurfer MPRAGE normalization exited with an error.''';
-    lines{end + 1} = '        exit "$normalize_rc"';
-    lines{end + 1} = '    fi';
-    lines{end + 1} = '    mlsc_record_progress ''normalize|done''';
-    lines{end + 1} = 'else';
-    lines{end + 1} = '    mlsc_stage_event workflow.normalize 4 SKIPPED ''Normalization input already normalized; skipped.''';
-    lines{end + 1} = 'fi';
-    lines{end + 1} = 'if [ "$normalize_needed" -eq 1 ] && [ ! -s "$TMPDIR/$prepare_expected" ]; then';
-    lines{end + 1} = '    mlsc_stage_event workflow.normalize 4 FAILED ''FreeSurfer MPRAGE normalization produced no non-empty output.''';
-    lines{end + 1} = '    printf ''Node-local normalized output is missing or empty.\n'' >&2';
-    lines{end + 1} = '    exit 73';
-    lines{end + 1} = 'fi';
-    lines{end + 1} = 'if [ "$normalize_needed" -eq 1 ]; then';
-    lines{end + 1} = '    mlsc_stage_event workflow.normalize 4 COMPLETED ''FreeSurfer MPRAGE normalization completed.''';
-    lines{end + 1} = 'fi';
-end
-lines{end + 1} = ['"$current_runner" "$current_mcr_root" compute "$local_job_manifest"' worker_resource_arg];
 lines{end + 1} = 'mlsc_record_progress ''alignment_mask|done''';
 lines{end + 1} = 'mlsc_record_progress ''segmentation|done''';
 lines{end + 1} = 'mlsc_record_progress ''bone|done''';
@@ -1102,13 +1006,14 @@ end
 function local_write_current_resource_manifest(resource_path, resources, atlas_dir)
 %LOCAL_WRITE_CURRENT_RESOURCE_MANIFEST Submitted resource manifest copy.
 %   Identical to the package manifest except atlas_dir, which is replaced by the
-%   resolved absolute directory the worker compares with the job manifest.
+%   resolved absolute directory the pipeline compares with the job manifest.
 resources.atlas_dir = atlas_dir;
 save(resource_path, 'resources', '-v6');
 end
 
 function local_write_current_job_manifest(job_path, input_name, atlas_dir, ...
-    check_aliasing, recenter_text, bone_value, zero_text, event_target)
+    check_aliasing, recenter_text, bone_value, zero_text, event_target, ...
+    normalization_source_command, normalization_child_lib_path)
 job = struct();
 % This schema ID is the shared compiled artifact contract, not a profile key.
 job.schema = 'pseudo-CT.mlsc-current-job/v1';
@@ -1120,7 +1025,9 @@ job.check_aliasing = double(check_aliasing);
 job.recenter_before_normalization = recenter_text;
 job.bone_enabled = logical(bone_value);
 job.zero_background = zero_text;
-% Native event file for the remote worker (single writer: the worker runs
+job.normalization_source_command = normalization_source_command;
+job.normalization_child_lib_path = normalization_child_lib_path;
+% Native event file for the remote pipeline (single writer: the pipeline runs
 % while the orchestrator only reads). Empty path means no events.
 job.event_path = event_target.path;
 job.event_subject_id = event_target.subject_id;
@@ -1138,100 +1045,6 @@ try
     end
 catch %#ok<CTCH>
     target = struct('path', '', 'run_id', '', 'subject_id', '', 'profile', '');
-end
-end
-
-function fields = local_native_stage_fields(target)
-%LOCAL_NATIVE_STAGE_FIELDS Run-file identity for the script's stage-4 writer.
-%   Returns empty fields unless the target is a valid run file whose run id,
-%   subject and profile are plain tokens (no shell or JSON escaping needed).
-fields = struct('path', '', 'run_id', '', 'subject', '', 'profile', '');
-if ~isstruct(target) || ~isfield(target, 'path') || isempty(target.path)
-    return;
-end
-if isempty(regexp(target.run_id, '^[0-9]{8}T[0-9]{6}Z-[0-9a-f-]+$', 'once')) || ...
-        isempty(regexp(target.subject_id, '^subject-[0-9]+$', 'once')) || ...
-        isempty(regexp(target.profile, '^[A-Za-z0-9_.-]+$', 'once'))
-    return;
-end
-fields.path = target.path;
-fields.run_id = target.run_id;
-fields.subject = target.subject_id;
-fields.profile = target.profile;
-end
-
-function lines = local_native_stage_shell()
-%LOCAL_NATIVE_STAGE_SHELL Advisory bash writer for stage-4 records (no-op unless
-%   native_event_file is set). Appends one JSON line in the worker's schema
-%   (pseudoct.scientific_event v1, source mlsc-lifecycle). It never changes the
-%   job's exit status: a failed append is ignored.
-lines = {};
-lines{end + 1} = 'mlsc_stage_event() {';
-lines{end + 1} = '    [ -n "$native_event_file" ] || return 0';
-lines{end + 1} = '    local ev_seq=1';
-lines{end + 1} = '    if [ -f "$native_event_file" ]; then';
-lines{end + 1} = '        ev_seq=$(( $(wc -l < "$native_event_file") + 1 ))';
-lines{end + 1} = '    fi';
-lines{end + 1} = ['    printf ''%s\n'' "{\"schema\":\"pseudoct.scientific_event\",\"schema_version\":1,' ...
-    '\"run_id\":\"$native_run_id\",\"subject\":\"$native_subject\",\"profile\":\"$native_profile\",' ...
-    '\"seq\":$ev_seq,\"timestamp_utc\":\"$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)\",' ...
-    '\"event_type\":\"stage\",\"stage_id\":\"$1\",\"stage_index\":$2,\"stage_count\":10,' ...
-    '\"status\":\"$3\",\"outcome\":null,\"message\":\"$4\",\"source\":\"mlsc-lifecycle\",' ...
-    '\"job_id\":null,\"error_identifier\":null,\"error_message\":null}" >> "$native_event_file" || true'];
-lines{end + 1} = '}';
-end
-
-function name = local_corrected_variant_name(input_name)
-%LOCAL_CORRECTED_VARIANT_NAME PREPARE-corrected basename derivation.
-%   Mirrors pseudo_CT_current_prepare output_path and
-%   pseudoct_worker local_corrected_variant: <base>_corrected<ext>.
-%   R2010b only.
-name = input_name;
-try
-    if ~ischar(input_name) || size(input_name, 1) ~= 1 || ...
-            isempty(strtrim(input_name))
-        return;
-    end
-    trimmed = strtrim(input_name);
-    [path_in, base_in, ext_in] = fileparts(trimmed);
-    if isempty(base_in)
-        return;
-    end
-    if isempty(ext_in)
-        ext_in = '.nii';
-    end
-    name = fullfile(path_in, [base_in '_corrected' ext_in]);
-    % fileparts/fullfile may return row; force single-row char.
-    if ~ischar(name) || size(name, 1) ~= 1
-        name = input_name;
-    end
-catch %#ok<CTCH>
-    name = input_name;
-end
-end
-
-function expected = local_derived_normalized_name(selected)
-%LOCAL_DERIVED_NORMALIZED_NAME _normalized expectation derivation.
-%   Mirrors pseudo_CT_current_prepare local_expected_normalized and
-%   pseudoct_worker local_derived_normalized: <base>_normalized<ext>.
-%   R2010b only.
-expected = '';
-try
-    if ~ischar(selected) || size(selected, 1) ~= 1 || ...
-            isempty(strtrim(selected))
-        return;
-    end
-    trimmed = strtrim(selected);
-    [pathn, namen, extn] = fileparts(trimmed);
-    if length(extn) >= 2 && strcmp(extn(end-1:end), ',1')
-        extn = extn(1:end-2);
-    end
-    if isempty(extn)
-        extn = '.nii';
-    end
-    expected = fullfile(pathn, [namen '_normalized' extn]);
-catch %#ok<CTCH>
-    expected = '';
 end
 end
 

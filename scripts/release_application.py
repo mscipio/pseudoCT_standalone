@@ -13,9 +13,9 @@ assembles one distribution directory from the verified build output only:
                                                      docs/help/assets/ is never shipped)
       external/ssh2_v2_m1_r5/<SSH2_FILES>           (Ganymed JAR and licence notices;
                                                      no loose SSH2 .m wrappers)
-      runtimes/<LABEL>/pseudoct_worker              (compiled science worker)
-      runtimes/<LABEL>/run_pseudoct_worker.sh       (runner, copied)
-      runtimes/<LABEL>/pseudoct_standalone          (compiled headless engine)
+      runtimes/<LABEL>/pseudoct_pipeline              (compiled science pipeline)
+      runtimes/<LABEL>/run_pseudoct_pipeline.sh       (runner, copied)
+      runtimes/<LABEL>/pseudoct_job_manager          (compiled job manager)
       resources/                                    (atlas and template files)
       manifest.json                                 (catalog copy read by bin/pseudoct)
       SHA256SUMS                                    (inventory, includes the manifest)
@@ -69,14 +69,14 @@ MAX_STAGE_PATH = 240
 # staging path that build_application.m writes under its output (payload/ and standalone/
 # folders, never installed as such); the second is the flat installed name under
 # runtimes/<LABEL>/. The mapping is applied only in assemble().
-BUILDER_TARGETS = (('payload/pseudoct_worker', 'pseudoct_worker'),
-                   ('standalone/pseudoct_standalone', 'pseudoct_standalone'))
+BUILDER_TARGETS = (('payload/pseudoct_pipeline', 'pseudoct_pipeline'),
+                   ('standalone/pseudoct_job_manager', 'pseudoct_job_manager'))
 BUILDER_FIELDS = ('release', 'matlab_release', 'arch', 'compiler', 'source_commit',
                   'source_dirty', 'source_set_sha256', 'lock_sha256')
 BUILDER_SCRIPT = os.path.join(REPO_ROOT, 'scripts', 'build_application.m')
 # Installed name of the runner; it is copied from RUNNER_SOURCE, which has no staging folder.
-RUNNER_NAME = 'run_pseudoct_worker.sh'
-RUNNER_SOURCE = os.path.join(REPO_ROOT, 'scripts', 'run_pseudoct_worker.sh')
+RUNNER_NAME = 'run_pseudoct_pipeline.sh'
+RUNNER_SOURCE = os.path.join(REPO_ROOT, 'scripts', 'run_pseudoct_pipeline.sh')
 # Flat installed files of one runtime directory runtimes/<LABEL>/.
 RUNTIME_FILES = tuple(installed for _staged, installed in BUILDER_TARGETS) + (RUNNER_NAME,)
 
@@ -123,7 +123,7 @@ HELP_FILES = ('index.html', 'style.css')
 # are shipped at the same relative path under external/ssh2_v2_m1_r5/ in the package. Shipped:
 # only the Ganymed JAR and the two licence notices (license.txt and the Ganymed LICENSE.txt).
 # The top-level MATLAB wrappers (ssh2.m, ssh2_setup.m, ...) are NOT shipped as loose files: they
-# are compiled into the standalone and worker executables (build_application.m -I/-a inputs), so
+# are compiled into the job manager and pipeline executables (build_application.m -I/-a inputs), so
 # the installed engine reaches them through the CTF, not through this package. The JAR keeps its
 # package path under ssh2_v2_m1_r5/ganymed-ssh2-m1/, the location ssh2_setup derives it from; that
 # this location resolves from the compiled CTF is unverified until the compiled-engine check.
@@ -419,7 +419,7 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
             label = entry['label']
             root = roots[label]
             out_root = os.path.join(build_root, label)
-            stage_exe = os.path.join(out_root + '.partial', 'standalone', 'pseudoct_standalone')
+            stage_exe = os.path.join(out_root + '.partial', 'standalone', 'pseudoct_job_manager')
             if len(stage_exe) > MAX_STAGE_PATH:
                 raise ReleaseError('%s: staged executable path is %d characters (limit %d); '
                                    'choose a shorter --output' % (label, len(stage_exe),

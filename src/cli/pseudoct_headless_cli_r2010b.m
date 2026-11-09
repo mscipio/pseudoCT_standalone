@@ -1,4 +1,4 @@
-%PSEUDOCT_HEADLESS_CLI_R2010B Script bootstrap for the standalone headless CLI on MATLAB R2010b.
+%PSEUDOCT_HEADLESS_CLI_R2010B Script bootstrap for the job-manager headless CLI on MATLAB R2010b.
 %   Run by bin/pseudoct through MATLAB -nodisplay with a fixed bootstrap on stdin
 %   (no paths or request values are interpolated). The bootstrap adds
 %   src/cli to the path; this script then computes the package root (two

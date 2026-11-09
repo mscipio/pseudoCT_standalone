@@ -1,7 +1,7 @@
 function status = pseudoct_cli_bridge(mode)
 %PSEUDOCT_CLI_BRIDGE Support operations for the CLI: requests, result checks and credentials.
-%   STATUS = PSEUDOCT_CLI_BRIDGE(MODE) is called by the standalone dispatcher
-%   (pseudoct_standalone) and by bin/pseudoct. MODE is one of:
+%   STATUS = PSEUDOCT_CLI_BRIDGE(MODE) is called by the job-manager dispatcher
+%   (pseudoct_job_manager) and by bin/pseudoct. MODE is one of:
 %     'prepare_validate'  reads the CLI input (PSEUDOCT_CLI_INPUT) and writes a
 %                         validate request MAT (PSEUDOCT_CLI_REQUEST).
 %     'prepare_submit'    reads the input and the validation result

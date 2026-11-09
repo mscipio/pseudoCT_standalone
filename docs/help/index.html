@@ -77,7 +77,7 @@
 
           <h3>Requirements and distribution</h3>
           <p>A source checkout needs R2010b-compatible MATLAB (MATLAB 7.11 minimum). An installed release runs on its own MATLAB Runtime (MCR). The default release, R2010b, runs on MATLAB Runtime 7.14. The other exact labels (R2014a to R2026a) are listed in the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md#supported-exact-release-labels">release catalog</a>.</p>
-          <p>An installed distribution contains one command-line launcher (<code>bin/pseudoct</code>), one MATLAB entry point (<code>run_pseudo_CT</code>), and, for each release, two compiled executables: the headless engine <code>pseudoct_standalone</code> and the science worker <code>pseudoct_worker</code>. It does not ship build or resource manifests. See the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md#distribution-layout">distribution layout</a>.</p>
+          <p>An installed distribution contains one command-line launcher (<code>bin/pseudoct</code>), one MATLAB entry point (<code>run_pseudo_CT</code>), and, for each release, two compiled executables: the job manager <code>pseudoct_job_manager</code> and the science pipeline <code>pseudoct_pipeline</code>. It does not ship build or resource manifests. See the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md#distribution-layout">distribution layout</a>.</p>
         </section>
 
         <section id="quick-start">
@@ -112,7 +112,7 @@ run_pseudo_CT</code></pre>
               </tbody>
             </table>
           </div>
-          <p>The local and MLSC profiles run the same shared compiled worker. The profile chooses the execution location and the input/output policy, not a different algorithm. Missing or invalid MLSC artifact requirements fail closed.</p>
+          <p>The local and MLSC profiles run the same shared compiled pipeline. The profile chooses the execution location and the input/output policy, not a different algorithm. Missing or invalid MLSC artifact requirements fail closed.</p>
           <p>Profile defaults come from the profile files: nose/back aliasing correction on, recentering before normalization on, and cleanup of intermediate files after success on. The command line can override each of them (see <a href="#cli">Command line</a>).</p>
         </section>
 

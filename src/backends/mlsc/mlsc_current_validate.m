@@ -28,7 +28,7 @@ function varargout = mlsc_current_validate(action, varargin)
 %       manifests and output contract. Source mode requires both manifest paths
 %       and validates the build and resource manifests (schema, version and
 %       identity). Installed direct mode has both manifest paths empty; it
-%       checks the runner, the pseudoct_worker beside it and the selected
+%       checks the runner, the pseudoct_pipeline beside it and the selected
 %       runtime identity, and reads no manifest.
 %     MLSC_CURRENT_VALIDATE('validate_for_execution', CONFIG)
 %       The contract check plus execution-time checks: output verification,
@@ -420,7 +420,7 @@ local_validate_structure(current.mcr_root);
 if direct
     local_actual_runtime_identity(strtrim(current.mcr_root));
     payload_path = fullfile(fileparts(strtrim(current.runner)), ...
-        'pseudoct_worker');
+        'pseudoct_pipeline');
     if exist(payload_path, 'file') ~= 2
         error('pseudo_CT:MLSCCurrentRunner', ...
             'The current payload executable is unavailable.');

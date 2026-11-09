@@ -58,7 +58,7 @@ selected profile and input:
 - For MLSC profiles: access to the configured shared filesystem, the supported
   cluster services and a valid MLSC account.
 - MATLAB/Java and the compatible compiled runtime used by the installed shared
-  compiled worker.
+  compiled pipeline.
 
 A development checkout may contain dependency copies. Their presence and recorded
 hashes do not establish provenance, compatibility or redistribution rights; see
@@ -78,7 +78,7 @@ the API.
 | `mlsc-mprage-only` | MLSC (Slurm) | MPRAGE only | NIfTI only |
 
 The MPRAGE-only profiles do not require a UMAP and do not create DICOM output.
-`local` and `mlsc` run the same shared compiled worker; the profile chooses the
+`local` and `mlsc` run the same shared compiled pipeline; the profile chooses the
 execution location and the input/output policy, not a different algorithm. Missing
 or invalid MLSC artifact requirements fail closed.
 
@@ -139,10 +139,10 @@ verify_application_package('<output-root>/<release>')
 
 `<output-root>` must be outside `src/`, `external/` and `compiled/`. A build refuses a
 dirty git tree by design; commit or clean the tree before building. The build compiles
-exactly two targets: the headless engine `pseudoct_standalone` and the science worker
-`pseudoct_worker`. Each is written to a build-private folder (`standalone/` and `payload/`
+exactly two targets: the job manager `pseudoct_job_manager` and the science pipeline
+`pseudoct_pipeline`. Each is written to a build-private folder (`standalone/` and `payload/`
 under the build output). The installed layout is flat under `runtimes/<LABEL>/`
-([Distribution layout](releases.md#distribution-layout)). Only the standalone target compiles
+([Distribution layout](releases.md#distribution-layout)). Only the job-manager target compiles
 the SSH2 closure and the dicom2nifti `VERSION` file.
 
 Distribution assembly is `scripts/release_application.py` (see
@@ -150,7 +150,7 @@ Distribution assembly is `scripts/release_application.py` (see
 release and writes `pseudoct-<version>/`. The package contains no `src/` or GUI
 executable. Its only `external/` content is the Ganymed JAR and the two SSH2 licence notices
 under `external/ssh2_v2_m1_r5/`; no loose SSH2 `.m` files are installed. Loading the JAR and
-wrappers from the compiled engine is not yet verified until an approved RC6 build.
+wrappers from the compiled job manager is not yet verified until an approved RC6 build.
 `--verify <dir>` checks the package. Python bytecode (`*.pyc`, `*.pyo`) in
 `frontend/` is excluded from the frontend inventory, so a checkout that has it still
 passes.

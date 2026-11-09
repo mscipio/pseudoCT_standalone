@@ -1,5 +1,5 @@
 function status = pseudoct_headless_cli()
-%PSEUDOCT_HEADLESS_CLI Run one request from the standalone shell launcher.
+%PSEUDOCT_HEADLESS_CLI Run one request from the job-manager shell launcher.
 %   Uses only the request/result paths supplied by the fixed R2010b bootstrap.
 
 status = 70;

@@ -23,7 +23,7 @@
       "bin/pseudoct",
       "run_pseudo_CT.m",
       "frontend/",
-      "runtimes/<LABEL>/ (pseudoct_worker, run_pseudoct_worker.sh, pseudoct_standalone)",
+      "runtimes/<LABEL>/ (pseudoct_pipeline, run_pseudoct_pipeline.sh, pseudoct_job_manager)",
       "resources/",
       "manifest.json",
       "SHA256SUMS"
@@ -266,7 +266,7 @@
       },
       "compatibility": "The current resource manifest requires named atlas/template resources but fingerprints only their existence, not content.",
       "sourceReferences": [
-        "src/science/current/pseudoct_worker.m: reads atlas_dir from manifests and checks required atlas/template files before prepare or compute",
+        "src/science/current/pseudoct_pipeline.m: reads atlas_dir from manifests and checks required atlas/template files before prepare or compute",
         "scripts/build_mlsc_current.m (absent from the current tree; historical compile-input reference): defaults AtlasDir to external/Batch_atlas"
       ],
       "localUse": "Exact installed tree copied to external/Batch_atlas/ for local use only; provenance and redistribution rights remain unresolved."

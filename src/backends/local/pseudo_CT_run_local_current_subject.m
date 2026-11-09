@@ -1,33 +1,31 @@
 function Pf = pseudo_CT_run_local_current_subject(input_path, work_dir, ...
         config, check_aliasing, recenter_before_normalization, output_context)
-%PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT Run the local current phases for one subject.
+%PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT Run the local current pipeline for one subject.
 %   PF = PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT(INPUT_PATH, WORK_DIR, CONFIG,
 %   CHECK_ALIASING, RECENTER_BEFORE_NORMALIZATION, OUTPUT_CONTEXT)
-%   Coordinates the local profile's current pipeline for one MPRAGE NIfTI
-%   (INPUT_PATH) in WORK_DIR (the subject temporary folder): the prepare phase of
-%   the compiled worker, the external FreeSurfer normalization, then the compute
-%   phase. Both phases run through config.current.runner (run_pseudoct_worker.sh)
-%   with the same manifest contract as MLSC. The science runs in the worker;
-%   this function only coordinates the phases.
+%   Coordinates one compiled invocation of the local current pipeline for one
+%   MPRAGE NIfTI (INPUT_PATH) in WORK_DIR (the subject temporary folder). The
+%   pipeline owns preparation, FreeSurfer normalization and compute; this function
+%   only validates, launches and verifies the resulting outputs.
 %   CONFIG is the local profile struct (mode 'local', normalization host
 %   127.0.0.1 or localhost). CHECK_ALIASING is scalar 0 or 1.
 %   RECENTER_BEFORE_NORMALIZATION is 'Yes' or 'No' (or a 0/1 flag).
 %   OUTPUT_CONTEXT is the logging struct for pseudo_CT_output.
-%   PF is the char matrix of outputs returned by the compute phase, or '' when
+%   PF is the char matrix of outputs returned by compute, or '' when
 %   atlas outputs are missing.
 %   Side effects: validates the artifact with mlsc_current_validate, writes
 %   job.mat and the runner status files in a private runtime folder under WORK_DIR,
-%   and runs the compiled runner and FreeSurfer through the shell. Removes its
+%   and runs the compiled pipeline through the shell. Removes its
 %   private runtime folder on exit.
 %   Test seam: a two-argument call ('__current_stream_test__', STRUCT) exercises
 %   the child stream monitor without a compiled runner. Production calls always
 %   pass six arguments.
 %   Errors: pseudo_CT:LocalCurrentRequest for invalid arguments and
-%   pseudo_CT:LocalCurrentRunner when a runner phase fails.
+%   pseudo_CT:LocalCurrentRunner when the pipeline runner fails.
 %   Minimum supported MATLAB: R2010b (MATLAB 7.11).
 
 % Narrow test seam for exercising the production child stream monitor without
-% invoking the compiled worker. Production calls always pass six arguments.
+% invoking the compiled pipeline. Production calls always pass six arguments.
 if nargin == 2 && ischar(input_path) && ...
         strcmp(input_path, '__current_stream_test__') && isstruct(work_dir)
     Pf = local_current_stream_test_dispatch(work_dir);
@@ -96,10 +94,10 @@ job.atlas_dir = config.atlas_root;
 job.check_aliasing = double(check_aliasing);
 job.recenter_before_normalization = recenter_before_normalization;
 job.bone_enabled = logical(config.bone_enabled);
+job.normalization_source_command = config.normalization.source_command;
+job.normalization_child_lib_path = config.normalization.child_lib_path;
 % Native scientific event file for this subject (advisory: the emitter never
-% throws). The compiled worker appends prepare, compute and science-boundary
-% records; this orchestrator appends only normalization. The two never write
-% concurrently because each phase runs to completion before the next starts.
+% throws). The compiled pipeline owns stage events 2-8.
 job.zero_background = config.zero_background;
 event_target = pseudo_CT_scientific_event_target(output_context);
 job.event_path = event_target.path;
@@ -116,93 +114,7 @@ public('stage') = 1;
 public('open') = false;
 public('started') = tic;
 
-local_run_phase(config.current, 'prepare', job_manifest_path, ...
-    config.current.resource_manifest, output_context, public);
-
-handoff_path = fullfile(strtrim(work_dir), 'mlsc_current_handoff.mat');
-if exist(handoff_path, 'file') ~= 2
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current prepare did not produce its handoff.');
-end
-handoff_info = dir(handoff_path);
-if isempty(handoff_info) || handoff_info(1).bytes == 0
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current prepare produced an empty handoff.');
-end
-loaded = load(handoff_path, 'handoff');
-if ~isfield(loaded, 'handoff') || ~isstruct(loaded.handoff) || ...
-        numel(loaded.handoff) ~= 1
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current prepare produced an invalid handoff.');
-end
-handoff = loaded.handoff;
-clear loaded
-local_validate_handoff(handoff, job_manifest_path, ...
-    config.current.resource_manifest, config.atlas_root);
-
-selected_input = strtrim(handoff.input_selected);
-if logical(handoff.needs_normalization)
-    normalization_context = local_public_context(output_context, 4, 'START');
-    normalization_started = tic;
-    public = local_public_set(public, 4, true);
-    pseudo_CT_output('INFO', normalization_context, ...
-        'Normalizing MPRAGE with FreeSurfer.');
-    normalized_path = strtrim(handoff.normalized_expected);
-    if exist(normalized_path, 'file') == 2
-        local_normalization_failed(output_context, ...
-            'An existing normalized output prevents fail-closed local normalization.');
-        error('pseudo_CT:LocalCurrentNormalization', ...
-            'An existing normalized output prevents fail-closed local normalization.');
-    end
-    normalization_connection = struct('hostname', config.normalization.host, ...
-        'username', 'local', 'password', '', 'autoreconnect', 0);
-    normalization_command = sprintf('mri_normalize %s %s', ...
-        selected_input, normalized_path);
-    local_normalize_event(event_target, 'STARTED', ...
-        'FreeSurfer MPRAGE normalization started.');
-    try
-        normalization_status = pseudo_CT_run_normalization_cmd(normalization_command, ...
-            normalization_connection, normalization_context, config);
-    catch normalization_error
-        local_normalize_event(event_target, 'FAILED', ...
-            'FreeSurfer MPRAGE normalization failed.');
-        % Report the failed stage before the error propagates; no DONE.
-        local_normalization_failed(output_context, sprintf( ...
-            'FreeSurfer normalization could not be completed: %s', ...
-            normalization_error.message));
-        rethrow(normalization_error);
-    end
-    normalized_info = dir(normalized_path);
-    if normalization_status ~= 0 || isempty(normalized_info) || ...
-            normalized_info(1).bytes == 0
-        local_normalize_event(event_target, 'FAILED', ...
-            'FreeSurfer MPRAGE normalization failed.');
-        local_normalization_failed(output_context, sprintf( ...
-            'FreeSurfer did not produce a non-empty normalized NIfTI file (exit status %d).', ...
-            normalization_status));
-        error('pseudo_CT:LocalCurrentNormalization', ...
-            'FreeSurfer did not produce a non-empty normalized NIfTI file.');
-    end
-    local_normalize_event(event_target, 'COMPLETED', ...
-        'FreeSurfer MPRAGE normalization completed.');
-    public = local_public_set(public, 4, false);
-    pseudo_CT_output('SUCCESS', local_public_context(output_context, 4, 'DONE'), ...
-        'MPRAGE normalization completed (elapsed %s).', ...
-        local_current_elapsed(toc(normalization_started)));
-else
-    normalization_context = local_public_context(output_context, 4, 'SKIPPED', ...
-        'Normalization skipped (input already normalized).');
-    public = local_public_set(public, 4, false);
-    pseudo_CT_output('INFO', normalization_context, ...
-        'Normalization input already normalized; skipping.');
-    normalized_path = selected_input;
-end
-
-if exist(normalized_path, 'file') ~= 2
-    error('pseudo_CT:LocalCurrentNormalization', ...
-        'The current payload normalized input is unavailable.');
-end
-local_run_phase(config.current, 'compute', job_manifest_path, ...
+local_run_pipeline(config.current, job_manifest_path, ...
     config.current.resource_manifest, output_context, public);
 
 for ii = 1:numel(config.current.required_outputs)
@@ -228,7 +140,7 @@ end
 Pf = fullfile(strtrim(work_dir), 'att_map.nii');
 end
 
-function local_run_phase(current, phase, job_manifest_path, ...
+function local_run_pipeline(current, job_manifest_path, ...
         resource_manifest_path, output_context, public)
 runner = strtrim(current.runner);
 mcr_root = strtrim(current.mcr_root);
@@ -249,25 +161,10 @@ artifact_config = struct();
 artifact_config.current = current;
 mlsc_current_validate('validate_for_execution', artifact_config);
 command = ['env -u LD_LIBRARY_PATH ' local_shell_quote(runner) ' ' ...
-    local_shell_quote(mcr_root) ' ' local_shell_quote(phase) ' ' ...
-    local_shell_quote(job_manifest_path) resource_arg];
-if strcmp(phase, 'prepare')
-    phase_stage = 2;
-else
-    phase_stage = 3;
-end
-stage_context = local_stage_context(output_context, phase_stage);
-% Phase wrappers are run-log detail; the public stages are reported from
-% the stage events (status LOG keeps these off the console).
-log_context = local_public_log_context(stage_context);
-pseudo_CT_output('INFO', log_context, ...
-    'Running compiled current %s phase.', upper(phase));
-if strcmp(phase, 'compute')
-    pseudo_CT_output('INFO', log_context, ...
-        ['Current compute includes SPM segmentation, DARTEL atlas ', ...
-         'registration/warping, and attenuation generation.']);
-end
-phase_started = tic;
+    local_shell_quote(mcr_root) ' ' local_shell_quote(job_manifest_path) resource_arg];
+stage_context = local_public_log_context(output_context);
+pseudo_CT_output('INFO', stage_context, 'Running compiled current pipeline.');
+pipeline_started = tic;
 stream_log = '';
 if isfield(output_context, 'log_file') && ...
         ischar(output_context.log_file) && ...
@@ -277,24 +174,24 @@ if isfield(output_context, 'log_file') && ...
 end
 stage_context.runtime_temp_dir = fileparts(fileparts(job_manifest_path));
 status = local_run_streaming(command, stream_log, stage_context, ...
-    phase_started, phase, public);
+    pipeline_started, 'pipeline', public);
 if status ~= 0
     if isfield(output_context, 'log_file') && ...
             ischar(output_context.log_file) && ...
             ~isempty(strtrim(output_context.log_file))
         pseudo_CT_output('ERROR', local_public_active_context(stage_context, public, 'ERROR'), ...
-            'Compiled current %s phase failed (exit status %d); details are in %s.', ...
-            upper(phase), status, strtrim(output_context.log_file));
+            'Compiled current pipeline failed (exit status %d); details are in %s.', ...
+            status, strtrim(output_context.log_file));
     else
         pseudo_CT_output('ERROR', local_public_active_context(stage_context, public, 'ERROR'), ...
-            'Compiled current %s phase failed with exit status %d.', ...
-            upper(phase), status);
+            'Compiled current pipeline failed with exit status %d.', status);
     end
-    local_raise_current_runner_error(upper(phase), status);
+    error('pseudo_CT:LocalCurrentRunner', ...
+        'Compiled current pipeline failed with exit status %d.', status);
 end
-pseudo_CT_output('SUCCESS', log_context, ...
-    'Compiled current %s phase completed (elapsed %.1f s).', ...
-    upper(phase), toc(phase_started));
+pseudo_CT_output('SUCCESS', stage_context, ...
+    'Compiled current pipeline completed (elapsed %.1f s).', ...
+    toc(pipeline_started));
 end
 
 function status = local_current_stream_test_dispatch(request)
@@ -667,7 +564,7 @@ elseif strcmp(line_class, 'private') && in_block && isempty(strtrim(line))
 end
 local_flush_warning_block(stream_state, output_context);
 if scientific
-    % Stdout stage events show only until the worker writes native records;
+    % Stdout stage events show only until the pipeline writes native records;
     % thereafter the native JSONL is the source (see local_present_native_events).
     public = stream_state('public');
     for ii = 1:length(scientific_events)
@@ -720,7 +617,7 @@ end
 
 function [line_class, line_level] = local_classify_current_line(line, stream_state)
 %LOCAL_CLASSIFY_CURRENT_LINE Separate child chatter from public events.
-%   event        timestamped orchestration record from the worker
+%   event        timestamped orchestration record from the pipeline
 %   warning      start of a MATLAB {Warning: ...} block
 %   continuation open multi-line warning text
 %   error        MATLAB/runner error line
@@ -799,74 +696,6 @@ if isscalar(candidate) && isfinite(candidate) && ...
 end
 end
 
-function local_validate_handoff(handoff, job_manifest_path, ...
-        resource_manifest_path, atlas_dir)
-required = {'schema'; 'input_selected'; 'atlas_dir'; ...
-    'needs_normalization'; 'normalized_expected'; 'job_manifest'; ...
-    'resource_manifest'};
-for ii = 1:length(required)
-    if ~isfield(handoff, required{ii})
-        error('pseudo_CT:LocalCurrentPrepare', ...
-            'Compiled current handoff is missing required data.');
-    end
-end
-if ~ischar(handoff.schema) || ...
-        ~strcmp(handoff.schema, 'pseudo-CT.current-handoff/v1') || ...
-        ~ischar(handoff.job_manifest) || ...
-        ~strcmp(handoff.job_manifest, job_manifest_path) || ...
-        ~ischar(handoff.resource_manifest) || ...
-        ~strcmp(handoff.resource_manifest, resource_manifest_path) || ...
-        ~ischar(handoff.atlas_dir) || ...
-        ~strcmp(local_strip_sep(handoff.atlas_dir), local_strip_sep(atlas_dir)) || ...
-        ~islogical(handoff.needs_normalization) || ...
-        ~isscalar(handoff.needs_normalization)
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current handoff does not match this local invocation.');
-end
-local_controlled_nii(handoff.input_selected, 'selected input');
-local_controlled_nii(handoff.normalized_expected, 'normalized output');
-expected = local_derived_normalized(strtrim(handoff.input_selected));
-if ~strcmp(expected, strtrim(handoff.normalized_expected))
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current handoff contains contradictory input paths.');
-end
-selected_is_normalized = ~isempty(strfind( ...
-    strtrim(handoff.input_selected), '_normalized.nii'));
-if logical(handoff.needs_normalization) == selected_is_normalized || ...
-        exist(strtrim(handoff.input_selected), 'file') ~= 2
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current handoff normalization state is inconsistent.');
-end
-end
-
-function local_controlled_nii(path_text, label)
-if ~ischar(path_text) || size(path_text, 1) ~= 1 || ...
-        isempty(strtrim(path_text)) || any(path_text == char(0)) || ...
-        ~isempty(strfind(path_text, '..'))
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current handoff %s is invalid.', label);
-end
-trimmed = strtrim(path_text);
-if length(trimmed) >= 2 && strcmp(trimmed(end-1:end), ',1')
-    trimmed = trimmed(1:end-2);
-end
-if length(trimmed) < 5 || ~strcmp(lower(trimmed(end-3:end)), '.nii')
-    error('pseudo_CT:LocalCurrentPrepare', ...
-        'Compiled current handoff %s is not a NIfTI path.', label);
-end
-end
-
-function expected = local_derived_normalized(selected)
-[pathn, namen, extn] = fileparts(selected);
-if length(extn) >= 2 && strcmp(extn(end-1:end), ',1')
-    extn = extn(1:end-2);
-end
-if isempty(extn)
-    extn = '.nii';
-end
-expected = fullfile(pathn, [namen '_normalized' extn]);
-end
-
 function valid = local_yes_no_or_flag(value)
 valid = false;
 if ischar(value) && size(value, 1) == 1
@@ -874,13 +703,6 @@ if ischar(value) && size(value, 1) == 1
 elseif (islogical(value) || isnumeric(value)) && isscalar(value) && ...
         isfinite(double(value)) && ismember(double(value), [0 1])
     valid = true;
-end
-end
-
-function value = local_strip_sep(value)
-value = strtrim(value);
-while length(value) > 1 && value(end) == '/'
-    value(end) = '';
 end
 end
 
@@ -1050,16 +872,9 @@ end
 
 end
 
-function local_normalize_event(event_target, status, message)
-%LOCAL_NORMALIZE_EVENT Orchestrator-owned normalization boundary (stage 4).
-pseudo_CT_scientific_event(event_target, struct('stage_id', 'normalize', ...
-    'stage_index', 4, 'status', status, 'message', message, ...
-    'source', 'local-orchestrator'));
-end
-
 function capable = local_native_capable(stream_state)
 %LOCAL_NATIVE_CAPABLE Per-stage native coverage (1x10 logical) for this run.
-%   Stage-less worker records never count; see pseudo_CT_scientific_event_read.
+%   Stage-less pipeline records never count; see pseudo_CT_scientific_event_read.
 capable = false(1, 10);
 if stream_state.isKey('native_reader')
     reader = stream_state('native_reader');
@@ -1071,9 +886,9 @@ end
 
 function local_present_native_events(stream_state, output_context)
 %LOCAL_PRESENT_NATIVE_EVENTS Present new native scientific records (read-only).
-% The JSONL file is appended by the compiled worker and by this orchestrator's
-% normalization step only. This reader never appends. Records the orchestrator
-% already prints itself (source local-orchestrator) are not presented twice.
+% The JSONL file is appended by the compiled pipeline while it runs; this
+% reader never appends. Manager-owned records (source local-orchestrator) are
+% not presented twice.
 try
     target = pseudo_CT_scientific_event_target(output_context);
     if isempty(target.path)
@@ -1088,8 +903,8 @@ try
     keep = true(length(events), 1);
     for ii = 1:length(events)
         % Worker-originated stage FAILED records are shown once here as stage
-        % error rows. Orchestrator-owned records (local-orchestrator) are excluded:
-        % the orchestrator prints its own stage-4 failure row.
+        % error rows. Manager-owned records (local-orchestrator) are excluded
+        % because the manager reports them through its own path.
         keep(ii) = ~strcmp(events(ii).status, 'WARN') && ...
             ~strcmp(events(ii).source.version, 'local-orchestrator');
     end
@@ -1135,12 +950,6 @@ catch ME
         end
     end
 end
-end
-
-function local_normalization_failed(output_context, reason)
-% Canonical stage-4 ERROR event (no stage-4 DONE follows).
-pseudo_CT_output('ERROR', local_public_context(output_context, 4, 'ERROR'), ...
-    'MPRAGE normalization failed: %s', reason);
 end
 
 function value = local_current_elapsed(seconds)

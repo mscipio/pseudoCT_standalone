@@ -13,16 +13,16 @@ function report = build_application(release, varargin)
 %                         OUTPUTROOT/RELEASE. Existing packages are never
 %                         overwritten. Must not be inside src/, external/ or
 %                         compiled/.
-%     'McrRoot'           MATLAB Runtime root recorded for the worker build.
+%     'McrRoot'           MATLAB Runtime root recorded for the pipeline build.
 %     'SpmRoot', 'AtlasDir', 'AliasingRoot', 'DicomToNiftiRoot'
 %                         Dependency roots (default: pinned external/ trees).
 %     'LockSha256'        Optional expected SHA-256 of dependencies.lock.json.
 %
 %   Build mode requires a clean git tree and the MATLAB Runtime root.
 %   Exactly two compiled targets, written to build-private folders payload/
-%   (the pseudoct_worker executable) and standalone/ (pseudoct_standalone, the
-%   headless engine dispatcher). release_application.py installs them flat as
-%   runtimes/<LABEL>/pseudoct_worker and runtimes/<LABEL>/pseudoct_standalone. The
+%   (the pseudoct_pipeline executable) and standalone/ (pseudoct_job_manager, the
+%   job-manager dispatcher). release_application.py installs them flat as
+%   runtimes/<LABEL>/pseudoct_pipeline and runtimes/<LABEL>/pseudoct_job_manager. The
 %   MATLAB frontend (run_pseudo_CT.m and frontend/) is not compiled here; it is
 %   not one of the two compiled targets.
 %   The build output is a private staging tree, not the installed layout: bin/
@@ -179,7 +179,7 @@ cfggen = fullfile(stage, 'cfggen');
 src_dirs = local_dirs(fullfile(repo, 'src'));
 spm_dirs = {spm; fullfile(spm, 'matlabbatch'); fullfile(spm, 'config'); ...
     fullfile(spm, 'toolbox', 'Seg'); fullfile(spm, 'toolbox', 'DARTEL')};
-plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'pseudoct_worker.m'), ...
+plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'pseudoct_pipeline.m'), ...
     '-d', fullfile(stage, 'payload'), '-R', '-nodisplay', '-v'}, ...
     local_pairs('-I', [src_dirs; spm_dirs; {opt.aliasingroot; opt.dicom2niftiroot; cfggen}]), ...
     local_pairs('-a', {cfggen; opt.aliasingroot; opt.dicom2niftiroot; ...
@@ -191,15 +191,15 @@ plan.payload_args = [{'-m', fullfile(repo, 'src', 'science', 'current', 'pseudoc
     fullfile(spm, 'toolbox', 'DARTEL', 'dartel2.mexa64'); ...
     fullfile(spm, 'toolbox', 'DARTEL', 'dartel3.mexa64'); ...
     fullfile(repo, 'src', 'qc', 'hot_map_mpitool_1024.mat'); fullfile(repo, 'CHANGELOG.md')})];
-% Compiled standalone dispatcher (src/cli/pseudoct_standalone.m). Its CLI and
-% headless dependencies are compiled in through the same src/ -I set as the worker.
+% Compiled job-manager dispatcher (src/cli/pseudoct_job_manager.m). Its CLI and
+% headless dependencies are compiled in through the same src/ -I set as the pipeline.
 % The DICOM export runs in this engine and calls SPM batch reslicing
 % (spm_run_coreg_reslice, in <spm>/config, which calls spm_reslice). The config
 % folder is on the -I path so that call is found statically; the reslice MEX
 % spm_slice_vol is listed with -a because static analysis cannot see MEX calls.
-% SSH2 closure, standalone only. The headless CLI reaches ssh2 through
+% SSH2 closure, job manager only. The headless CLI reaches ssh2 through
 % pseudo_CT_run_lifecycle -> mlsc_initialize_backend_session -> mlsc_credentials_transport
-% and pseudo_CT_run_normalization_cmd -> pseudo_CT_ssh2_command. The worker does not
+% and pseudo_CT_run_normalization_cmd -> pseudo_CT_ssh2_command. The pipeline does not
 % reach it. The 19 root wrappers and the Ganymed JAR are -a inputs; ssh2_setup derives
 % the JAR path from its own location (mfilename), which is unverified in a compiled CTF.
 ssh2_dir = fullfile(repo, 'external', 'ssh2_v2_m1_r5', 'ssh2_v2_m1_r5');
@@ -213,10 +213,10 @@ ssh2_jar = fullfile(ssh2_dir, 'ganymed-ssh2-m1', 'ganymed-ssh2-m1.jar');
 % rootDir/VERSION, rootDir being three fileparts above its own mfilename, so the
 % file must sit at the CTF root beside +dicom2nifti. It is a non-M text file that
 % -I dependency analysis does not supply, so it is an explicit -a input. Only the
-% standalone reaches readVersion (dcm2nii -> dicom2nifti.api.run ->
-% writeVersionLog); the worker closure does not. Compiled placement: UNVERIFIED.
+% job manager reaches readVersion (dcm2nii -> dicom2nifti.api.run ->
+% writeVersionLog); the pipeline closure does not. Compiled placement: UNVERIFIED.
 dicom2nifti_version = fullfile(opt.dicom2niftiroot, 'VERSION');
-plan.standalone_args = [{'-m', fullfile(repo, 'src', 'cli', 'pseudoct_standalone.m'), ...
+plan.standalone_args = [{'-m', fullfile(repo, 'src', 'cli', 'pseudoct_job_manager.m'), ...
     '-d', fullfile(stage, 'standalone'), '-v'}, ...
     local_pairs('-I', [src_dirs; {spm; fullfile(spm, 'config'); opt.aliasingroot; opt.dicom2niftiroot; ssh2_dir}]), ...
     local_pairs('-a', [{fullfile(spm, 'spm_slice_vol.mexa64')}; ssh2_wrappers; {ssh2_jar}]), ...
@@ -264,11 +264,11 @@ names = [fixed; atlas];
 end
 
 function fs = local_file_set(repo, atlas_dir)
-fs.entrypoints = {'src/science/current/pseudoct_worker.m'};
+fs.entrypoints = {'src/science/current/pseudoct_pipeline.m'};
 fs.launchers = {'bin/pseudoct'};
-% The worker runner (run_pseudoct_worker.sh) is shipped per release by the release driver; it stays in the source
+% The pipeline runner (run_pseudoct_pipeline.sh) is shipped per release by the release driver; it stays in the source
 % digest so the build provenance still covers it.
-fs.payload_runner = {'scripts/run_pseudoct_worker.sh'};
+fs.payload_runner = {'scripts/run_pseudoct_pipeline.sh'};
 fs.src = local_walk(fullfile(repo, 'src'), 'src');
 fs.resources = [local_atlas_names(atlas_dir); {'spm_dicom_dict.mat'}];
 all_rels = sort([fs.entrypoints; fs.launchers; fs.payload_runner; fs.src]);
@@ -318,8 +318,8 @@ local_write_init_helpers(cfggen);
 plan = local_compile_plan(repo, opt, stage);
 local_compile(plan.payload_args, fullfile(stage, 'mcc-payload.log'));
 local_compile(plan.standalone_args, fullfile(stage, 'mcc-standalone.log'));
-local_require(fullfile(stage, 'payload', 'pseudoct_worker'), 'compiled payload executable');
-local_require(fullfile(stage, 'standalone', 'pseudoct_standalone'), 'compiled standalone dispatcher');
+local_require(fullfile(stage, 'payload', 'pseudoct_pipeline'), 'compiled pipeline executable');
+local_require(fullfile(stage, 'standalone', 'pseudoct_job_manager'), 'compiled job-manager dispatcher');
 
 % Interpreted runtime source at the same relative paths as an install root.
 for kk = 1:numel(fs.src)
@@ -425,7 +425,7 @@ fprintf('  matlab %s (%s) compiler %s arch %s\n', ...
 fprintf('  source_commit %s dirty=%d\n', report.source_commit, report.source_dirty);
 fprintf('  lock_sha256 %s\n', report.lock_sha256);
 fprintf('  compile_inputs %d present\n', report.compile_input_count);
-fprintf('  compile_targets payload=pseudoct_worker standalone=pseudoct_standalone\n');
+fprintf('  compile_targets pipeline=pseudoct_pipeline job_manager=pseudoct_job_manager\n');
 fprintf('  file_set entrypoints=%d src=%d launchers=%d resources=%d source_set_sha256=%s\n', ...
     numel(report.entrypoints), report.source_file_count, report.launcher_count, ...
     report.resource_count, report.source_set_sha256);

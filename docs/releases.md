@@ -63,9 +63,9 @@ pseudoct-<version>/
   run_pseudo_CT.m                                    MATLAB frontend (copied from the repository)
   frontend/                                          MATLAB frontend files (copied verbatim)
   help/index.html, help/style.css                    help documents from docs/help (docs/help/assets/ is never shipped)
-  runtimes/<LABEL>/pseudoct_worker                   compiled science worker (shared by local and MLSC)
-  runtimes/<LABEL>/run_pseudoct_worker.sh            worker runner (copy of scripts/run_pseudoct_worker.sh)
-  runtimes/<LABEL>/pseudoct_standalone               compiled headless engine (dispatcher)
+  runtimes/<LABEL>/pseudoct_pipeline                   compiled science pipeline (shared by local and MLSC)
+  runtimes/<LABEL>/run_pseudoct_pipeline.sh            pipeline runner (copy of scripts/run_pseudoct_pipeline.sh)
+  runtimes/<LABEL>/pseudoct_job_manager               compiled job manager (dispatcher)
   external/ssh2_v2_m1_r5/                            Ganymed JAR and two licence notices (no loose SSH2 .m files)
   resources/                                         atlas and template files, and SPM's DICOM dictionary (spm_dicom_dict.mat, copied unchanged)
   manifest.json                                      catalog manifest read by bin/pseudoct (embeds the release catalog)
@@ -85,14 +85,14 @@ pseudoct-<version>/
   GUI executable. Under `external/` it contains only the three files in the driver's
   `SSH2_FILES`: the Ganymed JAR (`external/ssh2_v2_m1_r5/ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar`),
   the SSH2 `license.txt` and the Ganymed `LICENSE.txt`. No loose SSH2 `.m` files are installed.
-  The 19 root SSH2 wrappers are compiled into `pseudoct_standalone` only, with the JAR as an
-  `-a` input; the worker does not reach SSH2. Loading the JAR and wrappers from the compiled
-  engine is **not yet verified** and awaits an approved RC6 build. No other `external/` content
+  The 19 root SSH2 wrappers are compiled into `pseudoct_job_manager` only, with the JAR as an
+  `-a` input; the pipeline does not reach SSH2. Loading the JAR and wrappers from the compiled
+  job manager is **not yet verified** and awaits an approved RC6 build. No other `external/` content
   is shipped. `--verify DIR` of the driver refuses anything outside the allowlist.
 - The dicom2nifti `VERSION` file (`external/dicom2nifti-1.2.5/VERSION`) is an explicit `-a`
-  compile input of `pseudoct_standalone` only, intended to sit at the CTF root beside
+  compile input of `pseudoct_job_manager` only, intended to sit at the CTF root beside
   `+dicom2nifti`, where `readVersion` looks for it. Third-party `readVersion.m` is unchanged.
-  Its placement in the compiled engine is **unverified** until an approved RC6 build.
+  Its placement in the compiled job manager is **unverified** until an approved RC6 build.
 - **No build or resource manifest is shipped.** The compiled-current build and resource
   manifests (`mlsc_current_build.mat` and `mlsc_current_resources.mat`) belong to source
   checkouts only. `manifest.json` is the release catalog, not a build manifest.
@@ -131,11 +131,11 @@ pseudoct --help
   operations with exit `64`.
 - `run validate|run` is the CLI (validate, or validate and submit) with the same
   options, text/JSONL output and exit codes as in [Headless API and CLI](headless-cli.md).
-- `headless` keeps the two-positional contract and runs `runtimes/<LABEL>/pseudoct_standalone
+- `headless` keeps the two-positional contract and runs `runtimes/<LABEL>/pseudoct_job_manager
   headless` with `PSEUDOCT_REQUEST_MAT` and `PSEUDOCT_RESULT_MAT`.
 - `resolve` validates one release and prints single-quoted, sourceable lines:
-  `PSEUDOCT_EXE='...'` (the standalone dispatcher), `PSEUDOCT_MCR_ROOT='...'`,
-  `PSEUDOCT_RUNNER='...'` (`runtimes/<LABEL>/run_pseudoct_worker.sh`),
+  `PSEUDOCT_EXE='...'` (the job-manager dispatcher), `PSEUDOCT_MCR_ROOT='...'`,
+  `PSEUDOCT_RUNNER='...'` (`runtimes/<LABEL>/run_pseudoct_pipeline.sh`),
   `PSEUDOCT_INSTALL_ROOT='...'` and `PSEUDOCT_RUNTIME_RELEASE='<LABEL>'`. This is the one
   runtime-selection mechanism; MATLAB callers use it.
 - Every installed operation that runs a release (`run`, `headless`)
@@ -151,8 +151,8 @@ pseudoct --help
 ### Release and MATLAB Runtime root selection
 
 - A release is complete only when all three artifacts exist and are executable, each
-  directly in `runtimes/<LABEL>/`: `pseudoct_worker`, `run_pseudoct_worker.sh` and
-  `pseudoct_standalone`.
+  directly in `runtimes/<LABEL>/`: `pseudoct_pipeline`, `run_pseudoct_pipeline.sh` and
+  `pseudoct_job_manager`.
 - The MATLAB Runtime root is `--mcr-root <dir>` when given; otherwise the catalog
   location `/usr/pubsw/common/matlab/<D>` of the selected release, where `<D>` is the
   first two dotted components of its `matlab_version` (`9.6.0.1072779` → `9.6`,
@@ -165,18 +165,18 @@ pseudoct --help
 - In an installed distribution the catalog is the copy embedded under `catalog` in
   `manifest.json`. A repository checkout reads `config/releases.json`.
 
-### Worker runner and installed-direct identity
+### Pipeline runner and installed-direct identity
 
-`runtimes/<LABEL>/run_pseudoct_worker.sh` is installed beside `pseudoct_worker` and
-`pseudoct_standalone`. It takes
+`runtimes/<LABEL>/run_pseudoct_pipeline.sh` is installed beside `pseudoct_pipeline` and
+`pseudoct_job_manager`. It takes
 `<mcr_root> <phase> <job_manifest> [<resource_manifest>]`, sets the Runtime library
-path from `mcr_root` and execs the compiled worker from its own directory. The
-repository source of this runner is `scripts/run_pseudoct_worker.sh` (renamed in
-v3.2.0 from the former MLSC payload runner name; its body is otherwise unchanged).
+path from `mcr_root` and execs the compiled pipeline from its own directory. The
+repository source of this runner is `scripts/run_pseudoct_pipeline.sh`; its v3.2.0
+predecessor was renamed from the former MLSC payload runner name.
 
 Installed runs (local and MLSC) use **installed-direct** mode, because no build or
-resource manifest is shipped. Direct mode uses the two-argument worker call (phase
-and job manifest, with no resource manifest). The worker checks the packaged
+resource manifest is shipped. Direct mode uses the two-argument pipeline call (phase
+and job manifest, with no resource manifest). The pipeline checks the packaged
 `resources/` files itself, and the MLSC generator fails closed when a required
 resource is missing.
 
@@ -185,10 +185,10 @@ Installed-direct identity is a packaged-layout trust model:
 - the runner is pinned by SHA-256 (`runner_path` and `runner_sha256` in the
   `artifact_identity` of the run), and the runtime checks in
   [Runtime identity](#runtime-identity) apply;
-- the compiled worker (`pseudoct_worker`) and standalone (`pseudoct_standalone`) are
+- the compiled pipeline (`pseudoct_pipeline`) and job manager (`pseudoct_job_manager`) are
   also hashed into that identity, beside the runner: `payload_path` and
-  `payload_sha256` for the worker, and `standalone_path` and `standalone_sha256` for
-  the standalone. Both are taken from the runner's directory. The manifest fields
+  `payload_sha256` for the pipeline, and `standalone_path` and `standalone_sha256` for
+  the job manager. Both are taken from the runner's directory. The manifest fields
   (`build_manifest_*` and `resource_manifest_*`) are empty in this mode.
 
 Source checkouts keep manifest mode (`mlsc_current_build.mat` and

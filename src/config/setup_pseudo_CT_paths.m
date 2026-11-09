@@ -43,11 +43,11 @@ if installed
     pseudo_CT_check_installed_resources(config.atlas_root);
 end
 % Installed distributions: the converter, SPM and SPM override code is compiled
-% into the compiled worker (run_pseudoct_worker.sh), not into the headless
-% standalone that runs this setup. Checking those names here fails on the
-% standalone's own function table, so installed mode skips them for every
-% purpose. The runner, worker executable and standalone are identified by
-% SHA-256 at validation and submit; the worker fails closed if its code is missing.
+% into the compiled pipeline (run_pseudoct_pipeline.sh), not into the job manager
+% that runs this setup. Checking those names here fails on the manager's own
+% function table, so installed mode skips them for every purpose. The runner,
+% pipeline executable and job manager are identified by SHA-256 at validation
+% and submit; the pipeline fails closed if its code is missing.
 execution_only = installed;
 needs_converter = (strcmp(purpose, 'run') || has_inputs) && ~execution_only;
 % Any resolved input can be submitted through the same run setup, which

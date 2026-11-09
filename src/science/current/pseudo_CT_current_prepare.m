@@ -3,7 +3,7 @@ function [P_out, handoff, early_return, fh] = pseudo_CT_current_prepare(P_in, di
 %   [P_OUT, HANDOFF, EARLY_RETURN, FH] = PSEUDO_CT_CURRENT_PREPARE(P_IN,
 %   DIR_BATCH_TEMPLATES_IN, CHECK_ALIASING_IN, CONFIG, OUTPUT_CONTEXT_IN,
 %   RECENTER_OVERRIDE_IN)
-%   Prepare phase of the shared compiled worker (pseudoct_worker). The local
+%   Prepare phase of the shared compiled pipeline (pseudoct_pipeline). The local
 %   current runner and MLSC jobs both reach it through that worker. Implements the
 %   pre-normalization order exactly: optional reslice, normalized/moved
 %   suffix gates, correct_aliasing(input,output,'AliasCorrection',bool,

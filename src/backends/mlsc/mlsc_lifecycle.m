@@ -133,7 +133,7 @@ output_tracker = local_output_init(runtime, transport);
 [slurm_log_paths, slurm_log_cursors] = local_slurm_log_init( ...
     result.log_paths, job_id);
 slurm_log_state = struct();
-% Native scientific events (read-only here; the remote worker is the writer).
+% Native scientific events (read-only here; the remote pipeline is the writer).
 native_events_path = local_native_events_path(runtime);
 direct_stdout = local_direct_stdout_init();
 local_emit_accepted(runtime, job_id);
@@ -554,15 +554,13 @@ end
 
 function contract = local_contract_from_artifact(artifact)
 %LOCAL_CONTRACT_FROM_ARTIFACT Node-local/copy-back contract from script.
-%   Require the supported pinned launcher invocation, prepare BEFORE external
-%   normalization BEFORE compute, staged job manifest plus resource manifest
-%   (manifest mode; installed direct mode stages the job manifest only),
-%   PREPARE-derived dynamic normalization (corrected selection without
-%   sourcing the handoff), three-output plus mandatory-evidence verify and
-%   copy-back, supported milestones, pinned startup recheck, FreeSurfer
-%   isolation, and no global LD_LIBRARY_PATH. The existing
-%   heartbeat/progress/cancellation/receipt/timeout/cleanup/finalization
-%   model is reused with no second poller.
+%   Require one supported pinned pipeline invocation, staged job/resource
+%   manifests (installed direct mode stages only the job manifest), required
+%   output/evidence verification and copy-back, supported progress records,
+%   pinned startup recheck, and no global LD_LIBRARY_PATH. The pipeline owns
+%   prepare, FreeSurfer normalization and compute through one shared code path.
+%   The existing heartbeat/progress/cancellation/receipt/timeout/cleanup/
+%   finalization model is reused with no second poller.
 contract = local_empty_contract();
 if ~isstruct(artifact)
     return;
@@ -601,12 +599,14 @@ else
     resource_staging_ok = ~isempty(strfind(script, ...
         'cp -- "$shared_resource_manifest" "$local_resource_manifest"'));
 end
-supported_ok = ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" prepare')) && ...
-    ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" compute')) && ...
+pipeline_command = '"$current_runner" "$current_mcr_root" "$local_job_manifest"';
+supported_ok = length(strfind(script, pipeline_command)) == 1 && ...
+    isempty(strfind(script, '"$current_runner" "$current_mcr_root" prepare')) && ...
+    isempty(strfind(script, '"$current_runner" "$current_mcr_root" compute')) && ...
+    isempty(strfind(script, 'mri_normalize')) && ...
+    isempty(strfind(script, 'tcsh -f -c')) && ...
     ~isempty(strfind(script, 'cp -- "$shared_job_manifest" "$local_job_manifest"')) && ...
     resource_staging_ok && ...
-    ~isempty(strfind(script, 'env -u LD_LIBRARY_PATH')) && ...
-    ~isempty(strfind(script, 'tcsh -f -c')) && ...
     ~isempty(strfind(script, 'Fusion_MR_Pseudo_CT_validation.tiff')) && ...
     ~isempty(strfind(script, 'Pseudo_CT_AC_Version.txt')) && ...
     ~isempty(strfind(script, 'mlsc_current_output_verification.txt')) && ...
@@ -619,33 +619,11 @@ supported_ok = ~isempty(strfind(script, '"$current_runner" "$current_mcr_root" p
     ~isempty(strfind(script, 'bone|done')) && ...
     ~isempty(strfind(script, 'dartel_warp_reslice|done')) && ...
     ~isempty(strfind(script, 'attenuation_qc|done')) && ...
-    ~isempty(strfind(script, 'prepare_selected=')) && ...
-    ~isempty(strfind(script, 'prepare_expected=')) && ...
     ~isempty(strfind(script, 'pinned_mcr_root=')) && ...
     isempty(strfind(script, 'export LD_LIBRARY_PATH')) && ...
     isempty(strfind(script, 'source "$shared_temp/mlsc_current_handoff')) && ...
     isempty(strfind(script, 'source $TMPDIR/mlsc_current_handoff')) && ...
     isempty(strfind(script, 'eval '));
-prepare_pos = strfind(script, '"$current_runner" "$current_mcr_root" prepare');
-compute_pos = strfind(script, '"$current_runner" "$current_mcr_root" compute');
-if isempty(prepare_pos) || isempty(compute_pos) || ...
-        ~(prepare_pos(1) < compute_pos(1))
-    supported_ok = false;
-end
-if needs_normalization_in_script(script)
-    tcsh_pos = strfind(script, 'tcsh -f -c');
-    if isempty(tcsh_pos) || isempty(prepare_pos) || isempty(compute_pos) || ...
-            ~(prepare_pos(1) < tcsh_pos(1)) || ...
-            ~(tcsh_pos(1) < compute_pos(1))
-        supported_ok = false;
-    end
-    % R001: dynamic PREPARE-derived normalization must sit between
-    % prepare and compute and must reference the resolved selection.
-    if isempty(strfind(script, 'MLSC_INPUT_NAME=$prepare_selected')) || ...
-            isempty(strfind(script, 'MLSC_NORMALIZED_NAME=$prepare_expected'))
-        supported_ok = false;
-    end
-end
 % Mandatory evidence verify/copy-back (not copy_optional for handoff/evidence)
 % must be present for the only supported artifact.
 if isempty(strfind(script, ...
@@ -653,11 +631,6 @@ if isempty(strfind(script, ...
     supported_ok = false;
 end
 contract.represented = contract.represented && supported_ok;
-end
-
-function flag = needs_normalization_in_script(script)
-flag = ~isempty(strfind(script, 'normalize|start')) && ...
-    ~isempty(strfind(script, 'mri_normalize'));
 end
 
 function record = local_empty_accounting_record(job_id)
@@ -2681,7 +2654,7 @@ end
 
 function direct = local_native_events_poll(path_name, direct, runtime, job_id)
 %LOCAL_NATIVE_EVENTS_POLL Present new native records of this job (read-only).
-%   The remote worker is the only writer; this reader never appends. A stage
+%   The remote pipeline is the only writer; this reader never appends. A stage
 %   already shown from stdout is not shown again. A missing or delayed file is
 %   non-fatal. A reader failure is reported once and stops native reading.
 context = struct();
@@ -2780,7 +2753,7 @@ function direct = local_scientific_stdout_poll(path_name, direct, version, ...
 %   WARN/ERROR events are dropped because the diagnostic path owns them. A
 %   reader failure, such as a shrinking file, is reported once as an ERROR and
 %   stops direct parsing for this job; it is never treated as missing stdout.
-%   Stdout stage events are shown only until the worker writes native records
+%   Stdout stage events are shown only until the pipeline writes native records
 %   (see pseudo_CT_scientific_present_once).
 try
     if ~isstruct(direct) || direct.failed || ~ischar(path_name) || ...

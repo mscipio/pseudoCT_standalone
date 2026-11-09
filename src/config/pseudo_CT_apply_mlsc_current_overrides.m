@@ -51,11 +51,11 @@ layout = pseudo_CT_package_layout();
 if strcmp(layout.mode, 'installed')
     build_manifest_name = 'build_manifest.mat';
     resource_manifest_name = 'resource_manifest.mat';
-    runner_path = fullfile(root, 'run_pseudoct_worker.sh');
+    runner_path = fullfile(root, 'run_pseudoct_pipeline.sh');
 else
     build_manifest_name = 'mlsc_current_build.mat';
     resource_manifest_name = 'mlsc_current_resources.mat';
-    runner_path = fullfile(root, 'payload_build', 'run_pseudoct_worker.sh');
+    runner_path = fullfile(root, 'payload_build', 'run_pseudoct_pipeline.sh');
 end
 config.current.runner = runner_path;
 config.current.build_manifest = fullfile(root, ...

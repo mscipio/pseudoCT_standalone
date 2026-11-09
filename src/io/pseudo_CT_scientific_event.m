@@ -14,7 +14,7 @@ function ok = pseudo_CT_scientific_event(target, rec)
 %     outcome          'SUCCEEDED', 'FAILED', 'CANCELLED' (run records only)
 %     message          short human text (redacted, truncated to 240 chars)
 %     source           'local-orchestrator', 'payload' (the compiled
-%                      pseudoct_worker, a fixed record-source token) or
+%                      pseudoct_pipeline, a fixed record-source token) or
 %                      'mlsc-lifecycle'
 %     job_id           scheduler job number digits, or ''
 %     error_identifier, error_message   error details when applicable

@@ -21,11 +21,11 @@ function report = pseudo_CT_run_lifecycle(varargin)
 %                          changes a profile file.
 %     'mlsc_current_artifact_root' - Absolute folder of the operator-selected
 %                          compiled artifact. It selects the runner and manifest
-%                          paths: from source <root>/payload_build/run_pseudoct_worker.sh
+%                          paths: from source <root>/payload_build/run_pseudoct_pipeline.sh
 %                          (development compiled tree, not an installed layout) with
 %                          <root>/mlsc_current_build.mat and
 %                          <root>/mlsc_current_resources.mat, or installed
-%                          <root>/run_pseudoct_worker.sh (flat runtimes/<LABEL>/) with
+%                          <root>/run_pseudoct_pipeline.sh (flat runtimes/<LABEL>/) with
 %                          <root>/build_manifest.mat and
 %                          <root>/resource_manifest.mat. Only the mlsc
 %                          and mlsc-mprage-only profiles accept it.
@@ -373,19 +373,12 @@ switch config.mode
             context.stage_map = pseudo_CT_stage_map(config);
             context.console_profile = profile_name;
             context = local_stage_context(context, 1);
-            stage_started = tic;
-            pseudo_CT_output('INFO', context, 'Preparing input MPRAGE.');
             % Remote converter detail is kept in the subject log only.
             converter_context = context;
             converter_context.console_detail_remote = true;
-            local_native_stage(context, 1, 'workflow.input_prepare', 'STARTED', ...
-                'Input MPRAGE preparation started.', 'mlsc-lifecycle');
-            jobs(ii).seed_nii = local_convert_dicom(jobs(ii).mprage_fn, ...
-                fullfile(jobs(ii).temp_dir, 'mprage.nii'), converter_context);
-            local_native_stage(context, 1, 'workflow.input_prepare', 'COMPLETED', ...
-                'Input MPRAGE prepared.', 'mlsc-lifecycle');
-            pseudo_CT_output('SUCCESS', context, 'Input prepared (elapsed %s).', ...
-                local_elapsed(toc(stage_started)));
+            jobs(ii).seed_nii = pseudo_CT_prepare_input(jobs(ii).mprage_fn, ...
+                fullfile(jobs(ii).temp_dir, 'mprage.nii'), converter_context, ...
+                'mlsc-lifecycle');
         end
 
         account = '';
@@ -571,12 +564,34 @@ switch config.mode
                             pseudo_CT_output('INFO', context, ...
                                 'MLSC verified return to shared temp; returning to local finalization.');
                         end
-                        finalization_success = local_finalize_remote_subject(jobs(ii), ...
-                                jobs(ii).seed_nii, config, ii, length(jobs), mlsc_job_id);
+                        finalization_context = local_subject_context(jobs(ii), ...
+                            ii, length(jobs));
+                        finalization_context = local_attach_mlsc_job( ...
+                            finalization_context, mlsc_job_id);
+                        finalization_context.console_profile = profile_name;
+                        finalization_context.stage_map = pseudo_CT_stage_map(config);
+                        [finalization_success, finalization_detail] = ...
+                            pseudo_CT_finalize_subject(jobs(ii), ...
+                            fullfile(jobs(ii).temp_dir, 'att_map.nii'), ...
+                            jobs(ii).temp_dir, jobs(ii).seed_nii, config, ...
+                            finalization_context, 'mlsc-lifecycle');
+                        if finalization_success
+                            final_context = local_attach_mlsc_job( ...
+                                local_subject_context(jobs(ii), ii, length(jobs)), ...
+                                mlsc_job_id);
+                            final_context.completion_verified = true;
+                            pseudo_CT_output('SUCCESS', final_context, ...
+                                'Subject completed (elapsed %s).', ...
+                                local_elapsed(toc(jobs(ii).subject_started)));
+                        elseif isempty(finalization_detail)
+                            local_log_subject_failure(jobs(ii), context);
+                        else
+                            local_log_remote_failure(jobs(ii), context, ...
+                                finalization_detail);
+                        end
                         lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
                             true, logical(finalization_success), ...
                             local_finalization_detail(finalization_success));
-                        % The finalizer writes its own SUCCESS or ERROR before returning.
                         if finalization_success
                             outcome.markClosed('SUCCEEDED', 'mlsc-lifecycle');
                         else
@@ -756,17 +771,10 @@ for ii = 1:length(dir_list)
     end
 end
 
-% Convert DICOM to NIfTI
+% Prepare the manager-owned NIfTI input (convert DICOM or copy NIfTI input).
 context = local_stage_context(context, 1);
-stage_started = tic;
-pseudo_CT_output('INFO', local_status_context(context, 'START'), 'Preparing input MPRAGE.');
-local_native_stage(context, 1, 'workflow.input_prepare', 'STARTED', ...
-    'Input MPRAGE preparation started.', 'local-orchestrator');
-P = local_convert_dicom(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), context);
-local_native_stage(context, 1, 'workflow.input_prepare', 'COMPLETED', ...
-    'Input MPRAGE prepared.', 'local-orchestrator');
-pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'Input prepared (elapsed %s).', ...
-    local_elapsed(toc(stage_started)));
+P = pseudo_CT_prepare_input(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), ...
+    context, 'local-orchestrator');
 
 [temp_working_dir, ~, ~] = fileparts(deblank(P));
 
@@ -780,99 +788,17 @@ if ~ischar(Pf) || isempty(strtrim(Pf))
     return;
 end
 
-% Convert att_map.nii to DICOM only when the selected policy requests it.
+% Finalize only after the local pipeline runner has verified its outputs.
 [temp_working_dir, ~, ~] = fileparts(deblank(Pf(end, :)));
-if strcmp(config.io_policy.output, 'nifti-and-dicom')
-    try
-        dicom_stage = local_dicom_producer_stage(context);
-        context = local_stage_context(context, dicom_stage);
-        stage_started = tic;
-        pseudo_CT_output('INFO', local_status_context(context, 'START'), 'Writing DICOM output.');
-        local_native_stage(context, 9, 'workflow.dicom_output', 'STARTED', ...
-            'Writing DICOM output.', 'local-orchestrator');
-        pseudo_CT_write_mu_map_dicom(fullfile(temp_working_dir, 'att_map.nii'), ...
-            save_dir, job.umap_fn, temp_dir, config.fwhm, context);
-        pseudo_CT_output('SUCCESS', local_status_context(context, 'DONE'), 'DICOM output written (elapsed %s).', ...
-            local_elapsed(toc(stage_started)));
-        local_native_stage(context, 9, 'workflow.dicom_output', 'COMPLETED', ...
-            'DICOM output written.', 'local-orchestrator');
-    catch ME
-        pseudo_CT_output('ERROR', local_status_context(context, 'ERROR'), 'DICOM output failed: %s', ME.message);
-        local_native_stage(context, 9, 'workflow.dicom_output', 'FAILED', ...
-            sprintf('DICOM output failed: %s', ME.message), 'local-orchestrator');
-        return;
-    end
-else
-    % Not a DICOM stage: report the policy skip without attributing it to the
-    % (long finished) input stage that this context still carries.
-    skip_context = rmfield(context, {'stage_index', 'stage_count'});
-    if isfield(config, 'io_policy') && isfield(config.io_policy, 'gui') && ...
-            strcmp(config.io_policy.gui, 'mprage-only')
-        skip_context = local_workflow_stage_context(skip_context, 9, ...
-            'SKIPPED', 'workflow.dicom_output', 'profile_policy:mprage_only');
-        pseudo_CT_output('INFO', skip_context, ...
-            'DICOM output skipped by MPRAGE-only policy.');
-        local_native_stage(context, 9, 'workflow.dicom_output', 'SKIPPED', ...
-            'DICOM output skipped by MPRAGE-only policy (profile_policy:mprage_only).', ...
-            'local-orchestrator');
-    else
-        skip_context = local_status_context(skip_context, 'INFO');
-        pseudo_CT_output('INFO', skip_context, 'Skipping DICOM output by profile policy.');
-    end
-end
-
-% Promote final outputs and clean up according to the selected profile.
-% Full-mode promotion is stage 10. NIfTI-only promotion is separate finalizer
-% work, not a substitute for either MPRAGE-only policy skip.
-if isfield(config, 'io_policy') && isfield(config.io_policy, 'gui') && ...
-        strcmp(config.io_policy.gui, 'mprage-only')
-    stage10_context = local_workflow_stage_context(context, 10, ...
-        'SKIPPED', 'workflow.full_output_finalize', ...
-        'profile_policy:mprage_only');
-    pseudo_CT_output('INFO', stage10_context, ...
-        'Full-mode output finalization skipped by MPRAGE-only policy.');
-    local_native_stage(context, 10, 'workflow.full_output_finalize', 'SKIPPED', ...
-        'Full-mode output finalization skipped by MPRAGE-only policy (profile_policy:mprage_only).', ...
-        'local-orchestrator');
-    promotion_context = local_output_event_context(context, ...
-        'output.promote_nifti', 'operation_started');
-    full_finalize = false;
-else
-    promotion_context = local_workflow_stage_context(context, 10, ...
-        'START', 'workflow.full_output_finalize', '');
-    full_finalize = true;
-    local_native_stage(context, 10, 'workflow.full_output_finalize', 'STARTED', ...
-        'Promoting final NIfTI outputs.', 'local-orchestrator');
-end
-stage_started = tic;
-pseudo_CT_output('INFO', promotion_context, 'Promoting final NIfTI outputs.');
-promotion_success = pseudo_CT_promote_final_outputs(temp_working_dir, processing_dir, P, promotion_context);
-if ~promotion_success
-    pseudo_CT_output('ERROR', promotion_context, 'Output promotion failed; temporary files were preserved.');
-    pseudo_CT_output('INFO', promotion_context, '    %s', temp_working_dir);
-    if full_finalize
-        local_native_stage(context, 10, 'workflow.full_output_finalize', 'FAILED', ...
-            'Output promotion failed.', 'local-orchestrator');
-    end
+finalization_job = job;
+finalization_job.processing_dir = processing_dir;
+finalization_job.temp_dir = temp_dir;
+finalization_job.save_dir = save_dir;
+[success, ~] = pseudo_CT_finalize_subject(finalization_job, ...
+    fullfile(temp_working_dir, 'att_map.nii'), temp_working_dir, P, ...
+    config, context, 'local-orchestrator');
+if ~success
     return;
-end
-pseudo_CT_output('SUCCESS', local_promotion_completed_context(promotion_context), ...
-    'Outputs promoted (elapsed %s).', local_elapsed(toc(stage_started)));
-if full_finalize
-    local_native_stage(context, 10, 'workflow.full_output_finalize', 'COMPLETED', ...
-        'Outputs promoted.', 'local-orchestrator');
-end
-pseudo_CT_output('SUCCESS', local_output_event_context(promotion_context, ...
-    'output.verify', 'output_verified'), 'Promoted outputs verified.');
-if config.cleanup_on_success
-    [remove_success, msg] = pseudo_CT_cleanup_subject_temp(temp_working_dir);
-    if ~remove_success
-        pseudo_CT_output('WARN', local_output_event_context(context, ...
-            'output.cleanup', 'warning'), 'Temporary cleanup failed: %s', msg);
-    else
-        pseudo_CT_output('INFO', local_output_event_context(context, ...
-            'output.cleanup', 'operation_completed'), 'Temporary files removed.');
-    end
 end
 
 if show_dialog && ~isdeployed
@@ -880,144 +806,11 @@ if show_dialog && ~isdeployed
 end
 
 success = 1;
-% Reached only after att_map verification, promotion, and cleanup succeeded.
 completion_context = local_subject_context(job, subject_index, subject_count);
 completion_context.completion_verified = true;
 pseudo_CT_output('SUCCESS', completion_context, ...
     'Subject completed (elapsed %s).', local_elapsed(toc(subject_started)));
 
-end
-
-
-function success = local_finalize_remote_subject(job, seed_nii, config, ...
-        subject_index, subject_count, job_id)
-%LOCAL_FINALIZE_REMOTE_SUBJECT Apply the common post-remote finalization order.
-%   Optional JOB_ID propagates the accepted numeric MLSC job ID through the
-%   stage 5-8 tags.  Callers without an accepted job ID omit it.
-
-success = 0;
-if nargin < 6
-    job_id = [];
-end
-context = local_subject_context(job, subject_index, subject_count);
-context = local_attach_mlsc_job(context, job_id);
-context.stage_map = pseudo_CT_stage_map(config);
-context = local_stage_context(context, 5);
-stage_started = tic;
-pseudo_CT_output('INFO', context, 'Applying local post-processing.');
-% The shared current core owns zero-background policy; no post-fetch re-mask.
-pseudo_CT_output('SUCCESS', context, ...
-    'Local post-processing completed (elapsed %s).', ...
-    local_elapsed(toc(stage_started)));
-
-if strcmp(config.io_policy.output, 'nifti-and-dicom')
-    context = local_stage_context(context, 6);
-    stage_started = tic;
-    pseudo_CT_output('INFO', context, 'Writing DICOM output.');
-    local_native_stage(context, 9, 'workflow.dicom_output', 'STARTED', ...
-        'Writing DICOM output.', 'mlsc-lifecycle');
-    try
-        % Passing the event context routes the converter output to the run
-        % log (pseudo_CT_convert_dicom_quiet) instead of the console. The
-        % remote-detail flag suppresses it from every console mode; milestones
-        % and WARN/ERROR rows on this context are unaffected.
-        converter_context = context;
-        converter_context.console_detail_remote = true;
-        pseudo_CT_write_mu_map_dicom(fullfile(job.temp_dir, 'att_map.nii'), ...
-            job.save_dir, job.umap_fn, job.temp_dir, config.fwhm, converter_context);
-    catch ME
-        local_native_stage(context, 9, 'workflow.dicom_output', 'FAILED', ...
-            sprintf('DICOM output failed: %s', ME.message), 'mlsc-lifecycle');
-        local_log_remote_failure(job, context, ME.message);
-        return;
-    end
-    pseudo_CT_output('SUCCESS', context, 'DICOM output written (elapsed %s).', ...
-        local_elapsed(toc(stage_started)));
-    local_native_stage(context, 9, 'workflow.dicom_output', 'COMPLETED', ...
-        'DICOM output written.', 'mlsc-lifecycle');
-else
-    % Policy skip is not stage 5 work (mirrors the Local path): no stage cell.
-    skip_context = rmfield(context, {'stage_index', 'stage_count'});
-    if isfield(config, 'io_policy') && isfield(config.io_policy, 'gui') && ...
-            strcmp(config.io_policy.gui, 'mprage-only')
-        skip_context = local_workflow_stage_context(skip_context, 9, ...
-            'SKIPPED', 'workflow.dicom_output', 'profile_policy:mprage_only');
-        pseudo_CT_output('INFO', skip_context, ...
-            'DICOM output skipped by MPRAGE-only policy.');
-        local_native_stage(context, 9, 'workflow.dicom_output', 'SKIPPED', ...
-            'DICOM output skipped by MPRAGE-only policy (profile_policy:mprage_only).', ...
-            'mlsc-lifecycle');
-    else
-        pseudo_CT_output('INFO', skip_context, 'Skipping DICOM output by profile policy.');
-    end
-end
-
-if isfield(config, 'io_policy') && isfield(config.io_policy, 'gui') && ...
-        strcmp(config.io_policy.gui, 'mprage-only')
-    stage10_context = local_workflow_stage_context(context, 10, ...
-        'SKIPPED', 'workflow.full_output_finalize', ...
-        'profile_policy:mprage_only');
-    pseudo_CT_output('INFO', stage10_context, ...
-        'Full-mode output finalization skipped by MPRAGE-only policy.');
-    local_native_stage(context, 10, 'workflow.full_output_finalize', 'SKIPPED', ...
-        'Full-mode output finalization skipped by MPRAGE-only policy (profile_policy:mprage_only).', ...
-        'mlsc-lifecycle');
-    promotion_context = local_output_event_context(context, ...
-        'output.promote_nifti', 'operation_started');
-    full_finalize = false;
-else
-    promotion_context = local_workflow_stage_context(context, 10, ...
-        'START', 'workflow.full_output_finalize', '');
-    full_finalize = true;
-    local_native_stage(context, 10, 'workflow.full_output_finalize', 'STARTED', ...
-        'Promoting final outputs.', 'mlsc-lifecycle');
-end
-stage_started = tic;
-pseudo_CT_output('INFO', promotion_context, 'Promoting final outputs.');
-promotion_success = pseudo_CT_promote_final_outputs( ...
-    job.temp_dir, job.processing_dir, seed_nii, promotion_context);
-if ~promotion_success
-    pseudo_CT_output('ERROR', promotion_context, ...
-        'Output promotion failed; temporary files were preserved.');
-    pseudo_CT_output('INFO', promotion_context, '    %s', job.temp_dir);
-    if full_finalize
-        local_native_stage(context, 10, 'workflow.full_output_finalize', 'FAILED', ...
-            'Output promotion failed.', 'mlsc-lifecycle');
-    end
-    local_log_subject_failure(job, promotion_context);
-    return;
-end
-pseudo_CT_output('SUCCESS', local_promotion_completed_context(promotion_context), ...
-    'Outputs promoted (elapsed %s).', local_elapsed(toc(stage_started)));
-if full_finalize
-    local_native_stage(context, 10, 'workflow.full_output_finalize', 'COMPLETED', ...
-        'Outputs promoted.', 'mlsc-lifecycle');
-end
-pseudo_CT_output('SUCCESS', local_output_event_context(promotion_context, ...
-    'output.verify', 'output_verified'), 'Promoted outputs verified.');
-
-stage_started = tic;
-cleanup_context = local_output_event_context(context, ...
-    'output.cleanup', 'operation_started');
-pseudo_CT_output('INFO', cleanup_context, 'Cleaning up temporary files.');
-if config.cleanup_on_success
-    [remove_success, msg] = pseudo_CT_cleanup_subject_temp(job.temp_dir);
-    if ~remove_success
-        pseudo_CT_output('WARN', local_output_event_context(cleanup_context, ...
-            'output.cleanup', 'warning'), 'Temporary cleanup failed: %s', msg);
-    end
-end
-pseudo_CT_output('SUCCESS', local_output_event_context(cleanup_context, ...
-    'output.cleanup', 'operation_completed'), 'Cleanup completed (elapsed %s).', ...
-    local_elapsed(toc(stage_started)));
-
-success = 1;
-final_context = local_subject_context(job, subject_index, subject_count);
-final_context = local_attach_mlsc_job(final_context, job_id);
-% Reached only after att_map verification, promotion, and cleanup succeeded.
-final_context.completion_verified = true;
-pseudo_CT_output('SUCCESS', final_context, ...
-    'Subject completed (elapsed %s).', local_elapsed(toc(job.subject_started)));
 end
 
 
@@ -1097,51 +890,11 @@ end
 end
 
 
-function seed_nii = local_convert_dicom(input_file, output_file, context)
-%LOCAL_CONVERT_DICOM Run dcm2nii with its console output kept off the table.
-%   Shared with the stage-9 reference conversion (see
-%   PSEUDO_CT_CONVERT_DICOM_QUIET): converter lines go to the subject run log
-%   only; the public table keeps the stage events.
-seed_nii = pseudo_CT_convert_dicom_quiet(input_file, output_file, context);
-end
-
-
 function context = local_subject_context(job, subject_index, subject_count)
 context = struct('log_file', job.log_file, 'subject_index', subject_index, ...
     'subject_count', subject_count, 'scope', 'subject');
 end
 
-
-function stage_number = local_dicom_producer_stage(context)
-% Producer stage number of the DICOM output step, read from the active
-% policy map (the map's 'Writing DICOM output' title). Never a hard-coded number.
-stage_number = 0;
-if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
-        isfield(context.stage_map, 'titles') && ...
-        isfield(context.stage_map, 'producer_stage_numbers')
-    slot = find(strcmp(context.stage_map.titles, 'Writing DICOM output'), 1);
-    if ~isempty(slot)
-        stage_number = context.stage_map.producer_stage_numbers(slot);
-    end
-end
-if stage_number < 1
-    error('pseudo_CT:StageMap:NoDicomStage', ...
-        'Active stage map declares no DICOM output stage.');
-end
-end
-
-function local_native_stage(context, stage_index, stage_id, status, message, source)
-% Advisory native stage record for one real lifecycle operation (stages 1, 9
-% and 10). Written only when the subject has a run log; never changes the
-% workflow result. STATUS is STARTED, COMPLETED, FAILED or SKIPPED.
-target = pseudo_CT_scientific_event_target(context);
-if isempty(target.path)
-    return;
-end
-pseudo_CT_scientific_event(target, struct('event_type', 'stage', ...
-    'stage_id', stage_id, 'stage_index', stage_index, 'status', status, ...
-    'message', message, 'source', source));
-end
 
 function context = local_stage_context(context, stage_index)
 context.stage_index = stage_index;
@@ -1159,113 +912,6 @@ if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
     end
 end
 end
-
-function context = local_workflow_stage_context(context, stage_number, status, ...
-        stage_id, reason)
-% Attach an explicit ten-stage public event without changing producer behavior.
-context.workflow_event = true;
-context.stage_index = stage_number;
-context.stage_count = 10;
-context.stage_id = stage_id;
-context.operation_id = stage_id;
-context.stage_status = status;
-context.event_kind = local_workflow_event_kind(status);
-context.source = 'orchestrator';
-context.source_file = 'src/orchestration/pseudo_CT_run_lifecycle.m';
-context.live = true;
-if isempty(reason)
-    if isfield(context, 'reason')
-        context = rmfield(context, 'reason');
-    end
-else
-    context.reason = reason;
-end
-end
-
-function context = local_workflow_event_context(context, stage_id, ...
-        operation_id, event_kind, status)
-% Attach an unnumbered orchestration event with explicit provenance.
-if isfield(context, 'stage_index')
-    context = rmfield(context, 'stage_index');
-end
-if isfield(context, 'stage_count')
-    context = rmfield(context, 'stage_count');
-end
-context.workflow_event = true;
-context.stage_id = stage_id;
-context.operation_id = operation_id;
-context.event_kind = event_kind;
-context.event_category = 'preparation';
-context.stage_status = status;
-context.source = 'orchestrator';
-context.source_file = 'src/orchestration/pseudo_CT_run_lifecycle.m';
-context.live = true;
-end
-
-function context = local_output_event_context(context, operation_id, event_kind)
-% Structured, unnumbered finalization events remain distinct from workflow steps.
-stale_fields = {'stage_index'; 'stage_count'; 'stage_id'; 'reason'; ...
-    'stage_span'; 'operation_ids'; 'event_category'; 'stage_message'};
-for ii = 1:length(stale_fields)
-    if isfield(context, stale_fields{ii})
-        context = rmfield(context, stale_fields{ii});
-    end
-end
-context.workflow_event = true;
-context.operation_id = operation_id;
-context.event_kind = event_kind;
-context.source = 'orchestrator';
-context.source_file = 'src/orchestration/pseudo_CT_run_lifecycle.m';
-context.live = true;
-if strcmp(event_kind, 'warning')
-    context.stage_status = 'WARN';
-elseif strcmp(event_kind, 'output_verified')
-    context.stage_status = 'DONE';
-elseif strcmp(event_kind, 'operation_completed')
-    context.stage_status = 'DONE';
-elseif strcmp(event_kind, 'operation_started')
-    context.stage_status = 'START';
-end
-end
-
-function context = local_promotion_completed_context(context)
-if isfield(context, 'stage_id') && ischar(context.stage_id) && ...
-        strcmp(context.stage_id, 'workflow.full_output_finalize')
-    context = local_workflow_stage_context(context, 10, 'DONE', ...
-        'workflow.full_output_finalize', '');
-else
-    context = local_output_event_context(context, ...
-        'output.promote_nifti', 'operation_completed');
-end
-end
-
-function event_kind = local_workflow_event_kind(status)
-if strcmp(status, 'START')
-    event_kind = 'stage_started';
-elseif strcmp(status, 'DONE')
-    event_kind = 'stage_completed';
-elseif strcmp(status, 'SKIPPED')
-    event_kind = 'stage_skipped';
-elseif strcmp(status, 'WARN')
-    event_kind = 'warning';
-elseif strcmp(status, 'ERROR')
-    event_kind = 'failure';
-else
-    event_kind = 'stage_event';
-end
-end
-
-function context = local_status_context(context, status)
-% Canonical semantic status (START, DONE, WARN, ERROR, INFO) of a local
-% stage event; the console presenter formats it without interpreting the
-% message. Returns a copy (never stored).
-if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
-        any(strcmp(context.console_profile, ...
-        {'local'; 'local-mprage-only'}))
-    context.stage_status = status;
-end
-end
-
 
 function local_write_log_header(context, profile_name, mode_name, input_path, ...
     start_time, processing_dir, temp_dir)

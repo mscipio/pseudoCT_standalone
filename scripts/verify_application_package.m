@@ -82,12 +82,12 @@ for kk = 1:numel(listed)
 end
 % This verifies the build staging tree only (build_application.m calls it on its
 % output), where the compiled dispatcher is nested under standalone/. Installed
-% distributions are flat (runtimes/<LABEL>/pseudoct_standalone) and are verified
+% distributions are flat (runtimes/<LABEL>/pseudoct_job_manager) and are verified
 % by release_application.py. A standalone/ directory must contain its executable.
 if exist(fullfile(package_dir, 'standalone'), 'dir') == 7 && ...
-        exist(fullfile(package_dir, 'standalone', 'pseudoct_standalone'), 'file') ~= 2
+        exist(fullfile(package_dir, 'standalone', 'pseudoct_job_manager'), 'file') ~= 2
     error('pseudo_CT:PackageIncomplete', ...
-        'standalone/ lacks the compiled pseudoct_standalone dispatcher: %s', package_dir);
+        'standalone/ lacks the compiled pseudoct_job_manager dispatcher: %s', package_dir);
 end
 
 report = struct('passed', true, 'file_count', numel(listed), ...

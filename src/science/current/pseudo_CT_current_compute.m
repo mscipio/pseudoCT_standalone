@@ -2,7 +2,7 @@ function [Pf] = pseudo_CT_current_compute(P_in, dir_batch_templates_in, config, 
 %PSEUDO_CT_CURRENT_COMPUTE Post-normalization computation for the current pipeline.
 %   PF = PSEUDO_CT_CURRENT_COMPUTE(P_IN, DIR_BATCH_TEMPLATES_IN, CONFIG,
 %   OUTPUT_CONTEXT_IN, FH_IN)
-%   Compute phase of the shared compiled worker (pseudoct_worker). The local
+%   Compute phase of the shared compiled pipeline (pseudoct_pipeline). The local
 %   current runner and MLSC jobs both reach it through that worker. Implements
 %   the post-normalization order exactly: MNI/PCA/masking/segmentation/bone/
 %   DARTEL/inverse warp/reslice/attenuation/QC.
