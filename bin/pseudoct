@@ -901,7 +901,7 @@ run_headless() {
     result_path=$3
     set +e
     python3 - "$self" "$request_path" \
-        "$result_path" "$format" "$tmp_dir/matlab-diagnostics-$phase.log" \
+        "$result_path" "$format" "$tmp_dir/matlab-diagnostics-${4:-$phase}.log" \
         "$invocation_id" "$run_log_index" "$profile" \
         ${headless_args[@]+"${headless_args[@]}"} <<'PY'
 import json
@@ -1396,7 +1396,7 @@ PY
         if ! matlab_support prepare_validate "$account_request" '' '' ''; then
             error_record "$EXIT_RUNTIME" 'The account check request could not be serialized.'
         fi
-        run_headless validate "$account_request" "$account_result"
+        run_headless validate "$account_request" "$account_result" account-check
         account_launcher_status=$?
         if [ ! -s "$account_result" ]; then
             error_record "$EXIT_RUNTIME" "Account check launcher returned no result MAT (status $account_launcher_status)."
