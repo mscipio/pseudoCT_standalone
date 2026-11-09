@@ -1,10 +1,11 @@
 function pseudo_CT_present_scientific_events(events, context)
-%PSEUDO_CT_PRESENT_SCIENTIFIC_EVENTS Show scientific stage events on the console.
-%   PSEUDO_CT_PRESENT_SCIENTIFIC_EVENTS(EVENTS, CONTEXT) shows each event through
-%   pseudo_CT_output_console_visible, using the ten-stage presenter. EVENTS is a
-%   struct array from the scientific stream parser (stage, status, message and
-%   source fields). Inferred transitions get an '[inferred]' prefix. Nothing is
-%   printed when PSEUDOCT_OUTPUT_FORMAT is 'jsonl'.
+%PSEUDO_CT_PRESENT_SCIENTIFIC_EVENTS Show native scientific stage events.
+%   PSEUDO_CT_PRESENT_SCIENTIFIC_EVENTS(EVENTS, CONTEXT) shows each record of
+%   EVENTS, as read by pseudo_CT_scientific_event_read, through
+%   pseudo_CT_output_console_visible, the one console boundary for stage rows.
+%   Records are shown exactly as persisted: no transition is inferred. The
+%   JSONL view is emitted by that same boundary (PSEUDOCT_OUTPUT_FORMAT=jsonl),
+%   so text and JSONL show the same admitted events.
 %   Side effects: prints to the console. Minimum supported MATLAB: R2010b.
 if nargin < 2, context = struct(); end
 for ii = 1:length(events)
@@ -15,9 +16,6 @@ for ii = 1:length(events)
     ctx.stage_index = event.stage.index; ctx.stage_count = 10;
     ctx.stage_status = event.status;
     ctx.stage_message = event.message;
-    if strcmp(event.transition_kind, 'inferred')
-        ctx.stage_message = ['[inferred] ' ctx.stage_message];
-    end
     ctx.source = 'backend'; ctx.source_file = event.source.file;
     level = 'INFO';
     if any(strcmp(event.status, {'WARN'; 'ERROR'})), level = event.status; end

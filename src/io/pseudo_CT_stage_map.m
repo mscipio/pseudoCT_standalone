@@ -166,13 +166,13 @@ end
 
 function maps = local_maps()
 % Producer citations (all paths under src/):
-%  - local (10 stages): stage 1 and
-%    promotion in orchestration/pseudo_CT_run_lifecycle.m (local_run_subject);
-%    stages 2-8 in backends/local/pseudo_CT_run_local_current_subject.m.
+%  - local (10 stages): stage 1 in io/pseudo_CT_prepare_input.m; stages 2-8 in
+%    science/current/pseudoct_pipeline.m (one invocation); stages 9-10 in
+%    orchestration/pseudo_CT_finalize_subject.m.
 %  - local-mprage-only: same producers as local, DICOM omitted.
-%  - mlsc and mlsc-mprage-only: stages 1-2 and 5-8 in
-%    orchestration/pseudo_CT_run_lifecycle.m (local_finalize_remote_subject
-%    for 5-8); stages 3-4 in backends/mlsc/mlsc_lifecycle.m.
+%  - mlsc and mlsc-mprage-only: stages 1, 9 and 10 are produced by the
+%    submitting manager (pseudo_CT_prepare_input and pseudo_CT_finalize_subject);
+%    stages 2-8 are produced by the one remote pipeline invocation.
 % No totals or starts are inferred from these maps beyond the policy keys.
 maps = repmat(local_empty_map(), 1, 4);
 maps(1) = local_make_map('local', 'local', ...

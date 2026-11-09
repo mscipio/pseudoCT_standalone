@@ -93,6 +93,16 @@ release, an unsupported architecture, or a missing or mismatched MATLAB Runtime 
 - `--group-account ACCOUNT`, `--host-key-file FILE`, `--credential-handoff FILE`:
   MLSC inputs. The handoff is an existing single-use credential file created for
   the submit step. Secrets are never accepted on the command line.
+- `--check-account`: MLSC only, `run validate` only. It authenticates, discovers the
+  MLSC accounts and applies the account rule before reporting: a blank or omitted
+  `--group-account` selects the first discovered account, and an explicit account
+  must be one of the discovered accounts. It then stops. It never submits: the
+  result reports `submission_status` `not_attempted`, no job IDs, and no `sbatch`
+  call is made. An invalid explicit account returns `INVALID_GROUP_ACCOUNT` (exit
+  `66`) before any submission. The credential (a terminal prompt, or
+  `--credential-handoff`) is consumed once by this check; a later `run run`
+  authenticates again. Combining it with another action or a non-MLSC profile
+  exits `64`.
 - `--format text|jsonl`: output format (default `text`).
 
 ## Validate and submit
@@ -102,8 +112,10 @@ This is the single authoritative description of validation and submission.
 - **Validate** (`run validate`, the GUI Validate button, or a `validate` request)
   resolves and checks the selected profile, inputs, outputs, dependencies and,
   for MLSC, the applicable artifact integrity. It does not authenticate, contact
-  remote services, or run scientific processing. A successful validation reports
-  `ready`; it is not a processing result.
+  remote services, or run scientific processing; the only exception is the MLSC
+  `--check-account` option (see [Options](#options-run-validaterun)), which
+  authenticates and checks the account but still never submits. A successful
+  validation reports `ready`; it is not a processing result.
 - **Submit** (`run run`, the GUI Submit button, or a `submit` request) uses the
   resolved job bound by a successful validation and rechecks inputs and artifacts;
   changed or stale inputs fail closed. Local submit runs synchronously in the

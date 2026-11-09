@@ -24,18 +24,13 @@ function result = mlsc_lifecycle(subject, config, runtime, transport)
 %   non-empty. Terminal Slurm logs are archived to RUNTIME.log_archive_dir before
 %   local cleanup can remove the shared subject temp folder.
 %
-%   Scientific progress: the function reads only the per-submission file
-%   shared_subject_temp/.mlsc_progress_<correlation-id> (passed through the
-%   backend artifact), incrementally during each poll and once at the terminal
-%   state. It never scans the folder or infers the latest file. A missing, late,
-%   partial or unreadable file never fails the job. Only complete recognized
-%   records are emitted, once. result.progress records a secret-free
-%   incomplete-trailing flag and the pending byte count, never the trailing
-%   content. The durable progress archive holds only validated milestones, never
-%   raw source bytes.
+%   Stage events: the remote pipeline is the only writer of the shared native
+%   event file (job event_path). This function reads no progress sidecar, writes
+%   no stage records and derives no scientific state. Liveness is observed from
+%   the local Slurm state polls and output heartbeats only.
 %
 %   Side effects: submits, polls and cancels the job through TRANSPORT, and writes
-%   the log and progress archives (best-effort; failures are non-fatal). Errors:
+%   the Slurm log archives (best-effort; failures are non-fatal). Errors:
 %   pseudo_CT:MLSCPreflight for an invalid subject or config, and
 %   pseudo_CT:MLSCTransportRequired when a required callback is missing.
 %   Minimum supported MATLAB: R2010b.
@@ -71,8 +66,6 @@ if ~isstruct(runtime) || numel(runtime) ~= 1
 end
 runtime = local_runtime_defaults(runtime);
 local_validate_runtime(runtime);
-% MLSC has one supported scientific stream protocol.
-stream_version = 'v3';
 
     result = local_initial_result(subject, runtime, transport);
 evidence = mlsc_evidence('init', local_evidence_values(result));
@@ -119,23 +112,13 @@ result.workflow_state = 'pending';
 result.timestamps.submitted_at = local_timestamp(transport);
 result = local_append_state(result, 'pending', transport);
 result.contract = local_contract_from_artifact(backend.artifact);
-[progress_path, progress_cursor, progress_milestones] = ...
-    local_progress_init(backend, result.shared_subject_temp);
-result.progress.source_path = progress_path;
-result.progress.milestones = progress_milestones;
-try
-    result.progress.cursor_offset = progress_cursor.offset;
-catch %#ok<CTCH>
-end
-result = local_progress_record_trailing(result, progress_cursor);
 
 output_tracker = local_output_init(runtime, transport);
 [slurm_log_paths, slurm_log_cursors] = local_slurm_log_init( ...
     result.log_paths, job_id);
 slurm_log_state = struct();
 % Native scientific events (read-only here; the remote pipeline is the writer).
-native_events_path = local_native_events_path(runtime);
-direct_stdout = local_direct_stdout_init();
+native_state = local_native_state_init();
 local_emit_accepted(runtime, job_id);
 terminal_observed = false;
 accounting_deadline = [];
@@ -159,19 +142,16 @@ try
         if strcmp(squeue_state, 'running') && isempty(result.timestamps.started_at)
             result.timestamps.started_at = local_timestamp(transport);
         end
-        % Drain timestamped Slurm output before the timestamp-free milestone
-        % sidecar. Otherwise a buffered child log line can be displayed after
-        % a later milestone merely because its file was polled second.
+        % Drain timestamped Slurm output before the native event poll so a
+        % buffered child log line is not displayed after a later native record
+        % merely because its file was polled second.
         try
             [slurm_log_cursors, slurm_log_state] = local_slurm_log_poll( ...
                 slurm_log_paths, slurm_log_cursors, slurm_log_state, ...
                 runtime, job_id, false);
         catch %#ok<CTCH>
         end
-        direct_stdout = local_scientific_stdout_poll(slurm_log_paths.stdout, ...
-            direct_stdout, stream_version, runtime, job_id, false);
-        direct_stdout = local_native_events_poll(native_events_path, ...
-            direct_stdout, runtime, job_id);
+        native_state = local_native_events_poll(native_state, runtime, job_id);
         output_tracker = local_output_note(output_tracker, runtime, ...
             job_id, squeue_state, transport);
 
@@ -209,11 +189,9 @@ try
         result.elapsed_seconds = elapsed;
         if elapsed >= runtime.timeout_seconds
             result = local_request_cancel(result, transport);
-            [result, sacct_record, accounting_done, output_tracker, ...
-                progress_cursor, progress_milestones, direct_stdout] = ...
+            [result, sacct_record, accounting_done, output_tracker] = ...
                 local_wait_for_accounting(result, runtime, transport, ...
-                output_tracker, progress_path, progress_cursor, ...
-                progress_milestones, direct_stdout);
+                output_tracker);
             if accounting_done
                 result = local_apply_accounting(result, sacct_record, subject, transport);
             else
@@ -231,22 +209,6 @@ try
         end
         output_tracker = local_output_maybe_heartbeat(output_tracker, ...
             runtime, job_id, result, transport);
-        try
-            [progress_cursor, progress_milestones, direct_stdout] = ...
-                local_progress_poll(progress_path, progress_cursor, ...
-                progress_milestones, runtime, job_id, direct_stdout);
-            result.progress.milestones = progress_milestones;
-            try
-                result.progress.cursor_offset = progress_cursor.offset;
-            catch %#ok<CTCH>
-            end
-            result = local_progress_record_trailing(result, ...
-                progress_cursor);
-            local_poll_guard('update', guard_id, struct('result', result, ...
-                'evidence', evidence, 'runtime', runtime, ...
-                'transport', transport));
-        catch %#ok<CTCH>
-        end
         if poll < runtime.max_polls
             local_sleep(runtime.poll_interval_seconds, transport);
         end
@@ -259,11 +221,9 @@ try
                 'sacct terminal accounting remained unavailable after a bounded wait.');
         else
             result = local_request_cancel(result, transport);
-            [result, sacct_record, accounting_done, output_tracker, ...
-                progress_cursor, progress_milestones, direct_stdout] = ...
+            [result, sacct_record, accounting_done, output_tracker] = ...
                 local_wait_for_accounting(result, runtime, transport, ...
-                output_tracker, progress_path, progress_cursor, ...
-                progress_milestones, direct_stdout);
+                output_tracker);
             if accounting_done
                 result = local_apply_accounting(result, sacct_record, subject, transport);
             else
@@ -281,25 +241,8 @@ try
         runtime, job_id, true);
 catch %#ok<CTCH>
 end
-% Terminal order: final stdout drain (may settle held stage 5-8 SUCCESS), then
-% the final progress poll, then one release of whatever is still held.
-direct_stdout = local_scientific_stdout_poll(slurm_log_paths.stdout, ...
-    direct_stdout, stream_version, runtime, job_id, true);
-direct_stdout = local_native_events_poll(native_events_path, ...
-    direct_stdout, runtime, job_id);
-try
-    [progress_cursor, progress_milestones, direct_stdout] = ...
-        local_progress_poll(progress_path, progress_cursor, ...
-        progress_milestones, runtime, job_id, direct_stdout);
-    result.progress.milestones = progress_milestones;
-    try
-        result.progress.cursor_offset = progress_cursor.offset;
-    catch %#ok<CTCH>
-    end
-    result = local_progress_record_trailing(result, progress_cursor);
-catch %#ok<CTCH>
-end
-direct_stdout = local_release_held_progress(direct_stdout, runtime, job_id);
+% Terminal order: the final native event poll precedes the terminal row.
+native_state = local_native_events_poll(native_state, runtime, job_id);
 local_emit_terminal(runtime, result, transport);
 local_poll_guard('deactivate', guard_id, struct());
 result = local_finish(result, evidence, runtime, transport);
@@ -520,7 +463,6 @@ if ~isempty(runtime.evidence_dir)
 end
 result.log_paths = local_empty_log_paths(result.shared_subject_temp, ...
     runtime.log_archive_dir);
-result.progress = local_empty_progress();
 result.copy_back = struct('contract_represented', false, ...
     'verified', false, 'att_map_path', '', 'att_map_present', false, ...
     'att_map_nonempty', false);
@@ -556,11 +498,11 @@ function contract = local_contract_from_artifact(artifact)
 %LOCAL_CONTRACT_FROM_ARTIFACT Node-local/copy-back contract from script.
 %   Require one supported pinned pipeline invocation, staged job/resource
 %   manifests (installed direct mode stages only the job manifest), required
-%   output/evidence verification and copy-back, supported progress records,
-%   pinned startup recheck, and no global LD_LIBRARY_PATH. The pipeline owns
-%   prepare, FreeSurfer normalization and compute through one shared code path.
-%   The existing heartbeat/progress/cancellation/receipt/timeout/cleanup/
-%   finalization model is reused with no second poller.
+%   output/evidence verification and copy-back, pinned startup recheck, and no
+%   global LD_LIBRARY_PATH. The pipeline owns prepare, FreeSurfer normalization
+%   and compute through one shared code path, with no shell science records.
+%   The existing heartbeat/cancellation/receipt/timeout/cleanup/finalization
+%   model is reused with no second poller.
 contract = local_empty_contract();
 if ~isstruct(artifact)
     return;
@@ -612,13 +554,8 @@ supported_ok = length(strfind(script, pipeline_command)) == 1 && ...
     ~isempty(strfind(script, 'mlsc_current_output_verification.txt')) && ...
     ~isempty(strfind(script, 'mlsc_current_prepare_evidence.txt')) && ...
     ~isempty(strfind(script, 'mlsc_current_handoff.mat')) && ...
-    ~isempty(strfind(script, 'preparation|done')) && ...
-    ~isempty(strfind(script, 'alias_recenter|done')) && ...
-    ~isempty(strfind(script, 'alignment_mask|done')) && ...
-    ~isempty(strfind(script, 'segmentation|done')) && ...
-    ~isempty(strfind(script, 'bone|done')) && ...
-    ~isempty(strfind(script, 'dartel_warp_reslice|done')) && ...
-    ~isempty(strfind(script, 'attenuation_qc|done')) && ...
+    isempty(strfind(script, 'mlsc_record_progress')) && ...
+    isempty(strfind(script, '|done''')) && ...
     ~isempty(strfind(script, 'pinned_mcr_root=')) && ...
     isempty(strfind(script, 'export LD_LIBRARY_PATH')) && ...
     isempty(strfind(script, 'source "$shared_temp/mlsc_current_handoff')) && ...
@@ -1545,31 +1482,13 @@ try
 end
 end
 
-function [result, record, terminal, tracker, progress_cursor, ...
-        progress_milestones, direct] = local_wait_for_accounting( ...
-        result, runtime, transport, tracker, progress_path, ...
-        progress_cursor, progress_milestones, direct)
-%LOCAL_WAIT_FOR_ACCOUNTING Bounded terminal-accounting wait with progress polls.
-%   Progress polls here may hold category (a) milestones in DIRECT but never
-%   release them; release happens once, at the lifecycle terminal path.
+function [result, record, terminal, tracker] = local_wait_for_accounting( ...
+        result, runtime, transport, tracker)
+%LOCAL_WAIT_FOR_ACCOUNTING Bounded terminal-accounting wait with heartbeats.
 record = local_empty_accounting_record(result.job_id);
 terminal = false;
 if nargin < 4 || ~isstruct(tracker) || numel(tracker) ~= 1
     tracker = local_output_init(runtime, transport);
-end
-if nargin < 5
-    progress_path = '';
-end
-if nargin < 6 || ~isstruct(progress_cursor) || numel(progress_cursor) ~= 1
-    try
-        progress_cursor = mlsc_progress('init');
-    catch %#ok<CTCH>
-        progress_cursor = struct('offset', 0, 'pending', '');
-        progress_cursor.emitted = cell(0, 1);
-    end
-end
-if nargin < 7 || ~iscell(progress_milestones)
-    progress_milestones = cell(0, 1);
 end
 job_id = result.job_id;
 for ii = 1:runtime.max_accounting_polls
@@ -1589,36 +1508,11 @@ for ii = 1:runtime.max_accounting_polls
             tracker = local_output_note(tracker, runtime, job_id, ...
                 record.state, transport);
             terminal = true;
-            try
-                [progress_cursor, progress_milestones, direct] = ...
-                    local_progress_poll(progress_path, progress_cursor, ...
-                    progress_milestones, runtime, job_id, direct);
-                result.progress.milestones = progress_milestones;
-                try
-                    result.progress.cursor_offset = progress_cursor.offset;
-                catch %#ok<CTCH>
-                end
-                result = local_progress_record_trailing(result, ...
-                    progress_cursor);
-            catch %#ok<CTCH>
-            end
             return;
         end
     end
     tracker = local_output_maybe_heartbeat(tracker, runtime, job_id, ...
         result, transport);
-    try
-        [progress_cursor, progress_milestones, direct] = local_progress_poll( ...
-            progress_path, progress_cursor, progress_milestones, ...
-            runtime, job_id, direct);
-        result.progress.milestones = progress_milestones;
-        try
-            result.progress.cursor_offset = progress_cursor.offset;
-        catch %#ok<CTCH>
-        end
-        result = local_progress_record_trailing(result, progress_cursor);
-    catch %#ok<CTCH>
-    end
     if ii < runtime.max_accounting_polls
         local_sleep(runtime.poll_interval_seconds, transport);
     end
@@ -1630,7 +1524,6 @@ function result = local_finish(result, evidence, runtime, transport)
 result.executor_provenance = local_read_executor_provenance( ...
     result.shared_subject_temp, result.job_id);
 result.log_paths = local_archive_logs(result.log_paths, result.job_id, runtime);
-result = local_archive_progress(result, runtime);
 result.cleanup = local_cleanup(result.cleanup, runtime, transport, ...
     result.script_materialized);
 if result.cleanup.failed
@@ -1913,16 +1806,6 @@ values.shared_output_staging = ...
 values.scp_used = false;
 values.network_payload_staging = false;
 values.copy_back = result.copy_back;
-values.progress = result.progress;
-values.progress_milestones = result.progress.milestones;
-values.progress_source_path = result.progress.source_path;
-values.progress_archive_path = result.progress.archive_path;
-values.progress_cursor_offset = result.progress.cursor_offset;
-values.progress_incomplete_trailing = local_progress_evidence_flag(result);
-values.progress_pending_bytes = local_progress_evidence_bytes(result);
-values.progress_archive_attempted = result.progress.archive_attempted;
-values.progress_archive_succeeded = result.progress.archive_succeeded;
-values.progress_archive_detail = result.progress.archive_detail;
 values.cleanup = result.cleanup;
 values.failure = result.failure;
 values.failure_detail = result.failure_detail;
@@ -2136,24 +2019,8 @@ try
             catch %#ok<CTCH>
             end
         end
-        if isfield(source, 'stage_index')
-            try
-                value = source.stage_index;
-                if isnumeric(value) && isscalar(value) && isfinite(value)
-                    context.stage_index = value;
-                end
-            catch %#ok<CTCH>
-            end
-        end
-        if isfield(source, 'stage_count')
-            try
-                value = source.stage_count;
-                if isnumeric(value) && isscalar(value) && isfinite(value)
-                    context.stage_count = value;
-                end
-            catch %#ok<CTCH>
-            end
-        end
+        % Stage numbers are never copied into Slurm-log diagnostic context:
+        % diagnostics stay unnumbered (native events own the numbered rows).
         if isfield(source, 'console_profile')
             try
                 value = source.console_profile;
@@ -2443,137 +2310,6 @@ catch %#ok<CTCH>
 end
 end
 
-function progress = local_empty_progress()
-progress = struct();
-progress.source_path = '';
-progress.archive_path = '';
-progress.milestones = cell(0, 1);
-progress.cursor_offset = 0;
-progress.incomplete_trailing = false;
-progress.pending_bytes = 0;
-progress.archive_attempted = false;
-progress.archive_succeeded = false;
-progress.archive_detail = '';
-end
-
-function [progress_path, progress_cursor, progress_milestones] = ...
-        local_progress_init(backend, shared_temp)
-%LOCAL_PROGRESS_INIT Select the exact current-submission progress artifact.
-%   Reads only the backend-selected unique file; never scans a directory
-%   and never infers a latest file.  A stale prior-submission
-%   file is therefore never consumed.  R2010b only.
-progress_path = '';
-try
-    progress_cursor = mlsc_progress('init');
-catch %#ok<CTCH>
-    progress_cursor = struct('offset', 0, 'pending', '');
-    progress_cursor.emitted = cell(0, 1);
-end
-progress_milestones = cell(0, 1);
-try
-    explicit = local_explicit_progress_path(backend);
-    if ischar(explicit) && size(explicit, 1) == 1 && ...
-            ~isempty(explicit) && ~any(explicit == char(0))
-        progress_path = explicit;
-        return;
-    end
-    if ischar(shared_temp) && size(shared_temp, 1) == 1 && ...
-            ~isempty(shared_temp) && ~any(shared_temp == char(0))
-        if isstruct(backend) && numel(backend) == 1 && ...
-                isfield(backend, 'submission_correlation_id')
-            candidate = backend.submission_correlation_id;
-            if ischar(candidate) && size(candidate, 1) == 1 && ...
-                    ~isempty(candidate)
-                try
-                    progress_path = mlsc_progress('path_for', ...
-                        shared_temp, candidate);
-                    return;
-                catch %#ok<CTCH>
-                end
-            end
-        end
-        progress_path = mlsc_progress('path', shared_temp);
-    end
-catch %#ok<CTCH>
-    if isempty(progress_path)
-        progress_path = '';
-    end
-end
-end
-
-function explicit = local_explicit_progress_path(backend)
-explicit = '';
-try
-    if ~isstruct(backend) || numel(backend) ~= 1
-        return;
-    end
-    if isfield(backend, 'artifact') && isstruct(backend.artifact) && ...
-            numel(backend.artifact) == 1 && ...
-            isfield(backend.artifact, 'progress_path')
-        candidate = backend.artifact.progress_path;
-        if ischar(candidate) && size(candidate, 1) == 1 && ...
-                ~isempty(candidate) && ~any(candidate == char(0))
-            explicit = candidate;
-            return;
-        end
-    end
-    if isfield(backend, 'progress_path')
-        candidate = backend.progress_path;
-        if ischar(candidate) && size(candidate, 1) == 1 && ...
-                ~isempty(candidate) && ~any(candidate == char(0))
-            explicit = candidate;
-            return;
-        end
-    end
-catch %#ok<CTCH>
-    explicit = '';
-end
-end
-
-function [progress_cursor, progress_milestones, direct] = local_progress_poll( ...
-        progress_path, progress_cursor, progress_milestones, runtime, job_id, ...
-        direct)
-%LOCAL_PROGRESS_POLL Consume new sidecar milestones. Never releases held items.
-%   Category (a) stage 5-8 SUCCESS milestones are held in DIRECT (or dropped if
-%   stdout already presented that stage SUCCESS). Only the terminal path
-%   releases held items, so repeated polls here cannot show them early.
-try
-    if ~ischar(progress_path) || isempty(progress_path)
-        return;
-    end
-    if ~iscell(progress_milestones)
-        progress_milestones = cell(0, 1);
-    end
-    [events, next_cursor] = mlsc_progress('consume', progress_path, ...
-        progress_cursor);
-    progress_cursor = next_cursor;
-    if isempty(events)
-        return;
-    end
-    for ii = 1:numel(events)
-        milestone = events{ii};
-        if ~ischar(milestone) || size(milestone, 1) ~= 1 || ...
-                isempty(milestone)
-            continue;
-        end
-        if local_progress_contains(progress_milestones, milestone)
-            continue;
-        end
-        progress_milestones{end + 1, 1} = milestone; %#ok<AGROW>
-        stage = local_progress_scientific_stage(milestone);
-        if stage > 0
-            direct = local_progress_hold(direct, stage, milestone);
-            continue;
-        end
-        try
-            local_progress_emit(runtime, job_id, milestone);
-        catch %#ok<CTCH>
-        end
-    end
-catch %#ok<CTCH>
-end
-end
-
 function [paths, cursors] = local_slurm_log_init(log_paths, job_id)
 %LOCAL_SLURM_LOG_INIT Resolve the accepted job's existing Slurm log files.
 %   These are read-only local files; no command, SSH, or scheduler query is
@@ -2642,66 +2378,34 @@ try
     if ~isfield(state, 'stderr') || ~isstruct(state.stderr)
         state.stderr = local_slurm_log_diagnostic_state();
     end
-    % Stdout scientific lines are owned by the direct parser; stderr keeps the
-    % regex path. Diagnostics (WARN/ERROR, continuations, noise) stay on both.
+    % Stdout and stderr are diagnostics only (WARN/ERROR, continuations, noise).
+    % Stage rows come from the native event file, never from these streams.
     [cursors.stdout, state.stdout] = local_slurm_log_tail(paths.stdout, ...
-        cursors.stdout, state.stdout, runtime, job_id, flush_partial, true);
+        cursors.stdout, state.stdout, runtime, job_id, flush_partial);
     [cursors.stderr, state.stderr] = local_slurm_log_tail(paths.stderr, ...
-        cursors.stderr, state.stderr, runtime, job_id, flush_partial, false);
+        cursors.stderr, state.stderr, runtime, job_id, flush_partial);
 catch %#ok<CTCH>
 end
 end
 
-function direct = local_native_events_poll(path_name, direct, runtime, job_id)
-%LOCAL_NATIVE_EVENTS_POLL Present new native records of this job (read-only).
-%   The remote pipeline is the only writer; this reader never appends. A stage
-%   already shown from stdout is not shown again. A missing or delayed file is
-%   non-fatal. A reader failure is reported once and stops native reading.
+function native_state = local_native_events_poll(native_state, runtime, job_id)
+%LOCAL_NATIVE_EVENTS_POLL Show new native records of this job (read-only).
+%   The remote pipeline and the manager are the writers; this drain never
+%   appends. Every record of this subject is shown once through the shared
+%   presenter, including the manager's stage 1 and finalization records. A
+%   missing or delayed file is non-fatal. A reader failure is reported once and
+%   stops native reporting for this job.
 context = struct();
 try
-    if ~isstruct(direct) || direct.native_failed || ~ischar(path_name) || ...
-            isempty(path_name)
+    if ~isstruct(native_state) || native_state.native_failed
         return;
     end
     context = local_output_context(runtime, job_id);
-    [events, direct.native] = pseudo_CT_scientific_event_read(path_name, ...
-        direct.native);
-    direct.native_capable = direct.native.covered;
-    keep = true(numel(events), 1);
-    for ii = 1:numel(events)
-        if any(events(ii).stage.index == [1 9 10]) && ...
-                strcmp(events(ii).source.version, 'mlsc-lifecycle')
-            % Stages 1, 9 and 10 are printed by the orchestrator itself
-            % (pseudo_CT_run_lifecycle); its mlsc-lifecycle records are not presented.
-            keep(ii) = false;
-        elseif strcmp(events(ii).status, 'ERROR')
-            % A native stage FAILED is shown once as a stage error row (stages
-            % 1-8, e.g. the generated script's stage 4). Failures the orchestrator
-            % already prints itself are excluded: local-orchestrator records and
-            % stages 9-10.
-            keep(ii) = events(ii).stage.index <= 8 && ...
-                ~strcmp(events(ii).source.version, 'local-orchestrator');
-        else
-            keep(ii) = ~strcmp(events(ii).status, 'WARN');
-        end
-    end
-    if isfield(context, 'subject_index')
-        % Only this subject's records: the run file may hold other subjects' records.
-        keep = keep & strcmp({events.subject}', ...
-            sprintf('subject-%d', context.subject_index));
-    end
-    events = events(keep);
-    presented = local_presented_mask(events, direct.shown, 'native', ...
-        direct.native_capable);
-    direct.shown = pseudo_CT_scientific_present_once(events, direct.shown, ...
-        'native', true, context, true);
-    direct = local_transport_rows(direct, events, presented, context);
-    if ~isempty(events)
-        direct = local_direct_stdout_settle(direct, events);
-    end
+    pseudo_CT_present_native_events(context, true);
 catch ME
-    if isstruct(direct) && isfield(direct, 'native_failed') && ~direct.native_failed
-        direct.native_failed = true;
+    if isstruct(native_state) && isfield(native_state, 'native_failed') && ...
+            ~native_state.native_failed
+        native_state.native_failed = true;
         try
             pseudo_CT_output('ERROR', context, ...
                 '%s; native scientific reporting stopped for this job.', ...
@@ -2712,84 +2416,9 @@ catch ME
 end
 end
 
-function path_name = local_native_events_path(runtime)
-%LOCAL_NATIVE_EVENTS_PATH Per-run JSONL event file of this job ('' when unknown).
-path_name = '';
-try
-    if isstruct(runtime) && isfield(runtime, 'output_context') && ...
-            isstruct(runtime.output_context) && numel(runtime.output_context) == 1
-        target = pseudo_CT_scientific_event_target(runtime.output_context);
-        path_name = target.path;
-    end
-catch %#ok<CTCH>
-    path_name = '';
-end
-end
-
-function direct = local_direct_stdout_init()
-%LOCAL_DIRECT_STDOUT_INIT Per-job state for the direct stdout parser.
-%   The shared presenter keeps process-wide dedupe state per subject slot, so
-%   each MLSC job starts clean; otherwise a later job in the same session could
-%   lose its own stage 5-8 rows as duplicates of an earlier job.
-%   PENDING{k} holds a category (a) SUCCESS milestone for stage k+4 until the
-%   stdout parser presents that stage SUCCESS (then it is discarded) or the
-%   lifecycle releases it at terminal. SATISFIED(k) records that stdout already
-%   presented stage k+4 SUCCESS, so a later progress copy is never held.
-try
-    pseudo_CT_output_console_visible('RESET');
-catch %#ok<CTCH>
-end
-direct = struct('state', struct('reader', [], 'parser', []), ...
-    'shown', containers.Map(), 'native', [], 'native_capable', false, ...
-    'native_failed', false, ...
-    'failed', false, 'pending', {repmat({''}, 1, 4)}, ...
-    'satisfied', false(1, 4), 'logged', false(1, 10));
-end
-
-function direct = local_scientific_stdout_poll(path_name, direct, version, ...
-        runtime, job_id, final)
-%LOCAL_SCIENTIFIC_STDOUT_POLL Feed the expanded job stdout to the phase-1 parser.
-%   Missing or delayed stdout is non-fatal and yields no events. Parser
-%   WARN/ERROR events are dropped because the diagnostic path owns them. A
-%   reader failure, such as a shrinking file, is reported once as an ERROR and
-%   stops direct parsing for this job; it is never treated as missing stdout.
-%   Stdout stage events are shown only until the pipeline writes native records
-%   (see pseudo_CT_scientific_present_once).
-try
-    if ~isstruct(direct) || direct.failed || ~ischar(path_name) || ...
-            isempty(path_name)
-        return;
-    end
-    context = local_output_context(runtime, job_id);
-    subject_label = 'subject';
-    if isfield(context, 'subject_index')
-        subject_label = sprintf('subject %d', context.subject_index);
-    end
-    try
-        [events, direct.state] = pseudo_CT_scientific_stream(path_name, ...
-            version, subject_label, direct.state, final);
-    catch ME
-        direct.failed = true;
-        pseudo_CT_output('ERROR', context, ...
-            '%s; direct scientific reporting stopped for this job.', ...
-            local_stdout_failure_detail(ME));
-        return;
-    end
-    keep = true(numel(events), 1);
-    for ii = 1:numel(events)
-        keep(ii) = ~any(strcmp(events(ii).status, {'WARN'; 'ERROR'}));
-    end
-    events = events(keep);
-    if ~isempty(events)
-        presented = local_presented_mask(events, direct.shown, 'stdout', ...
-            direct.native_capable);
-        direct.shown = pseudo_CT_scientific_present_once(events, direct.shown, ...
-            'stdout', direct.native_capable, context, true);
-        direct = local_transport_rows(direct, events, presented, context);
-        direct = local_direct_stdout_settle(direct, events);
-    end
-catch %#ok<CTCH>
-end
+function native_state = local_native_state_init()
+%LOCAL_NATIVE_STATE_INIT Per-job state of the native event drain.
+native_state = struct('native_failed', false);
 end
 
 function detail = local_stdout_failure_detail(ME)
@@ -2810,143 +2439,8 @@ switch ME.identifier
 end
 end
 
-function presented = local_presented_mask(events, shown, origin, native_capable)
-%LOCAL_PRESENTED_MASK Rows pseudo_CT_scientific_present_once will show.
-%   Same rule as the presenter, evaluated before its call: a stdout row is shown
-%   unless native records already cover its stage; a native row is shown unless
-%   its stage|status key is already in SHOWN. The run-log rows are exactly these.
-presented = false(numel(events), 1);
-for ii = 1:numel(events)
-    if strcmp(origin, 'stdout')
-        presented(ii) = ~local_native_covers(native_capable, events(ii).stage.index);
-    else
-        key = sprintf('%d|%s', events(ii).stage.index, events(ii).status);
-        presented(ii) = ~shown.isKey(key);
-    end
-end
-end
-
-function covered = local_native_covers(native_capable, index)
-%LOCAL_NATIVE_COVERS Mirror of pseudo_CT_scientific_present_once coverage.
-covered = false;
-if ~isnumeric(index) || ~isscalar(index) || index < 1 || index > 10 || ...
-        index ~= fix(index)
-    return;
-end
-if isscalar(native_capable)
-    covered = logical(native_capable);
-elseif numel(native_capable) >= index
-    covered = logical(native_capable(index));
-end
-end
-
-function direct = local_transport_rows(direct, events, presented, context)
-%LOCAL_TRANSPORT_ROWS Append the presented remote scientific rows to the run log.
-%   Each presented row is written once through pseudo_CT_output, the same log
-%   path as every other scientific row (the presenter itself writes no file).
-%   Log-only: console_detail_* suppress the console echo, because the presenter
-%   has already shown the row. Stages 1, 9 and 10 are not transported: the
-%   orchestrator writes its own numbered rows for them through this same path.
-%   The stage number is printed on the first row of each stage for this job,
-%   matching the console rule; later rows of that stage carry no number.
-for ii = 1:numel(events)
-    if ~presented(ii)
-        continue;
-    end
-    index = events(ii).stage.index;
-    if index < 2 || index > 8
-        continue;
-    end
-    row = context;
-    row.workflow_event = true;
-    row.console_detail_only = true;
-    row.console_detail_remote = true;
-    if direct.logged(index)
-        if isfield(row, 'stage_index')
-            row = rmfield(row, 'stage_index');
-        end
-        if isfield(row, 'stage_count')
-            row = rmfield(row, 'stage_count');
-        end
-    else
-        direct.logged(index) = true;
-        row.stage_index = index;
-        row.stage_count = 10;
-    end
-    level = 'INFO';
-    if strcmp(events(ii).status, 'DONE')
-        level = 'SUCCESS';
-    elseif strcmp(events(ii).status, 'ERROR')
-        level = 'ERROR';
-    end
-    try
-        pseudo_CT_output(level, row, '%s', events(ii).message);
-    catch %#ok<CTCH>
-    end
-end
-end
-
-function direct = local_direct_stdout_settle(direct, events)
-%LOCAL_DIRECT_STDOUT_SETTLE A presented stage SUCCESS supersedes its held copy.
-for ii = 1:numel(events)
-    if ~strcmp(events(ii).status, 'DONE')
-        continue;
-    end
-    slot = events(ii).stage.index - 4;
-    if slot < 1 || slot > 4
-        continue;
-    end
-    direct.satisfied(slot) = true;
-    direct.pending{slot} = '';
-end
-end
-
-function stage = local_progress_scientific_stage(milestone)
-%LOCAL_PROGRESS_SCIENTIFIC_STAGE Canonical stage of a category (a) milestone.
-%   The four progress SUCCESS milestones that compiled stdout also reports as
-%   stage 5-8 SUCCESS. Returns 0 for every other milestone.
-stage = 0;
-if strcmp(milestone, 'alignment_mask|done')
-    stage = 5;
-elseif strcmp(milestone, 'segmentation|done')
-    stage = 6;
-elseif strcmp(milestone, 'dartel_warp_reslice|done')
-    stage = 7;
-elseif strcmp(milestone, 'attenuation_qc|done')
-    stage = 8;
-end
-end
-
-function direct = local_progress_hold(direct, stage, milestone)
-%LOCAL_PROGRESS_HOLD Hold a category (a) SUCCESS unless stdout already showed it.
-if direct.satisfied(stage - 4)
-    return;
-end
-direct.pending{stage - 4} = milestone;
-end
-
-function direct = local_release_held_progress(direct, runtime, job_id)
-%LOCAL_RELEASE_HELD_PROGRESS Show each still-held stage 5-8 milestone once.
-%   Called only at terminal, after the final stdout drain and final progress
-%   poll. Released milestones use the existing progress display path.
-if ~isstruct(direct) || numel(direct) ~= 1
-    return;
-end
-for slot = 1:4
-    milestone = direct.pending{slot};
-    if isempty(milestone)
-        continue;
-    end
-    direct.pending{slot} = '';
-    try
-        local_progress_emit(runtime, job_id, milestone);
-    catch %#ok<CTCH>
-    end
-end
-end
-
 function [cursor, state] = local_slurm_log_tail(path_name, cursor, state, ...
-        runtime, job_id, flush_partial, direct_scientific)
+        runtime, job_id, flush_partial)
 if ~ischar(path_name) || size(path_name, 1) ~= 1 || isempty(path_name)
     return;
 end
@@ -2993,7 +2487,7 @@ try
                 bytes = uint8(bytes(:)');
                 cursor.offset = cursor.offset + length(bytes);
                 [cursor, state] = local_slurm_log_bytes(cursor, state, ...
-                    char(bytes), runtime, job_id, direct_scientific);
+                    char(bytes), runtime, job_id);
             end
         end
         fclose(fid);
@@ -3013,8 +2507,7 @@ if flush_partial
             line(end) = '';
         end
         if local_slurm_log_fresh(cursor, line)
-            state = local_slurm_log_forward(line, state, runtime, job_id, ...
-                direct_scientific);
+            state = local_slurm_log_forward(line, state, runtime, job_id);
         end
     end
     cursor.pending = '';
@@ -3044,7 +2537,7 @@ end
 end
 
 function [cursor, state] = local_slurm_log_bytes(cursor, state, bytes, ...
-        runtime, job_id, direct_scientific)
+        runtime, job_id)
 max_line_bytes = 8192;
 while ~isempty(bytes)
     newline_at = find(bytes == char(10), 1);
@@ -3069,8 +2562,7 @@ while ~isempty(bytes)
             line(end) = '';
         end
         if local_slurm_log_fresh(cursor, line)
-            state = local_slurm_log_forward(line, state, runtime, job_id, ...
-                direct_scientific);
+            state = local_slurm_log_forward(line, state, runtime, job_id);
         end
         cursor.pending = '';
     else
@@ -3080,8 +2572,7 @@ while ~isempty(bytes)
 end
 end
 
-function state = local_slurm_log_forward(line, state, runtime, job_id, ...
-        direct_scientific)
+function state = local_slurm_log_forward(line, state, runtime, job_id)
 %LOCAL_SLURM_LOG_FORWARD Forward scientific output and relevant diagnostics.
 try
     if ~isstruct(state) || ~isfield(state, 'diagnostic_level')
@@ -3092,8 +2583,7 @@ try
     if local_slurm_log_is_runtime_noise(lower_body)
         return;
     end
-    [level, message, original_stage, event_time] = ...
-        local_slurm_log_event(line, direct_scientific);
+    [level, message, event_time] = local_slurm_log_event(line);
     raw_continuation = false;
     if isempty(strtrim(line))
         if state.diagnostic_error_using
@@ -3150,10 +2640,6 @@ try
         return;
     end
     context = local_output_context(runtime, job_id);
-    if ~isempty(original_stage)
-        context.stage_index = original_stage(1);
-        context.stage_count = original_stage(2);
-    end
     if ~isempty(event_time)
         context.console_timestamp = event_time;
     end
@@ -3212,11 +2698,11 @@ yes = ischar(message) && ~isempty(regexp(lower(strtrim(message)), ...
     '^(\?+ *error|error)[ \t]+using([ \t]|$)', 'once'));
 end
 
-function [level, message, original_stage, event_time] = ...
-        local_slurm_log_event(line, direct_scientific)
+function [level, message, event_time] = local_slurm_log_event(line)
+% Diagnostic classification only. A "[stage N/M]" token in remote text never
+% supplies a stage number: stage rows come from the native event file.
 level = '';
 message = '';
-original_stage = [];
 event_time = '';
 if ~ischar(line) || isempty(line) || length(line) > 8192
     return;
@@ -3231,11 +2717,6 @@ time_match = regexp(line, ...
 if ~isempty(time_match)
     event_time = time_match{1};
 end
-stage_token = regexp(line, '\[stage[ \t]+([0-9]+)/([0-9]+)\]', ...
-    'tokens', 'once');
-if ~isempty(stage_token)
-    original_stage = [str2double(stage_token{1}) str2double(stage_token{2})];
-end
 body = local_slurm_log_body(line);
 lower_body = lower(strtrim(body));
 if isempty(lower_body) || local_slurm_log_is_runtime_noise(lower_body)
@@ -3248,33 +2729,6 @@ elseif ~isempty(regexp(lower_body, ...
         '^(\?+ *error|error)([ \t]*:|[ \t]+using([ \t]|$))', 'once'))
     level = 'ERROR';
     message = local_slurm_log_safe_message(body);
-elseif direct_scientific
-    % Direct stdout stages 5-8 are interpreted only by the phase-1 parser.
-    % WARN/ERROR above remain the diagnostic path for every stream.
-elseif local_slurm_log_has(lower_body, ...
-        'aligning mprage and creating subject mask')
-    level = 'INFO'; message = 'Aligning MPRAGE and creating subject mask.';
-elseif local_slurm_log_has(lower_body, 'alignment and masking completed')
-    level = 'SUCCESS'; message = 'Alignment and masking completed.';
-elseif local_slurm_log_has(lower_body, 'running spm new segment')
-    level = 'INFO'; message = 'Running SPM New Segment.';
-elseif local_slurm_log_has(lower_body, 'segmentation completed')
-    level = 'SUCCESS'; message = 'Segmentation completed.';
-elseif local_slurm_log_has(lower_body, 'registering atlases with dartel')
-    level = 'INFO'; message = 'Registering atlases with DARTEL.';
-elseif local_slurm_log_has(lower_body, 'applying inverse warp')
-    level = 'INFO'; message = 'Applying inverse warp.';
-elseif local_slurm_log_has(lower_body, ...
-        'reslicing atlases into mprage space')
-    level = 'INFO'; message = 'Reslicing atlases into MPRAGE space.';
-elseif local_slurm_log_has(lower_body, 'atlas registration completed')
-    level = 'SUCCESS'; message = 'Atlas registration completed.';
-elseif local_slurm_log_has(lower_body, ...
-        'building attenuation map and qc image')
-    level = 'INFO'; message = 'Building attenuation map and QC image.';
-elseif local_slurm_log_has(lower_body, ...
-        'attenuation map and qc completed')
-    level = 'SUCCESS'; message = 'Attenuation map and QC completed.';
 end
 end
 
@@ -3362,477 +2816,6 @@ for ii = 1:numel(noise)
         return;
     end
 end
-end
-
-function yes = local_slurm_log_has(text, phrase)
-yes = ~isempty(strfind(text, phrase));
-end
-
-function [has_incomplete, pending_bytes] = local_progress_trailing( ...
-        progress_cursor)
-%LOCAL_PROGRESS_TRAILING Bounded secret-free trailing-progress indicator.
-%   Returns a logical flag plus the pending-byte count for CURSOR.PENDING
-%   without returning or logging the trailing content itself.  R2010b only.
-has_incomplete = false;
-pending_bytes = 0;
-try
-    if isstruct(progress_cursor) && numel(progress_cursor) == 1 && ...
-            isfield(progress_cursor, 'pending')
-        pending = progress_cursor.pending;
-        if ischar(pending) && ~isempty(pending)
-            has_incomplete = true;
-            pending_bytes = double(numel(pending));
-            if ~isfinite(pending_bytes) || pending_bytes < 0
-                pending_bytes = 0;
-            else
-                pending_bytes = floor(pending_bytes);
-            end
-        end
-    end
-catch %#ok<CTCH>
-    has_incomplete = false;
-    pending_bytes = 0;
-end
-end
-
-function result = local_progress_record_trailing(result, progress_cursor)
-%LOCAL_PROGRESS_RECORD_TRAILING Persist the trailing indicator on RESULT.
-%   Observation only: never echoes trailing content and never throws.
-try
-    [has_incomplete, pending_bytes] = local_progress_trailing( ...
-        progress_cursor);
-    if ~isfield(result, 'progress') || ~isstruct(result.progress) || ...
-            numel(result.progress) ~= 1
-        result.progress = local_empty_progress();
-    end
-    result.progress.incomplete_trailing = has_incomplete;
-    result.progress.pending_bytes = pending_bytes;
-catch %#ok<CTCH>
-end
-end
-
-function flag = local_progress_evidence_flag(result)
-%LOCAL_PROGRESS_EVIDENCE_FLAG Safe flattened trailing flag for evidence.
-flag = false;
-try
-    if isstruct(result) && numel(result) == 1 && ...
-            isfield(result, 'progress') && isstruct(result.progress) && ...
-            numel(result.progress) == 1 && ...
-            isfield(result.progress, 'incomplete_trailing')
-        candidate = result.progress.incomplete_trailing;
-        if islogical(candidate) && isscalar(candidate)
-            flag = candidate;
-        end
-    end
-catch %#ok<CTCH>
-    flag = false;
-end
-end
-
-function count = local_progress_evidence_bytes(result)
-%LOCAL_PROGRESS_EVIDENCE_BYTES Safe flattened byte count for evidence.
-count = 0;
-try
-    if isstruct(result) && numel(result) == 1 && ...
-            isfield(result, 'progress') && isstruct(result.progress) && ...
-            numel(result.progress) == 1 && ...
-            isfield(result.progress, 'pending_bytes')
-        candidate = result.progress.pending_bytes;
-        if isnumeric(candidate) && isscalar(candidate) && ...
-                isfinite(candidate) && candidate >= 0 && ...
-                candidate == floor(candidate)
-            count = double(candidate);
-        end
-    end
-catch %#ok<CTCH>
-    count = 0;
-end
-end
-
-function local_progress_emit(runtime, job_id, milestone)
-try
-    [level, stage_index, message] = ...
-        local_progress_display(milestone);
-    if isempty(message)
-        return;
-    end
-    context = local_stage_output_context(runtime, job_id, stage_index);
-    pseudo_CT_output(level, context, message);
-catch %#ok<CTCH>
-end
-end
-
-function [level, stage_index, message] = ...
-        local_progress_display(milestone)
-level = '';
-stage_index = 3;
-message = '';
-try
-    if strcmp(milestone, 'stage_in|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC stage-in completed.';
-    elseif strcmp(milestone, 'preparation|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC preparation completed.';
-    elseif strcmp(milestone, 'alias_recenter|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC alias-recenter completed.';
-    elseif strcmp(milestone, 'normalize|start')
-        level = 'INFO';
-        stage_index = 3;
-        message = 'MLSC normalization started.';
-    elseif strcmp(milestone, 'normalize|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC normalization completed.';
-    elseif strcmp(milestone, 'alignment_mask|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC alignment-mask completed.';
-    elseif strcmp(milestone, 'segmentation|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC segmentation completed.';
-    elseif strcmp(milestone, 'bone|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC bone completed.';
-    elseif strcmp(milestone, 'dartel_warp_reslice|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC DARTEL-warp-reslice completed.';
-    elseif strcmp(milestone, 'pseudoCT|start')
-        level = 'INFO';
-        stage_index = 3;
-        message = 'MLSC pseudo-CT started.';
-    elseif strcmp(milestone, 'pseudoCT|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC pseudo-CT completed.';
-    elseif strcmp(milestone, 'attenuation_qc|done')
-        level = 'SUCCESS';
-        stage_index = 3;
-        message = 'MLSC attenuation-QC completed.';
-    elseif strcmp(milestone, 'verify|start')
-        level = 'INFO';
-        stage_index = 4;
-        message = 'MLSC verification started.';
-    elseif strcmp(milestone, 'verify|done')
-        level = 'SUCCESS';
-        stage_index = 4;
-        message = 'MLSC verification completed.';
-    elseif strcmp(milestone, 'copy_back|start')
-        level = 'INFO';
-        stage_index = 4;
-        message = 'MLSC copy-back started.';
-    elseif strcmp(milestone, 'copy_back|done')
-        level = 'SUCCESS';
-        stage_index = 4;
-        message = 'MLSC verified return to shared temp completed.';
-    end
-catch %#ok<CTCH>
-    level = '';
-    message = '';
-end
-end
-
-function found = local_progress_contains(list, value)
-found = false;
-try
-    for ii = 1:numel(list)
-        if ischar(list{ii}) && strcmp(list{ii}, value)
-            found = true;
-            return;
-        end
-    end
-catch %#ok<CTCH>
-end
-end
-
-function context = local_stage_output_context(runtime, job_id, stage_index)
-%LOCAL_STAGE_OUTPUT_CONTEXT Context for one aggregate progress row.
-%   A producer number becomes a public stage only through the MLSC stage map.
-%   An unmapped producer number (stage-in, alias-recenter, verify, copy-back)
-%   is an operational row: it carries no stage number and no denominator.
-context = local_output_context(runtime, job_id);
-public_stage = 0;
-public_total = 0;
-try
-    if isnumeric(stage_index) && isscalar(stage_index) && ...
-            isfinite(stage_index) && stage_index == floor(stage_index) && ...
-            stage_index >= 1 && isfield(context, 'stage_map') && ...
-            isstruct(context.stage_map) && ...
-            isfield(context.stage_map, 'producer_total') && ...
-            context.stage_map.producer_total > 0
-        [~, public_stage, public_total] = pseudo_CT_stage_map( ...
-            context.stage_map, stage_index, ...
-            context.stage_map.producer_total);
-    end
-catch %#ok<CTCH>
-    public_stage = 0;
-end
-if public_stage > 0
-    context.stage_index = public_stage;
-    context.stage_count = public_total;
-else
-    if isfield(context, 'stage_index')
-        context = rmfield(context, 'stage_index');
-    end
-    if isfield(context, 'stage_count')
-        context = rmfield(context, 'stage_count');
-    end
-end
-end
-
-function result = local_archive_progress(result, runtime)
-try
-    if ~isstruct(result) || numel(result) ~= 1
-        return;
-    end
-    if ~isfield(result, 'progress') || ~isstruct(result.progress) || ...
-            numel(result.progress) ~= 1
-        result.progress = local_empty_progress();
-    end
-    source_path = '';
-    try
-        if isfield(result.progress, 'source_path') && ...
-                ischar(result.progress.source_path)
-            source_path = result.progress.source_path;
-        end
-    catch %#ok<CTCH>
-        source_path = '';
-    end
-    if isempty(source_path) && isfield(result, 'shared_subject_temp') && ...
-            ischar(result.shared_subject_temp) && ...
-            ~isempty(result.shared_subject_temp)
-        try
-            if isfield(result, 'submission_correlation_id') && ...
-                    ischar(result.submission_correlation_id) && ...
-                    ~isempty(result.submission_correlation_id)
-                try
-                    source_path = mlsc_progress('path_for', ...
-                        result.shared_subject_temp, ...
-                        result.submission_correlation_id);
-                catch %#ok<CTCH>
-                    source_path = mlsc_progress('path', ...
-                        result.shared_subject_temp);
-                end
-            else
-                source_path = mlsc_progress('path', ...
-                    result.shared_subject_temp);
-            end
-            result.progress.source_path = source_path;
-        catch %#ok<CTCH>
-        end
-    end
-    destination_dir = '';
-    try
-        if isstruct(runtime) && isfield(runtime, 'log_archive_dir') && ...
-                ischar(runtime.log_archive_dir) && ...
-                ~isempty(runtime.log_archive_dir)
-            destination_dir = runtime.log_archive_dir;
-        elseif isstruct(runtime) && isfield(runtime, 'evidence_dir') && ...
-                ischar(runtime.evidence_dir) && ...
-                ~isempty(runtime.evidence_dir)
-            destination_dir = runtime.evidence_dir;
-        end
-    catch %#ok<CTCH>
-        destination_dir = '';
-    end
-    if isempty(source_path) || isempty(destination_dir)
-        return;
-    end
-    destination_path = fullfile(destination_dir, ...
-        local_archive_progress_name(source_path));
-    result.progress.archive_path = destination_path;
-    result.progress.archive_attempted = true;
-    result.progress.archive_succeeded = false;
-    result.progress.archive_detail = '';
-    if exist(source_path, 'file') ~= 2
-        result.progress.archive_detail = ...
-            'MLSC progress file was not found; nothing was archived.';
-        return;
-    end
-    if exist(destination_dir, 'dir') ~= 7
-        result.progress.archive_detail = ...
-            'MLSC progress archive directory was not found.';
-        return;
-    end
-    [copy_ok, copy_detail] = local_archive_progress_file(source_path, ...
-        destination_path, result.progress.milestones);
-    result.progress.archive_succeeded = copy_ok;
-    result.progress.archive_detail = copy_detail;
-catch %#ok<CTCH>
-    try
-        result.progress.archive_attempted = true;
-        result.progress.archive_succeeded = false;
-        if isempty(result.progress.archive_detail)
-            result.progress.archive_detail = ...
-                'MLSC progress archive was unavailable.';
-        end
-    catch %#ok<CTCH>
-    end
-end
-end
-
-function archive_name = local_archive_progress_name(source_path)
-%LOCAL_ARCHIVE_PROGRESS_NAME Deterministic correlation-preserving name.
-%   Uses the source basename (already .mlsc_progress_<id> for current
-%   submissions) so the correlation identity is preserved in the archive.
-%   Falls back to the fixed name only for a source without the suffix. R2010b only.
-archive_name = '.mlsc_progress';
-try
-    if ~ischar(source_path) || size(source_path, 1) ~= 1 || ...
-            isempty(source_path) || any(source_path == char(0))
-        return;
-    end
-    [~, base, extension] = fileparts(source_path);
-    candidate = [base extension];
-    if isempty(candidate) || any(candidate == char(0)) || ...
-            ~isempty(strfind(candidate, filesep))
-        return;
-    end
-    if strcmp(candidate, '.mlsc_progress')
-        archive_name = candidate;
-        return;
-    end
-    prefix = '.mlsc_progress_';
-    if strncmp(candidate, prefix, length(prefix))
-        suffix = candidate((length(prefix) + 1):end);
-        if ~isempty(suffix) && length(suffix) <= 64 && ...
-                ~isempty(regexp(suffix, '^[A-Za-z0-9_.-]+$', 'once'))
-            archive_name = candidate;
-            return;
-        end
-    end
-catch %#ok<CTCH>
-    archive_name = '.mlsc_progress';
-end
-end
-
-function [success, detail] = local_archive_progress_file(source_path, ...
-        destination_path, milestones)
-%LOCAL_ARCHIVE_PROGRESS_FILE Generate a sanitized durable progress archive.
-%   Writes only the validated recognized milestone sequence (order
-%   preserved, at-most-once, from the parser accepted output) and never
-%   copies raw source bytes, so malformed, unknown, secret-bearing, or
-%   incomplete-trailing input is never archived or echoed.  The source file
-%   is never read for content here beyond the existence check above; even
-%   when source and destination coincide the promotion writes only the
-%   sanitized sequence.  R2010b only.
-success = false;
-detail = '';
-try
-    if isempty(source_path) || isempty(destination_path)
-        detail = 'MLSC progress archive path was not configured.';
-        return;
-    end
-    destination_parent = fileparts(destination_path);
-    if isempty(destination_parent) || exist(destination_parent, 'dir') ~= 7
-        detail = 'MLSC progress archive directory was not found.';
-        return;
-    end
-    sanitized = local_sanitized_milestones(milestones);
-    stage_path = tempname(destination_parent);
-    fid = fopen(stage_path, 'w');
-    if fid == -1
-        detail = ...
-            'MLSC progress archive copy failed: stage file unavailable.';
-        return;
-    end
-    write_ok = true;
-    try
-        for ii = 1:numel(sanitized)
-            line = sanitized{ii};
-            count = fwrite(fid, [line char(10)], 'char');
-            if count ~= length(line) + 1
-                write_ok = false;
-                break;
-            end
-        end
-        fclose(fid);
-    catch %#ok<CTCH>
-        try
-            fclose(fid);
-        catch %#ok<CTCH>
-        end
-        write_ok = false;
-    end
-    if ~write_ok
-        if exist(stage_path, 'file') == 2
-            delete(stage_path);
-        end
-        detail = ...
-            'MLSC progress archive copy failed: sanitized write failed.';
-        return;
-    end
-    [move_success, move_message] = movefile(stage_path, destination_path, 'f');
-    if ~move_success
-        if exist(stage_path, 'file') == 2
-            delete(stage_path);
-        end
-        detail = ['MLSC progress archive promotion failed: ' move_message];
-        return;
-    end
-    success = exist(destination_path, 'file') == 2;
-    if ~success
-        detail = 'MLSC progress archive was not created.';
-    end
-catch %#ok<CTCH>
-    success = false;
-    if isempty(detail)
-        detail = 'MLSC progress archive was unavailable.';
-    end
-end
-end
-
-function sanitized = local_sanitized_milestones(milestones)
-%LOCAL_SANITIZED_MILESTONES Validated recognized sequence only.
-%   Order preserved, at-most-once, from parser accepted output.  R2010b only.
-sanitized = cell(0, 1);
-try
-    if ~iscell(milestones)
-        return;
-    end
-    for ii = 1:numel(milestones)
-        candidate = milestones{ii};
-        if ~ischar(candidate) || size(candidate, 1) ~= 1 || ...
-                isempty(candidate)
-            continue;
-        end
-        if local_is_archivable_record(candidate) && ...
-                ~local_progress_contains(sanitized, candidate)
-            sanitized{end + 1, 1} = candidate; %#ok<AGROW>
-        end
-    end
-catch %#ok<CTCH>
-    sanitized = cell(0, 1);
-end
-end
-
-function recognized = local_is_archivable_record(line)
-%LOCAL_IS_ARCHIVABLE_RECORD Enumerated records only, never free-form.
-%   Mirrors mlsc_progress local_is_record (including current
-%   milestones) so the durable archive preserves the validated sequence.
-recognized = strcmp(line, 'stage_in|done') || ...
-    strcmp(line, 'preparation|done') || ...
-    strcmp(line, 'alias_recenter|done') || ...
-    strcmp(line, 'normalize|start') || ...
-    strcmp(line, 'normalize|done') || ...
-    strcmp(line, 'alignment_mask|done') || ...
-    strcmp(line, 'segmentation|done') || ...
-    strcmp(line, 'bone|done') || ...
-    strcmp(line, 'dartel_warp_reslice|done') || ...
-    strcmp(line, 'pseudoCT|start') || ...
-    strcmp(line, 'pseudoCT|done') || ...
-    strcmp(line, 'attenuation_qc|done') || ...
-    strcmp(line, 'verify|start') || ...
-    strcmp(line, 'verify|done') || ...
-    strcmp(line, 'copy_back|start') || ...
-    strcmp(line, 'copy_back|done');
 end
 
 function terminal = local_is_terminal(state)

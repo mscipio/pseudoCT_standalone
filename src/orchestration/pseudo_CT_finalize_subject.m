@@ -91,7 +91,7 @@ else
     stage_event.stage_id = 'workflow.full_output_finalize';
     stage_event.stage_index = 10;
     stage_event.status = 'STARTED';
-    stage_event.message = 'Promoting final NIfTI outputs.';
+    stage_event.message = 'Promoting final outputs.';
     if write_events
         pseudo_CT_scientific_event(target, stage_event);
     end

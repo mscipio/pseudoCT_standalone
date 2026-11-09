@@ -3,7 +3,9 @@ function status = pseudoct_cli_bridge(mode)
 %   STATUS = PSEUDOCT_CLI_BRIDGE(MODE) is called by the job-manager dispatcher
 %   (pseudoct_job_manager) and by bin/pseudoct. MODE is one of:
 %     'prepare_validate'  reads the CLI input (PSEUDOCT_CLI_INPUT) and writes a
-%                         validate request MAT (PSEUDOCT_CLI_REQUEST).
+%                         validate request MAT (PSEUDOCT_CLI_REQUEST). With a
+%                         PSEUDOCT_CLI_HANDOFF it writes the remote account check
+%                         request (chosen PSEUDOCT_CLI_GROUP_ACCOUNT, no submission).
 %     'prepare_submit'    reads the input and the validation result
 %                         (PSEUDOCT_CLI_RESULT; it must have status 'ready') and
 %                         writes a submit request MAT with the resolved job and
@@ -26,6 +28,18 @@ try
     if strcmp(mode, 'prepare_validate')
         spec = local_read_input(getenv('PSEUDOCT_CLI_INPUT'));
         request = local_request(spec, 'validate');
+        % Only the explicit --check-account branch (marker set by bin/pseudoct) carries
+        % the single-use handoff. Ordinary validates stay handoff-free, as at HEAD.
+        if strcmp(getenv('PSEUDOCT_CLI_ACCOUNT_CHECK'), '1')
+            handoff = getenv('PSEUDOCT_CLI_HANDOFF');
+            if isempty(handoff)
+                error('pseudo_CT:CLIAccountCheck', 'Account check requires a credential handoff.');
+            end
+            % Remote account check: one single-use handoff and the chosen account.
+            request.credential_handoff = handoff;
+            request.group_account = local_group_account(spec);
+            request.host_key_file = spec.host_key_file;
+        end
         local_save_request(getenv('PSEUDOCT_CLI_REQUEST'), request);
     elseif strcmp(mode, 'prepare_submit')
         spec = local_read_input(getenv('PSEUDOCT_CLI_INPUT'));
@@ -38,7 +52,7 @@ try
         end
         request = local_request(spec, 'submit');
         request.resolved_job = validation.resolved_job;
-        request.group_account = spec.group_account;
+        request.group_account = local_group_account(spec);
         request.credential_handoff = getenv('PSEUDOCT_CLI_HANDOFF');
         request.host_key_file = spec.host_key_file;
         local_save_request(getenv('PSEUDOCT_CLI_REQUEST'), request);
@@ -230,12 +244,21 @@ cleanup = onCleanup(@() fclose(fid)); %#ok<NASGU>
 values = {result.status; result.error_code; result.authentication_status; ...
     result.submission_status; result.backend; result.scientific_completion; ...
     result.dispatch_status; local_job_ids(result.job_ids); result.action; ...
-    result.error_message};
+    result.error_message; result.group_account};
 for ii = 1:length(values)
     if isempty(values{ii})
         values{ii} = '-';
     end
     fprintf(fid, '%s\n', values{ii});
+end
+end
+
+function account = local_group_account(spec)
+% The launcher passes an account chosen at its prompt in the environment; an
+% explicit --group-account (or blank prompt) is the input-file value.
+account = getenv('PSEUDOCT_CLI_GROUP_ACCOUNT');
+if isempty(account)
+    account = spec.group_account;
 end
 end
 

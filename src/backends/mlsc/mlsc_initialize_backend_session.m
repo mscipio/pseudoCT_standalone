@@ -3,7 +3,9 @@ function session = mlsc_initialize_backend_session(config, username, password, .
 %MLSC_INITIALIZE_BACKEND_SESSION Authenticate to MLSC and prepare one submit session.
 %   SESSION = MLSC_INITIALIZE_BACKEND_SESSION(CONFIG, USERNAME, PASSWORD,
 %   HOST_KEY_PROVIDER, REQUESTED_ACCOUNT, ALLOW_ACCOUNT_DIALOG)
-%   Called only at submit, by the frontend and by pseudo_CT_run_lifecycle.
+%   Called at submit by pseudo_CT_run_lifecycle, and by the headless account
+%   check (pseudo_CT_headless, validate with a credential handoff). The account
+%   check returns before any submission.
 %   CONFIG must be an 'mlsc' profile struct. USERNAME and PASSWORD are text.
 %   HOST_KEY_PROVIDER is optional ([] selects the password path; see
 %   mlsc_credentials_transport). REQUESTED_ACCOUNT is optional (''): the Slurm

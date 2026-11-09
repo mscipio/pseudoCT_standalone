@@ -372,13 +372,15 @@ switch config.mode
             context = local_subject_context(jobs(ii), ii, length(jobs));
             context.stage_map = pseudo_CT_stage_map(config);
             context.console_profile = profile_name;
-            context = local_stage_context(context, 1);
-            % Remote converter detail is kept in the subject log only.
+            % Remote converter detail is kept in the subject log only. The
+            % context carries no stage fields: the converter prints no numbered row.
             converter_context = context;
             converter_context.console_detail_remote = true;
             jobs(ii).seed_nii = pseudo_CT_prepare_input(jobs(ii).mprage_fn, ...
                 fullfile(jobs(ii).temp_dir, 'mprage.nii'), converter_context, ...
                 'mlsc-lifecycle');
+            % Show the manager's stage 1 record before any submission.
+            pseudo_CT_present_native_events(context, true);
         end
 
         account = '';
@@ -458,16 +460,10 @@ switch config.mode
                     'MLSC account selection requires an authenticated transport.');
             end
                 for ii = 1:length(jobs)
-                    % MLSC user-facing events (non-secret only): 4 input
-                    % was stage 1 above; 5 submit is stage 2 below; 6
-                    % accepted ID, 7 initial observed state, 8 transitions,
-                    % 9 heartbeat, 10 compute milestones, and 11 terminal
-                    % summary render inside mlsc_lifecycle via the
-                    % non-secret output_context (stage 3 Running for
-                    % stage-in/normalize/pseudoCT/running/heartbeat,
-                    % stage 4 Retrieving for verify/copy-back/verified
-                    % return); 12 return to finalization is below before
-                    % retained stages 5-8.
+                    % Stage rows are shown only from the native event file: stage 1
+                    % (input) above, stages 2-8 from the one pipeline invocation
+                    % (drained by mlsc_lifecycle), and stages 9-10 (finalization)
+                    % below. This block adds no numbered row.
                     % Guard: one subject-scoped terminal line per subject (see local path).
                     outcome_context = local_subject_context(jobs(ii), ii, length(jobs));
                     outcome_context.console_profile = profile_name;
@@ -486,9 +482,6 @@ switch config.mode
                         'evidence_dir', jobs(ii).processing_dir, ...
                         'log_archive_dir', jobs(ii).processing_dir, ...
                         'cleanup_script', true, 'output_context', output_context);
-                    submit_context = local_stage_context(context, 2);
-                    pseudo_CT_output('INFO', submit_context, ...
-                        'Submitting MLSC job.');
                     subject = struct('subject_id', jobs(ii).mprage_fn, ...
                         'shared_input', jobs(ii).seed_nii, ...
                         'shared_temp', jobs(ii).temp_dir);
@@ -575,6 +568,8 @@ switch config.mode
                             fullfile(jobs(ii).temp_dir, 'att_map.nii'), ...
                             jobs(ii).temp_dir, jobs(ii).seed_nii, config, ...
                             finalization_context, 'mlsc-lifecycle');
+                        % Stages 9-10 are shown from their native records after finalization.
+                        pseudo_CT_present_native_events(finalization_context, true);
                         if finalization_success
                             final_context = local_attach_mlsc_job( ...
                                 local_subject_context(jobs(ii), ii, length(jobs)), ...
@@ -772,15 +767,16 @@ for ii = 1:length(dir_list)
 end
 
 % Prepare the manager-owned NIfTI input (convert DICOM or copy NIfTI input).
-context = local_stage_context(context, 1);
 P = pseudo_CT_prepare_input(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), ...
     context, 'local-orchestrator');
+% Show the manager's stage 1 record before the pipeline starts.
+pseudo_CT_present_native_events(context, ...
+    strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
 
 [temp_working_dir, ~, ~] = fileparts(deblank(P));
 
-% Run the pseudo-CT code. The compiled prepare and compute runner shared with
-% MLSC runs with the existing external local FreeSurfer normalization
-% between phases.
+% Run the pseudo-CT code. The compiled pipeline runs stages 2-8 once for this
+% subject; FreeSurfer normalization is inside it, as on MLSC.
 Pf = pseudo_CT_run_local_current_subject(P, temp_dir, config, ...
     job.correct_aliasing, job.recenter_before_normalization, context);
 if ~ischar(Pf) || isempty(strtrim(Pf))
@@ -797,6 +793,9 @@ finalization_job.save_dir = save_dir;
 [success, ~] = pseudo_CT_finalize_subject(finalization_job, ...
     fullfile(temp_working_dir, 'att_map.nii'), temp_working_dir, P, ...
     config, context, 'local-orchestrator');
+% Stages 9-10 are shown from their native records after finalization.
+pseudo_CT_present_native_events(context, ...
+    strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
 if ~success
     return;
 end
@@ -895,23 +894,6 @@ context = struct('log_file', job.log_file, 'subject_index', subject_index, ...
     'subject_count', subject_count, 'scope', 'subject');
 end
 
-
-function context = local_stage_context(context, stage_index)
-context.stage_index = stage_index;
-context.stage_count = 8;
-if isfield(context, 'stage_map') && isstruct(context.stage_map) && ...
-        isfield(context.stage_map, 'producer_total') && ...
-        context.stage_map.producer_total > 0
-    [~, public_stage, public_total] = pseudo_CT_stage_map( ...
-        context.stage_map, stage_index, context.stage_map.producer_total);
-    if public_stage > 0
-        context.stage_index = public_stage;
-        context.stage_count = public_total;
-    else
-        context = rmfield(context, {'stage_index', 'stage_count'});
-    end
-end
-end
 
 function local_write_log_header(context, profile_name, mode_name, input_path, ...
     start_time, processing_dir, temp_dir)

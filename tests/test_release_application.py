@@ -170,14 +170,14 @@ class FrontendAllowlistTest(unittest.TestCase):
 
     def test_shipped_paths_never_include_source_external_or_app_trees(self):
         labels = ('R2010b',)
-        for rel in ('src/cli/pseudoct_standalone.m', 'external/spm8-r6313/spm.m',
+        for rel in ('src/cli/pseudoct_job_manager.m', 'external/spm8-r6313/spm.m',
                     'app/run_pseudo_CT', 'frontend/evil.m', 'frontend/passwordTools/x.m',
                     'runtimes/R2010b/app/run_pseudo_CT', 'config/releases.json'):
             self.assertFalse(ra.path_allowed(rel, labels), rel)
         self.assertTrue(ra.path_allowed('frontend/load_mr_4_AC.m', labels))
         self.assertTrue(ra.path_allowed('run_pseudo_CT.m', labels))
-        self.assertTrue(ra.path_allowed('runtimes/R2010b/pseudoct_standalone', labels))
-        self.assertFalse(ra.path_allowed('runtimes/R2010b/standalone/pseudoct_standalone', labels))
+        self.assertTrue(ra.path_allowed('runtimes/R2010b/pseudoct_job_manager', labels))
+        self.assertFalse(ra.path_allowed('runtimes/R2010b/standalone/pseudoct_job_manager', labels))
 
 
 class HelpAllowlistTest(unittest.TestCase):
@@ -239,7 +239,7 @@ class VerifyTest(unittest.TestCase):
 
     def test_source_external_and_app_additions_are_refused(self):
         pkg = make_package(self.base, version=FIXTURE_VERSION)
-        write(os.path.join(pkg, 'src', 'cli', 'pseudoct_standalone.m'), 'x\n')
+        write(os.path.join(pkg, 'src', 'cli', 'pseudoct_job_manager.m'), 'x\n')
         problems = ra.verify_package(pkg)
         self.assertTrue(any('forbidden path present: src/' in p for p in problems), problems)
         shutil.rmtree(os.path.join(pkg, 'src'))
@@ -257,9 +257,9 @@ class VerifyTest(unittest.TestCase):
 
     def test_missing_executable_and_stale_sums_are_detected(self):
         pkg = make_package(self.base, version=FIXTURE_VERSION)
-        os.remove(os.path.join(pkg, 'runtimes', 'R2010b', 'pseudoct_worker'))
+        os.remove(os.path.join(pkg, 'runtimes', 'R2010b', 'pseudoct_pipeline'))
         problems = ra.verify_package(pkg)
-        self.assertTrue(any('missing file: runtimes/R2010b/pseudoct_worker' in p
+        self.assertTrue(any('missing file: runtimes/R2010b/pseudoct_pipeline' in p
                             for p in problems), problems)
         pkg2 = make_package(self.base, version='1.0.1')
         write(os.path.join(pkg2, ra.SUMS_NAME), 'bad\n')

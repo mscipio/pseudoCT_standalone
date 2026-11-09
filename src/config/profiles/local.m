@@ -48,7 +48,7 @@ config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'Local MATLAB - This Computer';
 config.presentation.description = ...
-    'Run the pseudoCT workflow on this computer using the shared compiled worker.';
+    'Run the pseudoCT workflow on this computer using the shared compiled pipeline.';
 config.presentation.group = 'recommended';
 config.presentation.recommended = false;
 config.presentation.order = 10;

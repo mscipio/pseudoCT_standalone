@@ -64,7 +64,7 @@ the input/output policy differ.
 | Terminal CLI: `bin/pseudoct` | Shell and application integration: `run validate`, `run run`, text or JSONL output and stable exit codes. |
 
 The window and the CLI both go through the launcher. Scientific computation runs in the
-compiled worker; MATLAB code handles profile resolution, requests and input preparation.
+compiled `pseudoct_pipeline`; the compiled `pseudoct_job_manager` handles profile resolution, requests, input preparation, submission and finalization.
 The package layout and runtime selection are in [Release catalog and layout](docs/releases.md).
 
 ## Inputs and outputs

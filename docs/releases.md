@@ -232,7 +232,7 @@ the output directory and validates it. Publication is non-overwriting:
 
 1. After each release's runtime and the resources are staged, the driver copies the
    release executables and runner. No build or resource manifest is generated: installed
-   resources are verified by file name at setup and by the worker, and integrity is
+   resources are verified by file name at setup by the job manager and at run time by the pipeline, and integrity is
    covered by `SHA256SUMS` and `--verify`.
 2. An exclusive lock file `.pseudoct-release.lock` is created with `O_EXCL` in the
    output directory; a held or stale lock is refused and never removed automatically.

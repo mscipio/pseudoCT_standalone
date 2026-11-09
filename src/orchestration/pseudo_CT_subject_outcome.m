@@ -23,20 +23,17 @@ classdef pseudo_CT_subject_outcome < handle
         end
 
         function markClosed(obj, outcome, source)
-            % Optional OUTCOME ('SUCCEEDED', 'FAILED' or 'CANCELLED') appends one
-            % native run record, at most once per subject. Callers pass it only
-            % after the subject's terminal state is known: for MLSC, the Slurm
-            % job observed terminal (so the remote worker is no longer writing);
-            % for Local, the orchestrator is the only writer. Advisory: never throws.
+            % Optional OUTCOME ('SUCCEEDED', 'FAILED' or 'CANCELLED') writes one
+            % operational run-log row, at most once per subject. Callers pass it
+            % only after the subject's terminal state is known: for MLSC, the
+            % Slurm job observed terminal (so the remote worker is no longer
+            % writing); for Local, the orchestrator is the only writer. The row
+            % is log-only and is not a scientific event. Advisory: never throws.
             obj.Closed = true;
             if obj.Recorded || nargin < 2 || isempty(outcome)
                 return;
             end
             try
-                target = pseudo_CT_scientific_event_target(obj.Context);
-                if isempty(target.path)
-                    return;
-                end
                 switch outcome
                     case 'SUCCEEDED'
                         message = 'Subject completed successfully.';
@@ -45,10 +42,12 @@ classdef pseudo_CT_subject_outcome < handle
                     otherwise
                         message = 'Subject failed.';
                 end
-                if pseudo_CT_scientific_event(target, struct('event_type', 'run', ...
-                        'outcome', outcome, 'message', message, 'source', source))
-                    obj.Recorded = true;
-                end
+                context = obj.Context;
+                context.console_detail_only = true;
+                context.console_detail_remote = true;
+                pseudo_CT_output('INFO', context, ...
+                    '%s Outcome %s (source %s).', message, outcome, source);
+                obj.Recorded = true;
             catch %#ok<CTCH>
             end
         end

@@ -176,14 +176,23 @@ stage_context.runtime_temp_dir = fileparts(fileparts(job_manifest_path));
 status = local_run_streaming(command, stream_log, stage_context, ...
     pipeline_started, 'pipeline', public);
 if status ~= 0
+    % Runner failure is an unnumbered diagnostic: a stage number here would
+    % duplicate the persisted FAILED record of the stage that failed.
+    error_context = stage_context;
+    if isfield(error_context, 'stage_index')
+        error_context = rmfield(error_context, 'stage_index');
+    end
+    if isfield(error_context, 'stage_count')
+        error_context = rmfield(error_context, 'stage_count');
+    end
     if isfield(output_context, 'log_file') && ...
             ischar(output_context.log_file) && ...
             ~isempty(strtrim(output_context.log_file))
-        pseudo_CT_output('ERROR', local_public_active_context(stage_context, public, 'ERROR'), ...
+        pseudo_CT_output('ERROR', error_context, ...
             'Compiled current pipeline failed (exit status %d); details are in %s.', ...
             status, strtrim(output_context.log_file));
     else
-        pseudo_CT_output('ERROR', local_public_active_context(stage_context, public, 'ERROR'), ...
+        pseudo_CT_output('ERROR', error_context, ...
             'Compiled current pipeline failed with exit status %d.', status);
     end
     error('pseudo_CT:LocalCurrentRunner', ...
@@ -285,7 +294,6 @@ stream_state('warn_lines') = 0;
 stream_state('warn_counts') = containers.Map();
 stream_state('warn_order') = {};
 stream_state('public') = public;
-stream_state('scientific_source') = capture_path;
 % Drain and persist on every exit path; retain the redacted capture.
 stream_guard = onCleanup(@() local_finish_current_stream( ...
     capture_path, persist_path, stream_state, output_context)); %#ok<NASGU>
@@ -422,9 +430,6 @@ if flush_console
     % never lost. Present it, then record the grouped counts in the log.
     local_flush_warning_block(stream_state, output_context);
 end
-if flush_console && strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
-    pseudo_CT_output_console_visible('FLUSH');
-end
 if flush_console
     local_log_warning_summary(persist_path, stream_state);
 end
@@ -533,8 +538,7 @@ end
 function local_print_current_console_line(line, stream_state, output_context)
 % Outside the CLI the original bracketed MATLAB logging is unchanged: nothing
 % is echoed here and the detailed stream is only persisted to the run log.
-[scientific, scientific_events] = pseudo_CT_live_scientific_line(line, ...
-    stream_state('scientific_source'), 'v3', output_context, stream_state);
+% Stage rows come only from the native event file (local_present_native_events).
 in_block = stream_state('in_warning');
 % The compiled MATLAB runtime emits "{<BS>Warning: ...}<BS>" (backspace,
 % which STRTRIM does not remove). The raw line is already in the run log;
@@ -563,29 +567,6 @@ elseif strcmp(line_class, 'private') && in_block && isempty(strtrim(line))
     return;  % blank line inside an open warning block
 end
 local_flush_warning_block(stream_state, output_context);
-if scientific
-    % Stdout stage events show only until the pipeline writes native records;
-    % thereafter the native JSONL is the source (see local_present_native_events).
-    public = stream_state('public');
-    for ii = 1:length(scientific_events)
-        event = scientific_events(ii);
-        if strcmp(event.status, 'START')
-            local_public_set(public, event.stage.index, true);
-        elseif strcmp(event.status, 'DONE')
-            local_public_set(public, event.stage.index, false);
-        end
-    end
-    if stream_state.isKey('scientific_shown')
-        shown = stream_state('scientific_shown');
-    else
-        shown = [];
-    end
-    stream_state('scientific_shown') = pseudo_CT_scientific_present_once( ...
-        scientific_events, shown, 'stdout', ...
-        local_native_capable(stream_state), output_context, ...
-        strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
-    return;
-end
 if ~strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
     return;
 end
@@ -593,14 +574,7 @@ if strcmp(line_class, 'private')
     return;
 end
 context = output_context;
-mapped = false;
-if stream_state.isKey('public') && local_is_public_profile(output_context)
-    % Local Current: map this compiled-stream event to its canonical public
-    % stage event here (adapter layer); the presenter only formats it.
-    [context, mapped] = local_canonical_stream_event(line, ...
-        output_context, stream_state('public'));
-end
-if ~mapped && (strcmp(line_class, 'unstructured') || ...
+if (strcmp(line_class, 'unstructured') || ...
         strcmp(line_class, 'continuation'))
     % Only phrases the presenter recognizes as lifecycle events may surface;
     % the stage-based ACTIVE fallback must not apply to child chatter.
@@ -814,101 +788,14 @@ if local_is_public_profile(output_context) && public('stage') >= 1
 end
 end
 
-function [context, mapped] = local_canonical_stream_event(line, output_context, public)
-%LOCAL_CANONICAL_STREAM_EVENT Canonical event for a compiled-stream line.
-%   Preserve the existing PREPARE outcome adapter. COMPUTE interpretation is
-%   version-specific in src/io, shared with direct stream replay.
-context = output_context;
-mapped = false;
-active = public('stage');
-if active >= 1
-    context = local_public_context(output_context, active, 'INFO');
-    context = rmfield(context, 'stage_status');
-end
-tokens = regexp(line, ...
-    '^\[[^\]]+\][ \t]+(INFO|WARN|ERROR|SUCCESS)[ \t]+(.*)$', 'tokens', 'once');
-if isempty(tokens)
-    return;
-end
-level = tokens{1};
-body = tokens{2};
-while true
-    stripped = regexprep(body, ...
-        ['^\[(stage[ \t]+[0-9]+/[0-9]+|subject[^\]]*|run|job[^\]]*|' ...
-         'mlsc[^\]]*)\][ \t]*'], '', 'ignorecase');
-    if strcmp(stripped, body)
-        break;
-    end
-    body = stripped;
-end
-text = lower(strtrim(body));
-
-% Outcome events without a start event (stages 2 and 3).
-outcome = {'[recentering]', 2; '[aliasing correction]', 3};
-for ii = 1:size(outcome, 1)
-    if strncmp(text, outcome{ii, 1}, length(outcome{ii, 1}))
-        rest = strtrim(body(length(outcome{ii, 1}) + 1:end));
-        rest_lower = lower(rest);
-        n = outcome{ii, 2};
-        if strcmp(level, 'ERROR')
-            status = 'ERROR';
-        elseif strncmp(rest_lower, 'skipped', 7) || ...
-                strncmp(rest_lower, 'not required', 12)
-            status = 'SKIPPED';
-        elseif strncmp(rest_lower, 'successfully applied', 20)
-            status = 'DONE';
-        else
-            return;  % other detail keeps the generic path
-        end
-        context = local_public_context(output_context, n, status, ...
-            [local_public_name(n, output_context) ' ' ...
-             lower(rest(1)) rest(2:end)]);
-        public('stage') = n;
-        public('open') = false;
-        mapped = true;
-        return;
-    end
-end
-
-end
-
-function capable = local_native_capable(stream_state)
-%LOCAL_NATIVE_CAPABLE Per-stage native coverage (1x10 logical) for this run.
-%   Stage-less pipeline records never count; see pseudo_CT_scientific_event_read.
-capable = false(1, 10);
-if stream_state.isKey('native_reader')
-    reader = stream_state('native_reader');
-    if isstruct(reader) && isfield(reader, 'covered')
-        capable = reader.covered;
-    end
-end
-end
-
 function local_present_native_events(stream_state, output_context)
-%LOCAL_PRESENT_NATIVE_EVENTS Present new native scientific records (read-only).
-% The JSONL file is appended by the compiled pipeline while it runs; this
-% reader never appends. Manager-owned records (source local-orchestrator) are
-% not presented twice.
+%LOCAL_PRESENT_NATIVE_EVENTS Show new native stage records of this run (read-only).
+% The compiled pipeline and the manager append the JSONL file; this drain never
+% appends. The shared cursor in pseudo_CT_present_native_events shows each record
+% once, including the manager's stage 1, 9 and 10 records.
 try
-    target = pseudo_CT_scientific_event_target(output_context);
-    if isempty(target.path)
-        return;
-    end
-    reader = [];
-    if stream_state.isKey('native_reader')
-        reader = stream_state('native_reader');
-    end
-    [events, reader] = pseudo_CT_scientific_event_read(target.path, reader);
-    stream_state('native_reader') = reader;
-    keep = true(length(events), 1);
-    for ii = 1:length(events)
-        % Worker-originated stage FAILED records are shown once here as stage
-        % error rows. Manager-owned records (local-orchestrator) are excluded
-        % because the manager reports them through its own path.
-        keep(ii) = ~strcmp(events(ii).status, 'WARN') && ...
-            ~strcmp(events(ii).source.version, 'local-orchestrator');
-    end
-    events = events(keep);
+    events = pseudo_CT_present_native_events(output_context, ...
+        strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
     public = stream_state('public');
     for ii = 1:length(events)
         if strcmp(events(ii).status, 'START')
@@ -917,16 +804,8 @@ try
             local_public_set(public, events(ii).stage.index, false);
         end
     end
-    if stream_state.isKey('scientific_shown')
-        shown = stream_state('scientific_shown');
-    else
-        shown = [];
-    end
-    stream_state('scientific_shown') = pseudo_CT_scientific_present_once( ...
-        events, shown, 'native', true, output_context, ...
-        strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
     % Stage error rows also reach the run log: log-only here, because the
-    % presenter shows the console row. Same row rule as the MLSC transport.
+    % presenter shows the console row.
     for ii = 1:length(events)
         if ~strcmp(events(ii).status, 'ERROR')
             continue;

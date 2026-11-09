@@ -68,7 +68,7 @@ local_mex_on_path_case(repo, work, sentinel);
 
 % Synthetic package: inventory, manifest agreement, and tamper detection.
 pkg = fullfile(work, 'pkg');
-rels = {'standalone/pseudoct_standalone'; 'payload/pseudoct_worker'; ...
+rels = {'standalone/pseudoct_job_manager'; 'payload/pseudoct_pipeline'; ...
     'resources/Atlas_a.nii'; 'bin/pseudoct'};
 bodies = {'standalone stub'; 'payload stub'; 'atlas bytes'; 'launcher'};
 for kk = 1:numel(rels)
@@ -175,12 +175,12 @@ assert(isempty(strfind(payload_text, 'dicom2nifti_version')), ...
     'The worker plan must not carry the dicom2nifti VERSION input.');
 
 % No installed-reachable first-party file may name the development checkout.
-% Scanned: src/ (all .m), bin/pseudoct and scripts/run_pseudoct_worker.sh.
+% Scanned: src/ (all .m), bin/pseudoct and scripts/run_pseudoct_pipeline.sh.
 % Site paths (/usr/pubsw, /autofs/cluster/matlab) are not checkout paths and are
 % not asserted here.
 checkout_literals = {'piano_mMR_devel', 'pseudoCT_standalone', 'Biograph_mMR', 'catanagp'};
 scanned = [local_m_files(fullfile(repo, 'src')); ...
-    {fullfile(repo, 'bin', 'pseudoct'); fullfile(repo, 'scripts', 'run_pseudoct_worker.sh')}];
+    {fullfile(repo, 'bin', 'pseudoct'); fullfile(repo, 'scripts', 'run_pseudoct_pipeline.sh')}];
 for kk = 1:numel(scanned)
     file_text = local_read_text(scanned{kk});
     for ll = 1:numel(checkout_literals)

@@ -1,5 +1,5 @@
 function config = mlsc()
-%MLSC MLSC profile: Slurm submission to MLSC with the shared compiled worker.
+%MLSC MLSC profile: Slurm submission to MLSC by pseudoct_job_manager, which runs pseudoct_pipeline once per subject.
 %   CONFIG = MLSC() returns the canonical 'mlsc' profile struct. Its science
 %   settings match LOCAL (alias 1, recenter 'Yes', zero background 'No', bone
 %   on, fwhm 0, PCA callable_pca then repo_legacy, mMR policy, NIfTI and DICOM
@@ -57,7 +57,7 @@ config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'MLSC';
 config.presentation.description = ...
-    'Run the pseudoCT pipeline on MLSC using the same shared compiled worker.';
+    'Run the pseudoCT pipeline on MLSC using the same shared compiled pipeline.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = true;
 config.presentation.order = 15;

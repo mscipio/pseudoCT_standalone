@@ -97,7 +97,10 @@ Profile defaults (source of truth: `src/config/profiles/*.m` and
 
 Local profiles run on this computer. MLSC profiles submit to Slurm after a
 successful validation of the same inputs (see [Validate and submit](headless-cli.md#validate-and-submit))
-and require a valid account, configured host and shared filesystem. MLSC submit is
+and require a valid account, configured host and shared filesystem. To check the
+account without submitting, use `bin/pseudoct run validate --check-account` with an
+MLSC profile (MLSC only; it authenticates and never calls `sbatch`; see
+[Options](headless-cli.md#options-run-validaterun)). MLSC submit is
 implemented and offline-tested, but it has **not** been independently verified
 against a live scheduler; see [Verification status](releases.md#verification-status).
 

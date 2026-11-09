@@ -232,7 +232,7 @@ table_text = [table_text local_table_event(base, 'INFO', 'Aligning MPRAGE.', ...
     struct('stage_status', 'START', 'stage_index', 5, 'operation_id', 'workflow.align_mask'))];
 table_text = [table_text local_table_event(base, 'SUCCESS', 'Alignment completed.', ...
     struct('stage_status', 'DONE', 'stage_index', 5, 'operation_id', 'workflow.align_mask'))];
-% Stage 6 emits no event: while the subject runs it must not get a SKIPPED row; its single gap row appears only at the verified completion.
+% Stage 6 emits no event in this fixture: no SKIPPED or gap row is inferred for it.
 table_text = [table_text local_table_event(base, 'INFO', 'Segmenting.', ...
     struct('stage_status', 'START', 'stage_index', 7, 'operation_id', 'workflow.dartel'))];
 table_text = [table_text local_table_event(base, 'SUCCESS', 'Registration completed.', ...
@@ -249,7 +249,7 @@ table_text = [table_text local_table_event(base, 'INFO', ...
     'Full-mode output finalization skipped by MPRAGE-only policy.', ...
     struct('stage_status', 'SKIPPED', 'stage_index', 10, ...
     'operation_id', 'workflow.full_output_finalize'))];
-table_text = [table_text local_table_event(base, 'INFO', 'Promoting final NIfTI outputs.', ...
+table_text = [table_text local_table_event(base, 'INFO', 'Promoting final outputs.', ...
     struct('stage_status', 'START', 'operation_id', 'output.promote_nifti'))];
 table_text = [table_text local_table_event(base, 'SUCCESS', 'Outputs promoted.', ...
     struct('stage_status', 'DONE', 'operation_id', 'output.promote_nifti'))];
@@ -279,7 +279,7 @@ for ii = 1:length(body)
     end
 end
 assert(continuation_rows >= 1);
-expected_status = {'ACTIVE'; 'SKIPPED'; 'DONE'; 'ACTIVE'; 'ACTIVE'; 'SKIPPED'; ...
+expected_status = {'ACTIVE'; 'SKIPPED'; 'DONE'; 'ACTIVE'; 'ACTIVE'; ''; ...
     'ACTIVE'; 'ACTIVE'; 'SKIPPED'; 'SKIPPED'};
 for k = 1:10
     hits = [];
@@ -287,6 +287,10 @@ for k = 1:10
         if ~isempty(strfind(body{ii}, sprintf('[%d/10]', k)))
             hits(end + 1) = ii; %#ok<AGROW>
         end
+    end
+    if k == 6
+        assert(isempty(hits), 'Stage 6 must not get an inferred row: %d rows', length(hits));
+        continue;
     end
     assert(length(hits) == 1, 'Stage %d numbered on %d rows', k, length(hits));
     assert(strcmp(strtrim(body{hits}(26:34)), expected_status{k}), ...
@@ -298,18 +302,10 @@ for ii = 1:length(body)
         stage7_row = ii;
     end
 end
-completion_row = 0;
-for ii = 1:length(body)
-    if ~isempty(strfind(body{ii}, 'Subject completed'))
-        completion_row = ii;
-    end
-end
-% No gap row while the subject runs: the row before stage 7 is not a gap row.
+% No gap row is inferred while the subject runs or at verified completion.
 assert(stage7_row > 1 && ...
     isempty(regexp(body{stage7_row - 1}, 'SKIPPED\s+SPM New Segment not run', 'once')));
-% The gap row for stage 6 comes at the verified completion, right before it.
-assert(completion_row > 1 && ...
-    ~isempty(regexp(body{completion_row - 1}, 'SKIPPED\s+SPM New Segment not run', 'once')));
+assert(isempty(regexp(table_text, 'SPM New Segment not run', 'once')));
 suppressed_rows = 0;
 for ii = 1:length(body)
     if ~isempty(strfind(body{ii}, 'Full-mode output finalization skipped'))

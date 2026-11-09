@@ -4,9 +4,12 @@ function result = pseudo_CT_headless(request_path, result_path)
 %   REQUEST_PATH is a v2 request MAT file (schema pseudoCT.headless-request/v2).
 %   RESULT is the v2 result struct (schema pseudoCT.headless-result/v2), which is
 %   also saved to RESULT_PATH as MAT-file version 6, variable 'result'.
-%   The action is 'validate' or 'submit'. VALIDATE is local-only. SUBMIT accepts a
-%   previously resolved job: remote profiles consume a secure, single-use
-%   credential handoff here, and local profiles submit without authentication.
+%   The action is 'validate' or 'submit'. VALIDATE is local-only unless a remote
+%   profile supplies a credential handoff: then it authenticates, discovers and
+%   selects the requested account (blank selects the first discovered account)
+%   and returns before any submission. SUBMIT accepts a previously resolved job:
+%   remote profiles consume a secure, single-use credential handoff here, and
+%   local profiles submit without authentication.
 %   On failure, a pseudoct-headless-diagnostics.txt file is written beside
 %   RESULT_PATH, and RESULT carries status 'failed' with a fixed error_code.
 %   Side effects: reads REQUEST_PATH, writes RESULT_PATH and, on failure, the
@@ -36,7 +39,7 @@ try
     request = local_load_request(request_path);
     result = local_bind_result(request, result);
     if isfield(request, 'action') && ischar(request.action) && ...
-            strcmp(request.action, 'submit') && ...
+            any(strcmp(request.action, {'validate'; 'submit'})) && ...
             ~(isfield(request, 'profile') && ...
             local_is_local_profile(request.profile)) && ...
             isfield(request, 'credential_handoff') && ...
@@ -53,7 +56,8 @@ try
     result.action = request.action;
     result.profile = request.profile;
     if strcmp(request.action, 'validate')
-        result = local_validate(request, result);
+        result = local_validate(request, result, credentials);
+        clear credentials
     else
         result = local_submit(request, result, credentials);
     end
@@ -175,8 +179,11 @@ if ~isstruct(request.output_config) || numel(request.output_config) ~= 1 || ...
     error('pseudo_CT:HeadlessRequest', 'Request output/options fields are invalid.');
 end
 if strcmp(request.action, 'validate')
-    if ~isempty(request.credential_handoff) || ~isempty(request.host_key_file) || ...
-        ~isempty(request.group_account) || ...
+    % Authentication fields are accepted only for a remote account check.
+    account_check = ~local_is_local_profile(request.profile) && ...
+        ~isempty(request.credential_handoff);
+    if (~account_check && (~isempty(request.credential_handoff) || ...
+            ~isempty(request.group_account) || ~isempty(request.host_key_file))) || ...
         ~isstruct(request.resolved_job) || numel(request.resolved_job) ~= 1 || ...
         ~isempty(fieldnames(request.resolved_job))
         error('pseudo_CT:HeadlessRequest', ...
@@ -218,7 +225,7 @@ else
 end
 end
 
-function result = local_validate(request, result)
+function result = local_validate(request, result, credentials)
 validation_request = struct('profile', request.profile, ...
     'output_config', request.output_config, ...
     'invocation_id', request.invocation_id);
@@ -259,6 +266,48 @@ result.dispatch_status = 'not_dispatched';
 result.resolved_job = validated.resolved_job;
 result.evidence = validated.resolved_job.validation_evidence;
 result.diagnostics = struct('code', '', 'message', '');
+if ~isempty(credentials)
+    result = local_account_check(request, result, credentials);
+end
+end
+
+function result = local_account_check(request, result, credentials)
+% Authenticate, discover and select the MLSC account, then return. Nothing is
+% submitted: this path never calls pseudo_CT_orchestrate('submit') or the
+% lifecycle, and the job list and dispatch fields stay empty.
+config = pseudo_CT_load_profile(request.profile);
+provider = local_host_key_provider(request.host_key_file);
+session = mlsc_initialize_backend_session(config, credentials.username, ...
+    credentials.password, provider, request.group_account, false);
+transport_cleanup = onCleanup(@() local_close_transport(session.transport));
+clear credentials
+result.authentication_status = session.authentication_status;
+result.submission_status = 'not_attempted';
+result.dispatch_status = 'not_dispatched';
+result.scientific_completion = 'not_applicable';
+if strcmp(session.status, 'ready')
+    result.status = 'ready';
+    result.error_code = '';
+    result.error_message = '';
+    result.group_account = session.selected_account;
+else
+    result.status = 'failed';
+    result.error_code = session.error_code;
+    result.error_message = session.error_message;
+    result.group_account = '';
+end
+result.diagnostics = struct('code', result.error_code, ...
+    'message', result.error_message);
+end
+
+function local_close_transport(transport)
+if isstruct(transport) && isfield(transport, 'cleanup') && ...
+        isa(transport.cleanup, 'function_handle')
+    try
+        feval(transport.cleanup);
+    catch
+    end
+end
 end
 
 function result = local_submit(request, result, credentials)

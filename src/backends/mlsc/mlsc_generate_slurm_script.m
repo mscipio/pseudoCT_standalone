@@ -13,12 +13,12 @@ function artifact = mlsc_generate_slurm_script(subject, config, runtime)
 %   Slurm stdout and stderr are kept in the shared subject temp folder under
 %   the job-ID patterns pseudoCT_mlsc_%j.out and pseudoCT_mlsc_%j.err.
 %
-%   Progress: the batch shell appends best-effort, append-only records to
-%   "$shared_temp/.mlsc_progress_<id>", where <id> is the non-secret
-%   RUNTIME.submission_correlation_id. Without that identity, direct generation
-%   uses the fixed name "$shared_temp/.mlsc_progress". Records hold only
-%   stage|state literals and [A-Za-z0-9_.-] characters, never paths, accounts,
-%   credentials or SSH values. A failed write never fails the job.
+%   Progress identity: the sidecar name "$shared_temp/.mlsc_progress_<id>" (<id>
+%   the non-secret RUNTIME.submission_correlation_id, or the fixed
+%   ".mlsc_progress" for direct generation) is reserved for this submission.
+%   The batch shell writes no progress or stage records. Stage events come only
+%   from the pipeline's native event file (job.event_path); liveness is observed
+%   by the manager from local process or Slurm state.
 %
 %   Current artifact, source and manifest mode (CONFIG.current.build_manifest
 %   and resource_manifest set): the script stages the shared input, the job
@@ -62,8 +62,8 @@ function [progress_filename, progress_correlation_id] = ...
         local_progress_selection(runtime)
 %LOCAL_PROGRESS_SELECTION Exact per-submission progress artifact selection.
 %   Uses RUNTIME.submission_correlation_id when present; otherwise the
-%   fixed name for direct generation only.  The Slurm script writes
-%   only the selected file.  R2010b only.
+%   fixed name for direct generation only.  The name is the reserved
+%   submission identity; the Slurm script writes no records to it.  R2010b only.
 progress_filename = '';
 progress_correlation_id = '';
 try
@@ -155,18 +155,14 @@ lines{end + 1} = ['input_name=' q_input_name];
 lines{end + 1} = ['normalized_name=' q_normalized_name];
 end
 
-function lines = local_generic_progress_tmpdir(progress_filename, include_executor_provenance)
-%LOCAL_GENERIC_PROGRESS_TMPDIR Shared TMPDIR and progress-record lines.
-%   Progress file, record helper, node-local TMPDIR guards, shared
-%   input/temp checks, and write-probe. R2010b only.
-if nargin < 2
+function lines = local_generic_progress_tmpdir(include_executor_provenance)
+%LOCAL_GENERIC_PROGRESS_TMPDIR Shared TMPDIR guards and write-probe lines.
+%   Node-local TMPDIR guards, shared input/temp checks and write-probe. The
+%   shell writes no progress records. R2010b only.
+if nargin < 1
     include_executor_provenance = false;
 end
 lines = {};
-lines{end + 1} = ['progress_file="$shared_temp/' progress_filename '"'];
-lines{end + 1} = 'mlsc_record_progress() {';
-lines{end + 1} = '    (umask 077; printf ''%s\n'' "$1" >> "$progress_file") || true';
-lines{end + 1} = '}';
 if ~include_executor_provenance
     lines{end + 1} = 'if [ -z "${TMPDIR:-}" ]; then';
     lines{end + 1} = '    printf ''MLSC job requires node-local TMPDIR.\n'' >&2';
@@ -512,8 +508,7 @@ lines{end + 1} = ['recorded_build_source_commit=' local_shell_quote(recorded_bui
 lines{end + 1} = ['recorded_build_runner_checksum=' local_shell_quote(recorded_build_runner_checksum)];
 [progress_filename, progress_correlation_id] = ...
     local_progress_selection(runtime);
-lines = local_append_generic(lines, local_generic_progress_tmpdir( ...
-    progress_filename, true));
+lines = local_append_generic(lines, local_generic_progress_tmpdir(true));
 % Startup TOCTOU recheck avoids time-of-check/time-of-use drift:
 % pre-submission validated the pinned artifact, but shared paths could
 % have changed before sbatch startup. Before any current science (before
@@ -766,7 +761,6 @@ if ~direct_mode
     lines{end + 1} = 'cp -- "$shared_resource_manifest" "$local_resource_manifest"';
 end
 lines{end + 1} = 'cd "$TMPDIR"';
-lines{end + 1} = 'mlsc_record_progress ''stage_in|done''';
 lines{end + 1} = 'if [ ! -s "$local_job_manifest" ]; then';
 lines{end + 1} = '    printf ''Staged job manifest is missing.\n'' >&2';
 lines{end + 1} = '    exit 72';
@@ -798,17 +792,7 @@ end
 % One compiled pipeline invocation owns prepare, FreeSurfer normalization
 % and compute. The pipeline launcher owns the Runtime environment; its
 % normalization child clears LD_LIBRARY_PATH before sourcing FreeSurfer.
-lines{end + 1} = 'mlsc_record_progress ''pseudoCT|start''';
 lines{end + 1} = ['"$current_runner" "$current_mcr_root" "$local_job_manifest"' pipeline_resource_arg];
-lines{end + 1} = 'mlsc_record_progress ''preparation|done''';
-lines{end + 1} = 'mlsc_record_progress ''alias_recenter|done''';
-lines{end + 1} = 'mlsc_record_progress ''alignment_mask|done''';
-lines{end + 1} = 'mlsc_record_progress ''segmentation|done''';
-lines{end + 1} = 'mlsc_record_progress ''bone|done''';
-lines{end + 1} = 'mlsc_record_progress ''dartel_warp_reslice|done''';
-lines{end + 1} = 'mlsc_record_progress ''pseudoCT|done''';
-lines{end + 1} = 'mlsc_record_progress ''attenuation_qc|done''';
-lines{end + 1} = 'mlsc_record_progress ''verify|start''';
 lines{end + 1} = 'if [ ! -s "$TMPDIR/att_map.nii" ]; then';
 lines{end + 1} = '    printf ''Node-local att_map.nii is missing or empty.\n'' >&2';
 lines{end + 1} = '    exit 73';
@@ -833,8 +817,6 @@ lines{end + 1} = 'if [ ! -s "$TMPDIR/mlsc_current_output_verification.txt" ]; th
 lines{end + 1} = '    printf ''Node-local output verification is missing or empty.\n'' >&2';
 lines{end + 1} = '    exit 73';
 lines{end + 1} = 'fi';
-lines{end + 1} = 'mlsc_record_progress ''verify|done''';
-lines{end + 1} = 'mlsc_record_progress ''copy_back|start''';
 % Copy all node-local processing files back to the shared directory.
 lines{end + 1} = 'find "$TMPDIR" -mindepth 1 -maxdepth 1 -exec cp -a -t "$shared_temp" -- {} +';
 lines{end + 1} = 'if [ ! -s "$shared_temp/att_map.nii" ]; then';
@@ -861,7 +843,6 @@ lines{end + 1} = 'if [ ! -s "$shared_temp/mlsc_current_output_verification.txt" 
 lines{end + 1} = '    printf ''Shared output verification copy-back is missing or empty.\n'' >&2';
 lines{end + 1} = '    exit 74';
 lines{end + 1} = 'fi';
-lines{end + 1} = 'mlsc_record_progress ''copy_back|done''';
 lines{end + 1} = 'printf ''MLSC node-local processing and verified copy-back completed.\n''';
 script_text = local_join_lines(lines);
 submission_command = local_generic_sbatch(runtime);
@@ -878,9 +859,7 @@ artifact.log_paths = struct('stdout', stdout_log_path, ...
 artifact.preflight = preflight;
 artifact.progress_filename = progress_filename;
 artifact.progress_correlation_id = progress_correlation_id;
-artifact.progress_records = mlsc_progress('records');
 artifact.progress_path = fullfile(shared_temp, artifact.progress_filename);
-artifact.progress_format = 'stage|state per line, LF terminated';
 artifact.heavy_processing_root = '$TMPDIR';
 artifact.shared_input_staging = 'cp shared subject temp to node-local TMPDIR';
 artifact.shared_output_staging = 'cp node-local TMPDIR outputs to shared subject temp';

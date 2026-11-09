@@ -2,8 +2,8 @@
 """Synthetic tests for the single installed launcher bin/pseudoct.
 
 Covers bin/pseudoct (run, headless, resolve, --list-releases; gui and --orchestrate refused)
-and the runner (source scripts/run_pseudoct_worker.sh, installed as
-runtimes/<LABEL>/run_pseudoct_worker.sh).
+and the runner (source scripts/run_pseudoct_pipeline.sh, installed as
+runtimes/<LABEL>/run_pseudoct_pipeline.sh).
 
 An installed package is assembled under PSEUDOCT_TEST_SCRATCH: a copy of the real
 bin/pseudoct and runner, the release catalog embedded in manifest.json, and
@@ -36,11 +36,11 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOG_PATH = os.path.join(REPO, 'config', 'releases.json')
 LAUNCHER_SRC = os.path.join(REPO, 'bin', 'pseudoct')
-RUNNER_SRC = os.path.join(REPO, 'scripts', 'run_pseudoct_worker.sh')
+RUNNER_SRC = os.path.join(REPO, 'scripts', 'run_pseudoct_pipeline.sh')
 BUILT = ('R2010b', 'R2014b')
 EXECUTABLES = {
-    'payload': 'pseudoct_worker',
-    'standalone': 'pseudoct_standalone',
+    'payload': 'pseudoct_pipeline',
+    'standalone': 'pseudoct_job_manager',
 }
 # PATH without MATLAB: the python3 that runs the tests plus the system utilities.
 SYSTEM_PATH = os.pathsep.join([os.path.dirname(sys.executable), '/usr/bin', '/bin'])
@@ -140,7 +140,7 @@ def install_release(pkg, label):
         exe = os.path.join(pkg, 'runtimes', label, rel)
         write(exe, FAKE_STANDALONE if target == 'standalone' else FAKE_PLAIN)
         os.chmod(exe, 0o755)
-    runner = os.path.join(pkg, 'runtimes', label, 'run_pseudoct_worker.sh')
+    runner = os.path.join(pkg, 'runtimes', label, 'run_pseudoct_pipeline.sh')
     shutil.copyfile(RUNNER_SRC, runner)
     os.chmod(runner, 0o755)
 
@@ -249,7 +249,7 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault', 'R2014b\t8.4\t-'])
         self.assertEqual(self.invocations(), [])
-        os.remove(os.path.join(self.pkg, 'runtimes', 'R2014b', 'pseudoct_worker'))
+        os.remove(os.path.join(self.pkg, 'runtimes', 'R2014b', 'pseudoct_pipeline'))
         rc, out, _err = self.pseudoct(['--list-releases'], env={})
         self.assertEqual(rc, 0)
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault'])
@@ -281,7 +281,7 @@ class StandaloneTestCase(unittest.TestCase):
              'sh', out], stdout=subprocess.PIPE, check=True).stdout.decode()
         self.assertEqual(sourced, '|'.join([
             self.exe('R2014b', 'standalone'), self.root_real['R2014b'],
-            os.path.join(self.pkg_real, 'runtimes', 'R2014b', 'run_pseudoct_worker.sh'),
+            os.path.join(self.pkg_real, 'runtimes', 'R2014b', 'run_pseudoct_pipeline.sh'),
             self.pkg_real, 'R2014b', self.root_real['R2014b']]))
         # Environment variables never select a root: without --mcr-root the only
         # candidate is the catalog location <base>/8.4 (R2014b), here synthetic.
@@ -377,19 +377,19 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(out.splitlines(), ['R2010b\t7.14\tdefault', 'R2014b\t8.4\t-'])
 
     def test_payload_runner_execs_compiled_payload_with_its_runtime(self):
-        runner = os.path.join(self.pkg, 'runtimes', 'R2010b', 'run_pseudoct_worker.sh')
-        rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'phase', 'job.txt', 'res.txt'],
+        runner = os.path.join(self.pkg, 'runtimes', 'R2010b', 'run_pseudoct_pipeline.sh')
+        rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'job.txt', 'res.txt'],
                                      env={})
         self.assertEqual(rc, 0, err)
         calls = self.invocations()
         self.assertEqual(calls[-1]['EXE'], self.exe('R2010b', 'payload'))
-        self.assertEqual(calls[-1]['ARGS'], 'phase job.txt res.txt')
+        self.assertEqual(calls[-1]['ARGS'], 'job.txt res.txt')
         self.assertEqual(calls[-1]['LD'], self.ld_for(self.root_real['R2010b']))
         # Installed direct mode: the resource manifest argument is optional.
-        rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'phase', 'job.txt'], env={})
+        rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'job.txt'], env={})
         self.assertEqual(rc, 0, err)
-        self.assertEqual(self.invocations()[-1]['ARGS'], 'phase job.txt')
-        rc, _out, err = self.run_cmd([runner, self.root_real['R2010b'], 'phase'], env={})
+        self.assertEqual(self.invocations()[-1]['ARGS'], 'job.txt')
+        rc, _out, err = self.run_cmd([runner, self.root_real['R2010b']], env={})
         self.assertEqual(rc, 2, err)
 
     def test_jvm_directories_join_the_library_path_only_when_present(self):
@@ -403,7 +403,7 @@ class StandaloneTestCase(unittest.TestCase):
         request = os.path.join(self.base, 'subject', 'MR_PET', 'tmp', 'request.mat')
         result = os.path.join(self.base, 'subject', 'MR_PET', 'tmp', 'result.mat')
         write(request, 'synthetic request mat\n')
-        runner = os.path.join(self.pkg, 'runtimes', label, 'run_pseudoct_worker.sh')
+        runner = os.path.join(self.pkg, 'runtimes', label, 'run_pseudoct_pipeline.sh')
 
         def launcher_ld():
             rc, _out, err = self.pseudoct(['headless', '--mcr', label, '--mcr-root', root,
@@ -412,7 +412,7 @@ class StandaloneTestCase(unittest.TestCase):
             return self.invocations()[-1]['LD']
 
         def runner_ld():
-            rc, _out, err = self.run_cmd([runner, root, 'phase', 'job.txt'], env={})
+            rc, _out, err = self.run_cmd([runner, root, 'job.txt'], env={})
             self.assertEqual(rc, 0, err)
             return self.invocations()[-1]['LD']
 

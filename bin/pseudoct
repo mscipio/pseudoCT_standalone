@@ -52,7 +52,8 @@ Options (run validate|run):
   --recenter-before-normalization yes|no
   --cleanup-on-success yes|no
   --current-artifact-root PATH    Development-only override; MLSC profiles only
-  --group-account ACCOUNT        MLSC account selection for run
+  --group-account ACCOUNT        MLSC account selection for run (blank/omitted: first discovered)
+  --check-account                run validate only, MLSC: authenticate, select the account, stop before submission
   --host-key-file FILE            Optional MLSC strict host-key input
   --credential-handoff FILE       Existing authorized single-use handoff
   --format text|jsonl             Output format (default: text)
@@ -529,11 +530,14 @@ op_run() {
     seen_mprage=0
     seen_umap=0
     seen_config=0
+    seen_group_account=0
+    check_account=0
 
     while [ "$#" -gt 0 ]; do
         option=$1
         shift
         case "$option" in
+            --check-account) check_account=1; continue ;;
             --profile|--mprage|--umap|--config|--correct-aliasing|\
             --recenter-before-normalization|--cleanup-on-success|\
             --current-artifact-root|--group-account|--host-key-file|\
@@ -566,7 +570,7 @@ op_run() {
             --recenter-before-normalization) recenter=$value ;;
             --cleanup-on-success) cleanup_success=$value ;;
             --current-artifact-root) artifact_root=$value ;;
-            --group-account) group_account=$value ;;
+            --group-account) group_account=$value; seen_group_account=1 ;;
             --host-key-file) host_key_file=$value ;;
             --credential-handoff) credential_handoff=$value ;;
             --format) format=$value ;;
@@ -599,6 +603,9 @@ op_run() {
     fi
     if [ -n "$group_account" ] && [ "$backend" != mlsc ]; then
         error_record "$EXIT_USAGE" '--group-account is available only for MLSC profiles.'
+    fi
+    if [ "$check_account" -eq 1 ] && { [ "$action" != validate ] || [ "$backend" != mlsc ]; }; then
+        error_record "$EXIT_USAGE" '--check-account is valid only for remote MLSC run validate.'
     fi
     if [ -n "$host_key_file" ] && [ "$backend" != mlsc ]; then
         error_record "$EXIT_USAGE" '--host-key-file is available only for MLSC profiles.'
@@ -763,6 +770,8 @@ validate_request=$tmp_dir/validate-request.mat
 validate_result=$tmp_dir/validate-result.mat
 submit_request=$tmp_dir/submit-request.mat
 submit_result=$tmp_dir/submit-result.mat
+account_request=$tmp_dir/account-request.mat
+account_result=$tmp_dir/account-result.mat
 summary_file=$tmp_dir/result-summary.txt
 
 if ! python3 - "$input_file" "$profile" "$invocation_id" "$config" \
@@ -848,7 +857,9 @@ matlab_support() {
     PSEUDOCT_CLI_INPUT="$input_file" PSEUDOCT_CLI_REQUEST="$2" \
     PSEUDOCT_CLI_RESULT="${3:-}" PSEUDOCT_CLI_SUMMARY="${4:-}" \
     PSEUDOCT_CLI_INVOCATION="$invocation_id" PSEUDOCT_CLI_PROFILE="$profile" \
-    PSEUDOCT_CLI_ACTION="$5" PSEUDOCT_CLI_HANDOFF="${credential_handoff:-}"
+    PSEUDOCT_CLI_ACTION="$5" PSEUDOCT_CLI_HANDOFF="${credential_handoff:-}" \
+    PSEUDOCT_CLI_GROUP_ACCOUNT="${group_account:-}" \
+    PSEUDOCT_CLI_ACCOUNT_CHECK="${account_check_mode:-0}"
     if [ "$installed" -eq 1 ]; then
         export LD_LIBRARY_PATH=$mcr_ld_path
         "$standalone_exe" "$support_mode" >"$tmp_dir/matlab-diagnostics-support-$support_mode.log" 2>&1
@@ -1266,7 +1277,7 @@ if ! matlab_support verify_result '' "$validate_result" "$summary_file" validate
 fi
 operation_phase=validate_done
 
-if [ "$action" = run ]; then
+if [ "$action" = run ] || [ "$check_account" -eq 1 ]; then
     python3 - "$summary_file" <<'PY' >/dev/null 2>&1
 import sys
 v = open(sys.argv[1], encoding="utf-8").read().splitlines()
@@ -1320,6 +1331,12 @@ PY
                 error_record "$EXIT_AUTH" 'Password prompt was cancelled.'
             fi
             [ -n "$password" ] || error_record "$EXIT_AUTH" 'Password cannot be empty.'
+            # Optional account: asked only when --group-account is absent; a handoff
+            # supplies its own account and skips this whole prompt block.
+            if [ "$seen_group_account" -eq 0 ]; then
+                printf 'MLSC Slurm account (blank selects the first discovered account): ' > /dev/tty
+                IFS= read -r group_account < /dev/tty || error_record "$EXIT_AUTH" 'Account prompt was cancelled.'
+            fi
             [ -d /dev/shm ] && [ -w /dev/shm ] && [ -x /dev/shm ] && \
                 [ "$(stat -f -c %T /dev/shm 2>/dev/null)" = tmpfs ] || \
                 error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
@@ -1371,6 +1388,25 @@ PY
             secret_dir=''
         fi
     fi
+    if [ "$check_account" -eq 1 ]; then
+        # Dry remote check (run validate --check-account): authenticate, discover and
+        # select the account, then stop.
+        # No submit request is built and no scheduler call is made.
+        account_check_mode=1
+        if ! matlab_support prepare_validate "$account_request" '' '' ''; then
+            error_record "$EXIT_RUNTIME" 'The account check request could not be serialized.'
+        fi
+        run_headless validate "$account_request" "$account_result"
+        account_launcher_status=$?
+        if [ ! -s "$account_result" ]; then
+            error_record "$EXIT_RUNTIME" "Account check launcher returned no result MAT (status $account_launcher_status)."
+        fi
+        if ! matlab_support verify_result '' "$account_result" "$summary_file" validate; then
+            error_record "$EXIT_RUNTIME" 'Account check result MAT failed schema/binding verification.'
+        fi
+        operation_phase=account_check_done
+    fi
+    if [ "$action" = run ]; then
     if ! matlab_support prepare_submit "$submit_request" "$validate_result" '' '' submit; then
         error_record "$EXIT_RUNTIME" 'Validated job could not be serialized for submit.'
     fi
@@ -1382,6 +1418,7 @@ PY
     fi
     if ! matlab_support verify_result '' "$submit_result" "$summary_file" submit; then
         error_record "$EXIT_RUNTIME" 'Submit result MAT failed schema/binding verification.'
+    fi
     fi
 fi
 
@@ -1404,14 +1441,18 @@ if len(values) < 10:
     print("pseudoct: verified result summary is incomplete.", file=sys.stderr)
     raise SystemExit(69)
 status, error_code, auth, submission, result_backend, science, dispatch, ids, result_action, message = values[:10]
+account = values[10] if len(values) > 10 and values[10] != "-" else ""
 error_code = "" if error_code == "-" else error_code
 ids = "" if ids == "-" else ids
 message = "" if message == "-" else message
 job_ids = [int(v) for v in ids.split()] if ids else []
 accepted = submission == "accepted"
-if result_action == "validate":
+AUTH_CODES = {"AUTHENTICATION_FAILED", "NO_ACCOUNTS", "ACCOUNT_QUERY_FAILED", "CREDENTIAL_ERASE_FAILED", "CREDENTIAL_STORAGE_FAILED", "HOST_KEY_UNAVAILABLE", "INVALID_GROUP_ACCOUNT"}
+if result_action == "validate" and error_code in AUTH_CODES:
+    outcome = "authentication_failed"
+elif result_action == "validate":
     outcome = "validation_succeeded" if status == "ready" else "validation_failed"
-elif error_code in {"AUTHENTICATION_FAILED", "NO_ACCOUNTS", "ACCOUNT_QUERY_FAILED", "CREDENTIAL_ERASE_FAILED", "CREDENTIAL_STORAGE_FAILED", "HOST_KEY_UNAVAILABLE", "INVALID_GROUP_ACCOUNT"}:
+elif error_code in AUTH_CODES:
     outcome = "authentication_failed"
 elif error_code in {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB"}:
     outcome = "validation_failed"
@@ -1448,15 +1489,15 @@ record = {
     "scientific_completion_status": science,
     "scientific_completion_reason": science_reason,
     "backend": result_backend, "job_ids": job_ids,
-    "group_account": None if result_backend != "mlsc" else None,
-    "group_account_reason": "Not exposed by the CLI result summary; inspect the bound MAT result.",
+    "group_account": account or None,
+    "group_account_reason": None if account else "No MLSC account was selected by this invocation.",
     "error_code": error_code or None,
     "error_message": message or None,
 }
 
-if result_action == "validate":
+if result_action == "validate" and error_code not in AUTH_CODES:
     code = 0 if status == "ready" else 65
-elif error_code in {"AUTHENTICATION_FAILED", "NO_ACCOUNTS", "ACCOUNT_QUERY_FAILED", "CREDENTIAL_ERASE_FAILED", "CREDENTIAL_STORAGE_FAILED", "HOST_KEY_UNAVAILABLE", "INVALID_GROUP_ACCOUNT"}:
+elif error_code in AUTH_CODES:
     code = 66
 elif error_code in {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB"}:
     code = 65
@@ -1484,6 +1525,7 @@ else:
         print("  reason: " + science_reason)
     else:
         print("  scientific completion: " + science_value)
+    if account: print("  MLSC account: " + account)
     if job_ids: print("  scheduler job IDs: " + ", ".join(str(v) for v in job_ids))
     for item in run_logs:
         print("  run log" + (" (subject %d)" % item["subject"] if len(run_logs) > 1 else "") + ": " + item["path"])

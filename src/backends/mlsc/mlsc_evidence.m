@@ -112,16 +112,6 @@ snapshot.network_payload_staging = false;
 snapshot.copy_back = struct('contract_represented', false, ...
     'verified', false, 'att_map_path', '', 'att_map_present', false, ...
     'att_map_nonempty', false);
-snapshot.progress = local_empty_progress_snapshot();
-snapshot.progress_milestones = cell(0, 1);
-snapshot.progress_source_path = '';
-snapshot.progress_archive_path = '';
-snapshot.progress_cursor_offset = 0;
-snapshot.progress_incomplete_trailing = false;
-snapshot.progress_pending_bytes = 0;
-snapshot.progress_archive_attempted = false;
-snapshot.progress_archive_succeeded = false;
-snapshot.progress_archive_detail = '';
 snapshot.cleanup = struct('attempted', false, 'script_removed', false, ...
     'script_preserved', false, ...
     'node_local_tmpdir', 'Slurm-owned cleanup on job exit', ...
@@ -144,19 +134,6 @@ end
 function timestamps = local_empty_timestamps()
 timestamps = struct('created_at', '', 'submitted_at', '', 'started_at', '', ...
     'finished_at', '', 'cleaned_at', '');
-end
-
-function progress = local_empty_progress_snapshot()
-progress = struct();
-progress.source_path = '';
-progress.archive_path = '';
-progress.milestones = cell(0, 1);
-progress.cursor_offset = 0;
-progress.incomplete_trailing = false;
-progress.pending_bytes = 0;
-progress.archive_attempted = false;
-progress.archive_succeeded = false;
-progress.archive_detail = '';
 end
 
 function snapshot = local_merge_values(snapshot, values)

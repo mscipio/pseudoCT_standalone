@@ -196,8 +196,8 @@ fprintf('Current MLSC submit/monitor/output/failure/cancellation checks passed.\
             end
         end
         if strcmp(active_scenario, 'log_rotate')
-            % stderr keeps milestone lines on the plain path (stdout is parsed
-            % by the scientific-stdout reader and is not the case under test).
+            % Slurm stderr carries the diagnostic lines under test; stdout is not
+            % a progress source in RC7.
             local_write(fullfile(active_shared_temp, 'pseudoCT_mlsc_31415.err'), ...
                 [log_line_a char(10) log_line_b char(10)]);
         end
@@ -342,7 +342,7 @@ function package = local_installed_fixture(test_root)
 fix = fullfile(test_root, 'installed');
 release_dir = fullfile(fix, 'runtimes', 'R2010b');
 package = struct('root', fix, 'mcr', fullfile(fix, 'mcr'), ...
-    'runner', fullfile(release_dir, 'run_pseudoct_worker.sh'), ...
+    'runner', fullfile(release_dir, 'run_pseudoct_pipeline.sh'), ...
     'resources', fullfile(fix, 'resources'));
 local_make_dir(fullfile(fix, 'bin'));
 local_make_dir(release_dir);
@@ -352,7 +352,7 @@ local_make_dir(package.resources);
 local_write(fullfile(fix, 'bin', 'pseudoct'), sprintf('#!/bin/sh\n'));
 local_write(fullfile(fix, 'manifest.json'), sprintf('{}\n'));
 local_write(package.runner, sprintf('#!/bin/sh\n# Synthetic runner fixture; never executed.\n'));
-local_write(fullfile(release_dir, 'pseudoct_worker'), ...
+local_write(fullfile(release_dir, 'pseudoct_pipeline'), ...
     sprintf('Synthetic payload fixture; never executed.\n'));
 local_write(fullfile(fix, 'mcr', 'runtime', 'glnxa64', 'libmwmclmcrrt.so.7.14'), ...
     sprintf('synthetic\n'));
