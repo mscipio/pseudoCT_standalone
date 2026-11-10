@@ -11,6 +11,7 @@ if ~isempty(target.path)
         'stage_id', 'workflow.input_prepare', 'stage_index', 1, ...
         'status', 'STARTED', 'message', 'Input MPRAGE preparation started.', ...
         'source', source));
+    local_present_orchestration_event(context);
 end
 
 seed_nii = pseudo_CT_convert_dicom_quiet(input_file, output_file, context);
@@ -20,5 +21,17 @@ if ~isempty(target.path)
         'stage_id', 'workflow.input_prepare', 'stage_index', 1, ...
         'status', 'COMPLETED', 'message', 'Input MPRAGE prepared.', ...
         'source', source));
+    local_present_orchestration_event(context);
+end
+end
+
+function local_present_orchestration_event(context)
+% Deliver orchestration progress immediately without affecting computation.
+if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+    try
+        pseudo_CT_present_native_events(context, true);
+    catch ME
+        fprintf(2, 'WARNING: progress presentation failed: %s\n', ME.message);
+    end
 end
 end

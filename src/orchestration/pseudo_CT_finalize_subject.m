@@ -36,6 +36,7 @@ if strcmp(config.io_policy.output, 'nifti-and-dicom')
     stage_event.message = 'Writing DICOM output.';
     if write_events
         pseudo_CT_scientific_event(target, stage_event);
+        local_present_orchestration_event(context);
     end
     converter_context = output_context;
     if strcmp(source, 'mlsc-lifecycle')
@@ -50,6 +51,7 @@ if strcmp(config.io_policy.output, 'nifti-and-dicom')
         stage_event.message = sprintf('DICOM output failed: %s', ME.message);
         if write_events
             pseudo_CT_scientific_event(target, stage_event);
+            local_present_orchestration_event(context);
         end
         if strcmp(source, 'local-orchestrator')
             pseudo_CT_output('ERROR', output_context, ...
@@ -61,6 +63,7 @@ if strcmp(config.io_policy.output, 'nifti-and-dicom')
     stage_event.message = 'DICOM output written.';
     if write_events
         pseudo_CT_scientific_event(target, stage_event);
+        local_present_orchestration_event(context);
     end
 else
     if mprage_only
@@ -71,6 +74,7 @@ else
             'DICOM output skipped by MPRAGE-only policy (profile_policy:mprage_only).';
         if write_events
             pseudo_CT_scientific_event(target, stage_event);
+            local_present_orchestration_event(context);
         end
     else
         pseudo_CT_output('INFO', output_context, ...
@@ -86,6 +90,7 @@ if mprage_only
         'Full-mode output finalization skipped by MPRAGE-only policy (profile_policy:mprage_only).';
     if write_events
         pseudo_CT_scientific_event(target, stage_event);
+        local_present_orchestration_event(context);
     end
 else
     stage_event.stage_id = 'workflow.full_output_finalize';
@@ -94,6 +99,7 @@ else
     stage_event.message = 'Promoting final outputs.';
     if write_events
         pseudo_CT_scientific_event(target, stage_event);
+        local_present_orchestration_event(context);
     end
 end
 
@@ -105,6 +111,7 @@ if ~promotion_success
         stage_event.message = 'Output promotion failed.';
         if write_events
             pseudo_CT_scientific_event(target, stage_event);
+            local_present_orchestration_event(context);
         end
     end
     pseudo_CT_output('ERROR', output_context, ...
@@ -118,6 +125,7 @@ if ~mprage_only
     stage_event.message = 'Outputs promoted.';
     if write_events
         pseudo_CT_scientific_event(target, stage_event);
+        local_present_orchestration_event(context);
     end
 end
 verify_context = output_context;
@@ -163,4 +171,15 @@ if strcmp(source, 'mlsc-lifecycle')
 end
 
 success = 1;
+end
+
+function local_present_orchestration_event(context)
+% Deliver orchestration progress immediately without affecting computation.
+if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+    try
+        pseudo_CT_present_native_events(context, true);
+    catch ME
+        fprintf(2, 'WARNING: progress presentation failed: %s\n', ME.message);
+    end
+end
 end
