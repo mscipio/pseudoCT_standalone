@@ -15,6 +15,8 @@ captured = evalc(['try, seed_nii = dcm2nii(input_file, output_file, ', ...
     '''Overwrite'', true); catch conversion_error, end']);
 detail_context = context;
 detail_context.console_detail_only = true;
+% Raw converter output is run-log (LOG) only; it is never a JSONL diagnostic.
+detail_context.raw_diagnostic = true;
 lines = regexp(captured, '\r?\n', 'split');
 for ii = 1:length(lines)
     text = strtrim(lines{ii});

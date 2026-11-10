@@ -335,8 +335,8 @@ class StandaloneTestCase(unittest.TestCase):
 
     def test_cli_validate_jsonl_runs_through_selected_release(self):
         mprage = self.subject()
-        rc, out, err = self.pseudoct(['run', '--mcr', 'R2010b', '--mcr-root', self.root['R2010b'],
-                                      'validate', '--profile', 'local', '--mprage', mprage,
+        rc, out, err = self.pseudoct(['validate', '--mcr', 'R2010b', '--mcr-root', self.root['R2010b'],
+                                      '--profile', 'local', '--mprage', mprage,
                                       '--format', 'jsonl'], env={})
         self.assertEqual(rc, 0, out + err)
         record = json.loads(out.strip().splitlines()[-1])
@@ -356,7 +356,7 @@ class StandaloneTestCase(unittest.TestCase):
         shutil.copyfile(LAUNCHER_SRC, launcher)
         os.chmod(launcher, 0o755)
         mprage = self.subject()
-        rc, _out, err = self.pseudoct(['run', '--mcr', 'R2010b', 'validate', '--profile', 'local',
+        rc, _out, err = self.pseudoct(['validate', '--mcr', 'R2010b', '--profile', 'local',
                                        '--mprage', mprage], env={}, launcher=launcher)
         self.assertEqual(rc, 64, err)
         for args in (['resolve'], ['gui'], ['run', '--orchestrate', mprage, mprage + '.out']):
@@ -425,7 +425,7 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertEqual(runner_ld(), expected)
 
     def test_cli_validate_and_run_reach_the_same_packaged_standalone_engine(self):
-        # The MATLAB GUI sends these same run validate / run run argv through the packaged
+        # The MATLAB GUI sends these same validate / run argv through the packaged
         # launcher (tests/test_frontend_launch.m); here the CLI must reach the same engine.
         mprage = self.subject()
         expected_exe = self.exe('R2010b', 'standalone')
@@ -435,8 +435,8 @@ class StandaloneTestCase(unittest.TestCase):
         for action, phases in cases:
             if os.path.exists(self.log):
                 os.remove(self.log)
-            rc, out, err = self.pseudoct(['run', '--mcr', 'R2010b', '--mcr-root', self.root['R2010b'],
-                                          action, '--profile', 'local', '--mprage', mprage,
+            rc, out, err = self.pseudoct([action, '--mcr', 'R2010b', '--mcr-root', self.root['R2010b'],
+                                          '--profile', 'local', '--mprage', mprage,
                                           '--format', 'jsonl'], env={})
             self.assertEqual(rc, 0, out + err)
             calls = self.invocations()
@@ -449,7 +449,7 @@ class StandaloneTestCase(unittest.TestCase):
     def test_incomplete_installation_fails_closed_without_source_fallback(self):
         shutil.rmtree(os.path.join(self.pkg, 'runtimes'))
         mprage = self.subject()
-        rc, _out, err = self.pseudoct(['run', 'validate', '--profile', 'local', '--mprage', mprage],
+        rc, _out, err = self.pseudoct(['validate', '--profile', 'local', '--mprage', mprage],
                                       env={})
         self.assertEqual(rc, 69, err)
         self.assertIn('incomplete', err)
@@ -468,8 +468,8 @@ class StandaloneTestCase(unittest.TestCase):
         write(alternate, '#!/bin/sh\n: > "%s"\nexit 0\n' % marker)
         os.chmod(alternate, 0o755)
         mprage = self.subject()
-        rc, out, err = self.pseudoct(['run', '--mcr', 'R2010b', '--mcr-root', self.root['R2010b'],
-                                      'validate', '--profile', 'local', '--mprage', mprage,
+        rc, out, err = self.pseudoct(['validate', '--mcr', 'R2010b', '--mcr-root', self.root['R2010b'],
+                                      '--profile', 'local', '--mprage', mprage,
                                       '--format', 'jsonl'], env={'PSEUDOCT_LAUNCHER': alternate})
         self.assertEqual(rc, 0, out + err)
         self.assertFalse(os.path.exists(marker), 'PSEUDOCT_LAUNCHER ran in an installed root')

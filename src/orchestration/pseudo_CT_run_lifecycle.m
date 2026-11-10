@@ -229,23 +229,9 @@ for ii = 1:length(jobs)
     end
 end
 
-% Repeat local-only checks immediately before output/log setup and before any
-% processing, authentication, or scheduler work. The MLSC lifecycle performs
-% its existing execution-time artifact check again immediately before submit.
-validation_request = struct();
-validation_request.profile = profile_name;
-validation_request.config = config;
-validation_request.subjects = {jobs.mprage_fn};
-validation_request.umap_files = {jobs.umap_fn};
-if isfield(config, 'cleanup_on_success')
-    validation_request.cleanup_on_success = config.cleanup_on_success;
-end
-if ~isempty(jobs)
-    validation_request.correct_aliasing = jobs(1).correct_aliasing;
-    validation_request.recenter_before_normalization = ...
-        jobs(1).recenter_before_normalization;
-end
-pseudo_CT_orchestrate('validate', validation_request);
+% The jobs were validated once by pseudo_CT_orchestrate('validate') and
+% identity-checked by submit before this call; they are used as given. The
+% execution-time artifact checks remain in the MLSC and local runner paths.
 
 %% === Create one persistent, owner-only run log per requested subject ===
 % Log contract: <subject-root>/MR_PET/pseudoct-run-<UTC>-<invocationUUID>.log.
@@ -281,7 +267,12 @@ for ii = 1:length(jobs)
     all_log_files{end + 1} = jobs(ii).log_file; %#ok<AGROW>
     processing_dirs{end + 1} = processing_dir; %#ok<AGROW>
     header_context = struct('log_file', jobs(ii).log_file, 'scope', 'run');
-    pseudo_CT_output('INFO', header_context, 'Run log initialized.');
+    % Boundary (a): the run start record, written before any pipeline or job is launched.
+    % A copy carries the flags, so the header rows below stay LOG only.
+    start_context = header_context;
+    start_context.lifecycle = true;
+    start_context.jsonl_boundary = true;
+    pseudo_CT_output('INFO', start_context, 'Run log initialized.');
     local_write_log_header(header_context, profile_name, config.mode, ...
         jobs(ii).mprage_fn, run_start_time, processing_dir, temp_dir);
 end

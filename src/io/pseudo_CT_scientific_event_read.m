@@ -88,7 +88,7 @@ template = struct('subject', subject, ...
     'status', status, 'message', message, ...
     'source', struct('version', 'native', 'file', ''), ...
     'source_timestamp', '', 'observation_timestamp', '', ...
-    'transition_kind', 'explicit');
+    'transition_kind', 'explicit', 'native_stage_id', '');
 end
 
 function yes = local_is_canonical_stage(rec)
@@ -115,13 +115,6 @@ if ~isfield(rec, 'status')
     return;
 end
 index = rec.stage_index;
-if isfield(rec, 'stage_id') && strcmp(rec.stage_id, 'dartel') && ...
-        strcmp(rec.status, 'COMPLETED')
-    % The DARTEL-only completion is detail, not the end of canonical stage 7
-    % (DARTEL + inverse warp + reslice). Only inverse_warp COMPLETED presents
-    % stage 7 DONE; the record itself stays in the JSONL.
-    return;
-end
 switch rec.status
     case 'STARTED'
         status = 'START';
@@ -143,6 +136,17 @@ event.source.file = path;
 % caller drop records whose console line it already prints itself.
 if isfield(rec, 'source')
     event.source.version = rec.source;
+end
+% Native operation id (for example 'dartel', 'inverse_warp') and the record's own
+% UTC time, 'yyyy-mm-dd HH:MM:SS'. The presenter uses the time only for archived replay.
+if isfield(rec, 'stage_id') && ischar(rec.stage_id)
+    event.native_stage_id = rec.stage_id;
+end
+if isfield(rec, 'timestamp_utc') && ischar(rec.timestamp_utc)
+    tk = regexp(rec.timestamp_utc, '^(\d{4}-\d\d-\d\d)T(\d\d:\d\d:\d\d)', 'tokens', 'once');
+    if ~isempty(tk)
+        event.source_timestamp = [tk{1} ' ' tk{2}];
+    end
 end
 event.observation_timestamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
 end

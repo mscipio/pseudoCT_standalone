@@ -2238,9 +2238,16 @@ try
     catch %#ok<CTCH>
     end
     context = local_output_context(runtime, job_id);
+    % Boundary (b): a terminal job has no node writer left. An interrupted result
+    % means the job still runs on the cluster, so that row is not a boundary.
+    context.lifecycle = true;
+    context.jsonl_boundary = ~(isfield(result, 'interrupted') && ...
+        isequal(result.interrupted, true));
     pseudo_CT_output(level, context, 'MLSC job %d %s exit %s elapsed %s.', ...
         job_id, state, exit_text, local_elapsed_text(elapsed));
     if isfield(result, 'interrupted') && isequal(result.interrupted, true)
+        % The job is still running on the cluster: this WARN is LOG only (not a boundary).
+        context.jsonl_boundary = false;
         pseudo_CT_output('WARN', context, ['Slurm job %d continues on the ' ...
             'cluster; the result is unverified. Cancel it manually with: ' ...
             'scancel %d'], job_id, job_id);
@@ -2649,6 +2656,8 @@ try
         % and the WARN/ERROR head line stay on the console.
         context.console_detail_only = true;
         context.console_detail_remote = true;
+        % Raw remote-diagnostic continuation: run LOG only, never a JSONL diagnostic.
+        context.raw_diagnostic = true;
     end
     pseudo_CT_output(level, context, '%s', message);
 catch %#ok<CTCH>

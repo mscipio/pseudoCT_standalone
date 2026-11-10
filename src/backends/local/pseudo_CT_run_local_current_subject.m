@@ -163,7 +163,11 @@ mlsc_current_validate('validate_for_execution', artifact_config);
 command = ['env -u LD_LIBRARY_PATH ' local_shell_quote(runner) ' ' ...
     local_shell_quote(mcr_root) ' ' local_shell_quote(job_manifest_path) resource_arg];
 stage_context = local_public_log_context(output_context);
-pseudo_CT_output('INFO', stage_context, 'Running compiled current pipeline.');
+% Boundary (a): written before the runner is launched, so no other writer is active.
+lifecycle_context = stage_context;
+lifecycle_context.lifecycle = true;
+lifecycle_context.jsonl_boundary = true;
+pseudo_CT_output('INFO', lifecycle_context, 'Running compiled current pipeline.');
 pipeline_started = tic;
 stream_log = '';
 if isfield(output_context, 'log_file') && ...
@@ -185,6 +189,8 @@ if status ~= 0
     if isfield(error_context, 'stage_count')
         error_context = rmfield(error_context, 'stage_count');
     end
+    % Boundary (b): the runner has exited, so the failure record is safe to persist.
+    error_context.jsonl_boundary = true;
     if isfield(output_context, 'log_file') && ...
             ischar(output_context.log_file) && ...
             ~isempty(strtrim(output_context.log_file))
@@ -198,7 +204,11 @@ if status ~= 0
     error('pseudo_CT:LocalCurrentRunner', ...
         'Compiled current pipeline failed with exit status %d.', status);
 end
-pseudo_CT_output('SUCCESS', stage_context, ...
+% Boundary (b): the runner has exited with status 0.
+completion_context = stage_context;
+completion_context.lifecycle = true;
+completion_context.jsonl_boundary = true;
+pseudo_CT_output('SUCCESS', completion_context, ...
     'Compiled current pipeline completed (elapsed %.1f s).', ...
     toc(pipeline_started));
 end
@@ -353,10 +363,23 @@ while true
                 fprintf(1, '%s\n', heartbeat_line);
             end
         end
+        % Heartbeat goes to the run LOG only (never JSONL). Stage tags are removed so
+        % the heartbeat cannot claim a stage number; the console row above is unchanged.
+        heartbeat_record = heartbeat_context;
+        if isfield(heartbeat_record, 'stage_index')
+            heartbeat_record = rmfield(heartbeat_record, 'stage_index');
+        end
+        if isfield(heartbeat_record, 'stage_count')
+            heartbeat_record = rmfield(heartbeat_record, 'stage_count');
+        end
+        heartbeat_record.console_detail_only = true;
+        heartbeat_record.console_detail_remote = true;
+        pseudo_CT_output('INFO', heartbeat_record, '%s', heartbeat);
         last_activity = tic;
     end
     [found, status] = local_read_current_runner_status(status_path);
     if found
+        stream_state('runner_exited') = true;
         local_tail_current_output(capture_path, persist_path, ...
             stream_state, true, output_context);
         break;
@@ -365,10 +388,12 @@ while true
     if probe_status ~= 0
         [found, status] = local_read_current_runner_status(status_path);
         if found
+            stream_state('runner_exited') = true;
             local_tail_current_output(capture_path, persist_path, ...
                 stream_state, true, output_context);
             break;
         end
+        stream_state('runner_exited') = true;
         local_tail_current_output(capture_path, persist_path, ...
             stream_state, true, output_context);
         error('pseudo_CT:LocalCurrentRunner', ...
@@ -431,7 +456,7 @@ if flush_console
     local_flush_warning_block(stream_state, output_context);
 end
 if flush_console
-    local_log_warning_summary(persist_path, stream_state);
+    local_log_warning_summary(persist_path, stream_state, output_context);
 end
 end
 
@@ -500,9 +525,10 @@ end
 pseudo_CT_output_console_visible('WARN', public_text, warn_context);
 end
 
-function local_log_warning_summary(persist_path, stream_state)
+function local_log_warning_summary(persist_path, stream_state, output_context)
 % Append exact per-text warning counts once, so grouped public counts can be
-% reconciled with the raw occurrences that precede them in the log.
+% reconciled with the raw occurrences that precede them in the log. The summary
+% rows are LOG lines and also JSONL WARN diagnostics; the raw child lines stay LOG only.
 order = stream_state('warn_order');
 if isempty(order) || isempty(persist_path)
     return;
@@ -514,11 +540,20 @@ fid = fopen(persist_path, 'a');
 if fid == -1
     return;
 end
+% Boundary (b) only when the runner has exited (set by the streaming loop); an
+% interruption flush keeps the summary in the LOG alone, because the runner may still write.
+summary_context = output_context;
+summary_context.jsonl_only = true;
+summary_context.jsonl_boundary = stream_state.isKey('runner_exited') && ...
+    isequal(stream_state('runner_exited'), true);
 try
     stamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
     for ii = 1:length(order)
         fprintf(fid, '[%s] WARN    Warning summary: %d occurrence(s): %s\n', ...
             stamp, counts(order{ii}), local_redact_current_secrets(order{ii}));
+        pseudo_CT_output('WARN', summary_context, ...
+            'Warning summary: %d occurrence(s): %s', counts(order{ii}), ...
+            local_redact_current_secrets(order{ii}));
     end
 catch %#ok<CTCH>
 end
@@ -816,6 +851,8 @@ try
         row.console_detail_remote = true;
         row.stage_index = events(ii).stage.index;
         row.stage_count = 10;
+        % Log-only: the stage FAILED record is already the JSONL diagnostic of record.
+        row.raw_diagnostic = true;
         pseudo_CT_output('ERROR', row, '%s', events(ii).message);
     end
 catch ME

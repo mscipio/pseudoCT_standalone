@@ -1,7 +1,7 @@
 function value = pseudo_CT_orchestrate(operation, request)
 %PSEUDO_CT_ORCHESTRATE Shared GUI and headless MATLAB orchestration API.
 %   VALIDATE performs local-only checks and returns a serializable resolved
-%   job. SUBMIT revalidates that job and dispatches it through the existing
+%   job. SUBMIT rechecks that job's input and artifact identities and dispatches it through the existing
 %   lifecycle; authentication occurs only in this operation. The launcher
 %   (bin/pseudoct) and the MATLAB frontend reach both through validate and
 %   submit; there is no single-call run operation.
@@ -255,29 +255,19 @@ if ~isstruct(resolved.subjects) || isempty(resolved.subjects) || ...
 end
 subjects = {resolved.subjects.mprage_fn};
 umaps = {resolved.subjects.umap_fn};
-validation_request = struct('profile', resolved.profile, ...
-    'subjects', {subjects}, 'umap_files', {umaps}, ...
-    'output_config', resolved.output_config, ...
-    'require_explicit_umap', true, ...
-    'correct_aliasing', resolved.options.correct_aliasing, ...
-    'recenter_before_normalization', ...
-    resolved.options.recenter_before_normalization, ...
-    'invocation_id', resolved.invocation_id);
-if isfield(resolved.options, 'cleanup_on_success')
-    validation_request.cleanup_on_success = ...
-        resolved.options.cleanup_on_success;
-end
-if isfield(resolved, 'current_artifact_root')
-    validation_request.current_artifact_root = resolved.current_artifact_root;
-end
+% Identity-only recheck. Validation ran once, in the validate process, and
+% persisted this job. Submit rebinds the same profile and runtime, then rehashes
+% the inputs and artifacts. It sets up no paths, creates no folders and runs no
+% artifact validation; the execution-time checks in the backends remain.
 try
-    fresh_report = local_validate(validation_request, root_dir);
+    config = local_resolved_config(resolved.profile, resolved.current_artifact_root);
+    fresh_job = local_recheck_identities(resolved, config, root_dir);
 catch ME
     error('pseudo_CT:StaleResolvedJob', ...
         'A resolved input, output, profile, or artifact is no longer valid; validate again (%s).', ...
         ME.identifier);
 end
-if ~local_same_resolved_job(resolved, fresh_report.resolved_job)
+if ~local_same_resolved_job(resolved, fresh_job)
     error('pseudo_CT:StaleResolvedJob', ...
         'Resolved inputs, outputs, profile, or artifacts changed; validate again before submit.');
 end
@@ -309,6 +299,7 @@ if isfield(resolved, 'current_artifact_root') && ...
     args = [args {'mlsc_current_artifact_root', ...
         resolved.current_artifact_root}]; %#ok<AGROW>
 end
+% Authentication stays in this process: the MLSC session cannot cross into a separate validate process.
 report = pseudo_CT_run_lifecycle(args{:});
 backend = 'local';
 if any(strcmp(resolved.profile, {'mlsc'; 'mlsc-mprage-only'}))
@@ -370,6 +361,38 @@ elseif isstruct(a) && numel(a) == 1 && isstruct(b) && numel(b) == 1 && ...
     same = isequal(a, rmfield(b, 'cleanup_on_success'));
 else
     same = false;
+end
+end
+
+function config = local_resolved_config(profile_name, artifact_root)
+%LOCAL_RESOLVED_CONFIG Profile config bound as validation bound it (no side effects on paths or folders).
+config = pseudo_CT_load_profile(profile_name);
+pseudo_CT_require_application_layout(artifact_root);
+config = pseudo_CT_runtime_select(config);
+config = pseudo_CT_apply_mlsc_current_overrides(config, profile_name, artifact_root);
+end
+
+function fresh = local_recheck_identities(resolved, config, root_dir)
+%LOCAL_RECHECK_IDENTITIES Recompute the identities bound at validation for comparison.
+%   The stored job is copied, then the artifact identity and each subject's
+%   input identities, output folders and I/O policy are recomputed. The
+%   result is compared with the stored job by local_same_resolved_job.
+fresh = resolved;
+fresh.artifact_identity = local_artifact_identity(config, resolved.profile, root_dir);
+for ii = 1:length(resolved.subjects)
+    input_path = resolved.subjects(ii).mprage_fn;
+    input_dir = fileparts(input_path);
+    if isempty(input_dir)
+        input_dir = pwd;
+    end
+    [processing_dir, temp_dir, save_dir] = pseudo_CT_resolve_output_dirs(input_dir);
+    fresh.subjects(ii).mprage_identity = local_input_identity(input_path);
+    fresh.subjects(ii).umap_identity = ...
+        local_optional_input_identity(resolved.subjects(ii).umap_fn);
+    fresh.subjects(ii).processing_dir = processing_dir;
+    fresh.subjects(ii).temp_dir = temp_dir;
+    fresh.subjects(ii).save_dir = save_dir;
+    fresh.subjects(ii).io_policy = config.io_policy;
 end
 end
 

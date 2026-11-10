@@ -15,7 +15,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAUNCHER = os.path.join(ROOT, "bin", "pseudoct")
 MARKER = ('python3 - "$summary_file" "$invocation_id" "$profile" "$action" '
-          '"$format" "$backend" "$run_log_index" <<\'PY\'')
+          '"$format" "$backend" "$run_log_index" "${result_file:-}" "$subject_temp" <<\'PY\'')
 INVOCATION = "6f1f5f0e-2b7a-4c1d-9e3a-0123456789ab"
 
 
@@ -42,7 +42,7 @@ def run_block(summary_values, output_format="jsonl"):
         completed = subprocess.run(
             [sys.executable, "-I", "-B", code_path, summary_path, INVOCATION,
              "mlsc", summary_values[8], output_format, summary_values[4],
-             log_index],
+             log_index, "", work],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         return completed.returncode, completed.stdout
 

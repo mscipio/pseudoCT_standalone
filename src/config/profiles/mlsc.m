@@ -57,7 +57,7 @@ config.compatibility_profile = '';
 % Human-facing selector metadata; runtime identity remains filename-derived.
 config.presentation.display_name = 'MLSC';
 config.presentation.description = ...
-    'Run the pseudoCT pipeline on MLSC using the same shared compiled pipeline.';
+    'Run the pseudoCT pipeline on MLSC using the same compiled pseudoct_pipeline.';
 config.presentation.group = 'specialized';
 config.presentation.recommended = true;
 config.presentation.order = 15;

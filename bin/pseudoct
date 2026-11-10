@@ -6,7 +6,8 @@
 # and dispatch through the MATLAB Runtime of the selected release. An installed tree
 # never runs the MATLAB CLI, and an incomplete one fails closed.
 #
-#   pseudoct run      [--mcr LABEL] [--mcr-root DIR] validate|run <CLI options>
+#   pseudoct run      [--mcr LABEL] [--mcr-root DIR] <CLI options>   (validate, then submit)
+#   pseudoct validate [--mcr LABEL] [--mcr-root DIR] <CLI options>   (validate only)
 #   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
 #   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
 #   pseudoct --list-releases | --help
@@ -21,19 +22,30 @@ EXIT_SCIENCE=68
 EXIT_RUNTIME=69
 profiles='local local-mprage-only mlsc mlsc-mprage-only'
 operation_phase=not_started
+# Retry limit for the interactive MLSC authentication loop (run only). Empty (the default)
+# means no limit: the user cancels at a prompt. A non-negative integer N allows N retries
+# after the first failed attempt (N=0: no retry), then the run stops with exit 66.
+# Only the authentication retry loop reads this variable.
+PSEUDOCT_AUTH_RETRY_LIMIT=${PSEUDOCT_AUTH_RETRY_LIMIT:-}
+# Interactive credentials: held in these shell variables only (never on disk, never in
+# argv). cleanup() clears them on every exit path.
+username=''
+password=''
+auth_code=''
 
 usage() {
     cat <<'USAGE'
 Usage:
-  pseudoct run      validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
-  pseudoct run      run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
+  pseudoct run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
+  pseudoct validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
   pseudoct --list-releases
   pseudoct --help
 
 Operations:
-  run validate|run    Validate a request, or validate and submit it (CLI options below).
+  run                 Validate a request, then submit it (CLI options below).
+  validate            Validate a request; nothing is submitted (CLI options below).
   headless            Run one v2 headless request MAT into a result MAT.
   resolve             Validate one MATLAB Runtime and print sourceable PSEUDOCT_* lines.
   --list-releases     Print one line per installed release: label, MCR, default marker.
@@ -44,7 +56,7 @@ the catalog default, R2010b). The MATLAB Runtime root is the catalog location
 of its matlab_version (9.6.0.1072779 -> 9.6), unless --mcr-root DIR names another
 installation. The runtime identity is always validated against the catalog.
 
-Options (run validate|run):
+Options (run, validate):
   --profile NAME                  Canonical supported profile (required)
   --mprage FILE --umap FILE       One subject; UMAP may be omitted for discovery
   --config job.json               Multi-subject JSON with mprage[] and optional umap[]
@@ -53,10 +65,12 @@ Options (run validate|run):
   --cleanup-on-success yes|no
   --current-artifact-root PATH    Development-only override; MLSC profiles only
   --group-account ACCOUNT        MLSC account selection for run (blank/omitted: first discovered)
-  --check-account                run validate only, MLSC: authenticate, select the account, stop before submission
+  --check-account                validate only, MLSC: authenticate, select the account, stop before submission
   --host-key-file FILE            Optional MLSC strict host-key input
   --credential-handoff FILE       Existing authorized single-use handoff
   --format text|jsonl             Output format (default: text)
+  --result-file PATH              Also write the final JSON result record to PATH
+                                  (atomic replace; written in either format; stdout unchanged)
   -h, --help                      Show this help
 
 Exit codes: 0 validated/completed, 64 usage/config, 65 invalid request,
@@ -81,12 +95,27 @@ error_record() {
             *) error_class=CLI_RUNTIME_ERROR ;;
         esac
     fi
-    if [ "${format:-text}" = jsonl ]; then
+    if [ "${format:-text}" = jsonl ] || [ -n "${result_file:-}" ]; then
         python3 - "${invocation_id:-}" "${action:-unknown}" \
             "${profile:-}" "$error_class" "$message" "$code" \
-            "$operation_phase" <<'PY'
-import json, sys
-invocation, action, profile, error_code, message, exit_code, phase = sys.argv[1:]
+            "$operation_phase" "${format:-text}" "${result_file:-}" <<'PY'
+import json, os, sys, tempfile
+invocation, action, profile, error_code, message, exit_code, phase, output_format, result_path = sys.argv[1:]
+
+def publish_result(path, text):
+    # Atomic write: a private temp file beside PATH, then rename over PATH.
+    fd, temp = tempfile.mkstemp(prefix=".pseudoct-result-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
 unknown_submit = phase == "submit_called"
 unknown_reason = "unknown: submit outcome not established"
 record = {
@@ -105,7 +134,14 @@ if unknown_submit:
     record["dispatch_status_reason"] = unknown_reason
     record["submission_status_reason"] = unknown_reason
     record["scheduler_submission_accepted_reason"] = unknown_reason
-print(json.dumps(record, separators=(",", ":")))
+text = json.dumps(record, separators=(",", ":"))
+if result_path:
+    try:
+        publish_result(result_path, text)
+    except OSError:
+        print("pseudoct: cannot write --result-file", file=sys.stderr)
+if output_format == "jsonl":
+    print(text)
 PY
     fi
     printf 'pseudoct: %s\n' "$message" >&2
@@ -445,10 +481,31 @@ op_headless() {
     PSEUDOCT_REQUEST_MAT=$request_path
     PSEUDOCT_RESULT_MAT=$result_path
     export PSEUDOCT_REQUEST_MAT PSEUDOCT_RESULT_MAT
-    case "$result_parent/" in
-        */MR_PET/tmp/*) ;;
-        *) fail_op 'runtime directory must be under the resolved subject MR_PET/tmp' 70 ;;
+    # Authenticate-only exception. 'authenticate' creates the marker file
+    # .authenticate-only (umask 077, mode 600) inside its private /dev/shm/pseudoct-auth-*
+    # directory before this headless call. Authentication handles no subject data and writes
+    # only the request and result files, which cleanup() in op_run removes on exit. The
+    # exception needs ALL of: the runtime directory is /dev/shm/pseudoct-auth-*; it is a
+    # directory, not a symbolic link; it is owned by the current user; it has mode 700; it
+    # contains the request file; it contains the marker, as a regular file. Validate and run
+    # never create the marker (only the authenticate branch does, in such a directory), so
+    # they never match. Otherwise the MR_PET/tmp guard below applies, unchanged.
+    authenticate_only=0
+    case "$result_parent" in
+        /dev/shm/pseudoct-auth-[A-Za-z0-9]*)
+            if [ -d "$result_parent" ] && [ ! -L "$result_parent" ] && [ -O "$result_parent" ] &&
+                    [ "$(stat -c %a -- "$result_parent" 2>/dev/null)" = 700 ] &&
+                    [ -f "$request_path" ] && [ "$(dirname -- "$request_path")" = "$result_parent" ] &&
+                    [ -f "$result_parent/.authenticate-only" ] && [ ! -L "$result_parent/.authenticate-only" ]; then
+                authenticate_only=1
+            fi ;;
     esac
+    if [ "$authenticate_only" -ne 1 ]; then
+        case "$result_parent/" in
+            */MR_PET/tmp/*) ;;
+            *) fail_op 'runtime directory must be under the resolved subject MR_PET/tmp' 70 ;;
+        esac
+    fi
     runtime_dir=$(umask 077; mktemp -d "$result_parent/pseudoct-headless.XXXXXXXX") ||
         fail_op 'subject runtime directory unavailable' 70
     chmod 00700 "$runtime_dir" || fail_op 'cannot secure subject runtime directory' 70
@@ -483,13 +540,13 @@ MATLAB
     matlab_status=$?
 
     case "$matlab_status" in
-        0|2|3)
+        0|2|3|66)
             [ -f "$result_path" ] && [ -s "$result_path" ] ||
                 fail_op 'MATLAB returned without a usable result MAT file' 70
             ;;
     esac
     case "$matlab_status" in
-        0|2|3) exit "$matlab_status" ;;
+        0|2|3|66) exit "$matlab_status" ;;
         70)
             printf 'pseudoct: MATLAB dispatch/runtime failure\n' >&2
             exit 70 ;;
@@ -499,21 +556,26 @@ MATLAB
     esac
 }
 
-# run validate|run: validate the job and, for run, submit the validated result. Remote
-# profiles need a terminal prompt or a --credential-handoff for the submit phase.
+# op_run ACTION [options]: ACTION is run, validate or authenticate, selected by the top-level
+# command. run: validate the job and submit the validated result; validate: validate only.
+# Remote profiles need a terminal prompt or a --credential-handoff for the submit phase.
 op_run() {
+    action=$1
+    shift
     parse_selection "$@"
     set -- ${REST_ARGS[@]+"${REST_ARGS[@]}"}
     if [ "$#" -lt 1 ]; then
         usage >&2
         exit "$EXIT_USAGE"
     fi
-    action=$1
-    shift
-    case "$action" in
-        validate|run) ;;
-        *) fail_op 'run takes validate or run; see --help' "$EXIT_USAGE" ;;
-    esac
+    # The retired two-word forms are refused, with the form that replaces them.
+    if [ "$action" = run ]; then
+        case "$1" in
+            run) fail_op "'pseudoct run run' is retired: use 'pseudoct run [options]' to validate and submit (see --help)" "$EXIT_USAGE" ;;
+            validate) fail_op "'pseudoct run validate' is retired: use 'pseudoct validate [options]' (see --help)" "$EXIT_USAGE" ;;
+            authenticate) fail_op "'pseudoct run authenticate' is retired: use 'pseudoct authenticate [options]' (see --help)" "$EXIT_USAGE" ;;
+        esac
+    fi
 
     profile=''
     mprage=''
@@ -527,6 +589,8 @@ op_run() {
     host_key_file=''
     credential_handoff=''
     format=text
+    result_file=''
+    seen_result_file=0
     seen_mprage=0
     seen_umap=0
     seen_config=0
@@ -541,7 +605,7 @@ op_run() {
             --profile|--mprage|--umap|--config|--correct-aliasing|\
             --recenter-before-normalization|--cleanup-on-success|\
             --current-artifact-root|--group-account|--host-key-file|\
-            --credential-handoff|--format)
+            --credential-handoff|--format|--result-file)
                 need_value "$option" "$@"
                 value=$1
                 shift
@@ -558,6 +622,7 @@ op_run() {
             --host-key-file=*) value=${option#*=}; option=--host-key-file ;;
             --credential-handoff=*) value=${option#*=}; option=--credential-handoff ;;
             --format=*) value=${option#*=}; option=--format ;;
+            --result-file=*) value=${option#*=}; option=--result-file ;;
             -h|--help) usage; exit 0 ;;
             *) error_record "$EXIT_USAGE" "Unknown option: $option" ;;
         esac
@@ -574,12 +639,38 @@ op_run() {
             --host-key-file) host_key_file=$value ;;
             --credential-handoff) credential_handoff=$value ;;
             --format) format=$value ;;
+            --result-file) [ "$seen_result_file" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --result-file only once.'; result_file=$value; seen_result_file=1 ;;
         esac
     done
 
     case " $profiles " in *" $profile "*) ;; *) error_record "$EXIT_USAGE" 'A supported --profile is required.' ;; esac
     case "$format" in text|jsonl) ;; *) error_record "$EXIT_USAGE" '--format must be text or jsonl.' ;; esac
-    if [ "$seen_config" -eq 1 ]; then
+    # --result-file: an absolute path whose directory is writable (and which is not an
+    # unwritable or directory target) is required before any work starts.
+    if [ "$seen_result_file" -eq 1 ]; then
+        case "$result_file" in
+            '') fail_op '--result-file requires a non-empty path' "$EXIT_USAGE" ;;
+            /*) ;;
+            *) result_file=$PWD/$result_file ;;
+        esac
+        case "$result_file" in *$'\n'*|*$'\r'*) fail_op '--result-file path cannot contain a line break' "$EXIT_USAGE" ;; esac
+        result_file_dir=$(dirname -- "$result_file")
+        [ -d "$result_file_dir" ] && [ -w "$result_file_dir" ] && [ -x "$result_file_dir" ] ||
+            fail_op '--result-file directory is missing or not writable' "$EXIT_USAGE"
+        if [ -e "$result_file" ] && { [ -d "$result_file" ] || [ ! -w "$result_file" ]; }; then
+            fail_op '--result-file names a directory or a file that is not writable' "$EXIT_USAGE"
+        fi
+    fi
+    if [ "$action" = authenticate ]; then
+        # authenticate takes no inputs or processing options: refused before any work.
+        [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] && [ "$seen_config" -eq 0 ] &&
+            [ -z "$correct_aliasing$recenter$cleanup_success$artifact_root" ] ||
+            error_record "$EXIT_USAGE" 'authenticate takes only --profile, --credential-handoff, --group-account, --host-key-file, --mcr/--mcr-root, --result-file and --format.'
+        case "$profile" in mlsc|mlsc-mprage-only) ;; *) error_record "$EXIT_USAGE" 'authenticate requires a remote MLSC profile.' ;; esac
+        [ -n "$credential_handoff" ] || error_record "$EXIT_USAGE" 'authenticate requires --credential-handoff.'
+        [ -f "$credential_handoff" ] && [ -r "$credential_handoff" ] ||
+            error_record "$EXIT_USAGE" 'The credential handoff is unavailable or unreadable.'
+    elif [ "$seen_config" -eq 1 ]; then
         [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] || \
             error_record "$EXIT_USAGE" 'Use either --config or single-subject --mprage/--umap flags.'
         [ -f "$config" ] && [ -r "$config" ] || \
@@ -605,13 +696,13 @@ op_run() {
         error_record "$EXIT_USAGE" '--group-account is available only for MLSC profiles.'
     fi
     if [ "$check_account" -eq 1 ] && { [ "$action" != validate ] || [ "$backend" != mlsc ]; }; then
-        error_record "$EXIT_USAGE" '--check-account is valid only for remote MLSC run validate.'
+        error_record "$EXIT_USAGE" '--check-account is valid only for remote MLSC validate.'
     fi
     if [ -n "$host_key_file" ] && [ "$backend" != mlsc ]; then
         error_record "$EXIT_USAGE" '--host-key-file is available only for MLSC profiles.'
     fi
-    if [ -n "$credential_handoff" ] && { [ "$action" != run ] || [ "$backend" = local ]; }; then
-        error_record "$EXIT_USAGE" '--credential-handoff is valid only for remote run.'
+    if [ -n "$credential_handoff" ] && { [ "$action" = validate ] || [ "$backend" = local ]; }; then
+        error_record "$EXIT_USAGE" '--credential-handoff is valid only for remote run and authenticate.'
     fi
     case "$group_account$artifact_root$host_key_file$credential_handoff" in *$'\n'*|*$'\r'*) error_record "$EXIT_USAGE" 'CLI text values cannot contain line breaks.' ;; esac
     if [ -n "$credential_handoff" ]; then
@@ -643,10 +734,18 @@ op_run() {
         fi
     fi
 
+# Invocation UUID first, so every failure from here on, including a failed subject
+# resolution before MR_PET/tmp exists, can name it.
+invocation_id=$(uuidgen | tr 'A-F' 'a-f') || error_record "$EXIT_RUNTIME" 'Cannot generate an invocation UUID.'
+
 # Resolve the request's owning subject before creating ANY runtime files.
 # A multi-subject request's CLI transport belongs to its first subject;
 # scientific runners still allocate beneath each individual job.temp_dir.
 umask 077
+if [ "$action" = authenticate ]; then
+    # authenticate has no subject: no MR_PET directory is resolved or created.
+    subject_temp=''
+else
 subject_temp=$(python3 - "$config" "$mprage" "$seen_config" <<'PY'
 import json, os, sys
 try:
@@ -685,15 +784,28 @@ try:
 except (OSError, ValueError, TypeError, KeyError):
     raise SystemExit(1)
 PY
-) || error_record "$EXIT_RUNTIME" 'Cannot resolve a writable subject MR_PET/tmp directory.'
+) || error_record "$EXIT_RUNTIME" "Cannot resolve or create the subject MR_PET/tmp directory: the first MPRAGE must be a readable file, MR_PET/tmp must not be a symbolic link, and it must be writable. Invocation $invocation_id."
+fi
 umask 077
-tmp_dir=$(mktemp -d "$subject_temp/pseudoct-cli.XXXXXXXX" 2>/dev/null) || \
-    error_record "$EXIT_RUNTIME" 'Cannot create a private temporary directory.'
+if [ "$action" = authenticate ]; then
+    # Private authenticate directory in memory-backed /dev/shm (the same staging
+    # pattern as the credential handoff). op_headless accepts it only for this action.
+    [ -d /dev/shm ] && [ -w /dev/shm ] && [ -x /dev/shm ] && \
+        [ "$(stat -f -c %T /dev/shm 2>/dev/null)" = tmpfs ] || \
+        error_record "$EXIT_RUNTIME" 'Private memory-backed runtime directory is unavailable.'
+    tmp_dir=$(mktemp -d /dev/shm/pseudoct-auth-XXXXXXXX 2>/dev/null) || \
+        error_record "$EXIT_RUNTIME" 'Cannot create a private temporary directory.'
+else
+    tmp_dir=$(mktemp -d "$subject_temp/pseudoct-cli.XXXXXXXX" 2>/dev/null) || \
+        error_record "$EXIT_RUNTIME" 'Cannot create a private temporary directory.'
+fi
 chmod 00700 "$tmp_dir" || error_record "$EXIT_RUNTIME" 'Cannot secure the temporary directory.'
 secret_dir=''
 handoff_registry=$tmp_dir/handoff-path.txt
 tty_state=''
 cleanup() {
+    username=''
+    password=''
     if [ -n "$tty_state" ] && [ -r /dev/tty ]; then
         stty "$tty_state" < /dev/tty 2>/dev/null || true
     fi
@@ -759,7 +871,6 @@ export TMPDIR="$tmp_dir" TMP="$tmp_dir" TEMP="$tmp_dir"
 export MATLAB_PREFDIR="$tmp_dir/matlab-prefs" MCR_CACHE_ROOT="$tmp_dir/mcr-cache"
 export PSEUDOCT_RUNTIME_DIR="$tmp_dir"
 
-invocation_id=$(uuidgen | tr 'A-F' 'a-f') || error_record "$EXIT_RUNTIME" 'Cannot generate an invocation UUID.'
 # Private index of relative MR_PET run-log paths reported by the lifecycle.
 # Only this scratch index is removed by cleanup(); the subject's persistent
 # pseudoct-run-*.log files are never deleted by the CLI.
@@ -774,7 +885,22 @@ account_request=$tmp_dir/account-request.mat
 account_result=$tmp_dir/account-result.mat
 summary_file=$tmp_dir/result-summary.txt
 
-if ! python3 - "$input_file" "$profile" "$invocation_id" "$config" \
+if [ "$action" = authenticate ]; then
+    # authenticate input: zero subject lines, then the group account and host-key values
+    # that prepare_authenticate reads. No path is validated here.
+    python3 - "$input_file" "$profile" "$invocation_id" "$group_account" "$host_key_file" <<'PY' || error_record "$EXIT_USAGE" 'Authentication input is invalid.'
+import os, sys
+output, profile, invocation, account, host_key = sys.argv[1:]
+for value in (account, host_key):
+    if any(c in value for c in "\0\r\n"):
+        raise SystemExit(64)
+values = [profile, invocation, "0", "0", "", "", "", "", account, host_key]
+with open(output, "x", encoding="utf-8", newline="\n") as f:
+    f.write("\n".join(values) + "\n")
+os.chmod(output, 0o600)
+PY
+fi
+if [ "$action" != authenticate ] && ! python3 - "$input_file" "$profile" "$invocation_id" "$config" \
     "$mprage" "$umap" "$seen_config" "$seen_umap" "$correct_aliasing" \
     "$recenter" "$cleanup_success" "$artifact_root" "$group_account" \
     "$host_key_file" <<'PY'
@@ -1264,6 +1390,264 @@ PY
     return "$run_status"
 }
 
+# Interactive prompts. Terminal echo is restored by cleanup() if a prompt is interrupted.
+prompt_password() {
+    tty_state=$(stty -g < /dev/tty 2>/dev/null) || error_record "$EXIT_AUTH" 'Cannot disable terminal echo for password input.'
+    stty -echo < /dev/tty 2>/dev/null || error_record "$EXIT_AUTH" 'Cannot disable terminal echo for password input.'
+    printf 'Remote password (not echoed): ' > /dev/tty
+    if IFS= read -r password < /dev/tty; then
+        stty "$tty_state" < /dev/tty 2>/dev/null || true
+        tty_state=''
+        printf '\n' > /dev/tty
+    else
+        stty "$tty_state" < /dev/tty 2>/dev/null || true
+        tty_state=''
+        error_record "$EXIT_AUTH" 'Password prompt was cancelled.'
+    fi
+    [ -n "$password" ] || error_record "$EXIT_AUTH" 'Password cannot be empty.'
+}
+
+# Optional account: asked only when --group-account is absent (blank selects the first
+# discovered account; end of input cancels).
+prompt_account() {
+    if [ "$seen_group_account" -eq 0 ]; then
+        printf 'MLSC Slurm account (blank selects the first discovered account): ' > /dev/tty
+        IFS= read -r group_account < /dev/tty || error_record "$EXIT_AUTH" 'Account prompt was cancelled.'
+    fi
+}
+
+prompt_credentials() {
+    printf 'Remote username: ' > /dev/tty
+    IFS= read -r username < /dev/tty || error_record "$EXIT_AUTH" 'Username prompt was cancelled.'
+    [ -n "$username" ] || error_record "$EXIT_AUTH" 'Username cannot be empty.'
+    prompt_password
+    prompt_account
+}
+
+# stage_handoff: write the in-memory username and password to private tmpfs for the
+# secure store step, which creates one single-use handoff (its path lands in
+# credential_handoff). The staging file is erased by the store step or below.
+stage_handoff() {
+    [ -d /dev/shm ] && [ -w /dev/shm ] && [ -x /dev/shm ] && \
+        [ "$(stat -f -c %T /dev/shm 2>/dev/null)" = tmpfs ] || \
+        error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
+    secret_dir=$(mktemp -d /dev/shm/pseudoct-cli-credentials-XXXXXX 2>/dev/null) || \
+        error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
+    chmod 00700 "$secret_dir" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
+    (umask 077; printf '%s\n%s\n' "$username" "$password" > "$secret_dir/login") || \
+        error_record "$EXIT_AUTH" 'Credential staging failed.'
+    chmod 600 "$secret_dir/login" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
+    handoff_output=$handoff_registry
+    if ! (cd -- "$tmp_dir" || exit 69
+        export PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE=store_credentials \
+        PSEUDOCT_CLI_SECRET_FILE="$secret_dir/login" \
+        PSEUDOCT_CLI_HANDOFF_OUTPUT="$handoff_output"
+        if [ "$installed" -eq 1 ]; then
+            export LD_LIBRARY_PATH=$mcr_ld_path
+            "$standalone_exe" store_credentials >"$tmp_dir/matlab-diagnostics-store-credentials.log" 2>&1
+            exit $?
+        fi
+        "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB' \
+            >"$tmp_dir/matlab-diagnostics-store-credentials.log" 2>&1
+try
+    root = getenv('PSEUDOCT_CLI_ROOT');
+    addpath(root, '-begin');
+    addpath(genpath(fullfile(root, 'src', 'api')), '-begin');
+    addpath(genpath(fullfile(root, 'src', 'cli')), '-begin');
+    status = pseudoct_cli_bridge('store_credentials');
+catch ME
+    fprintf(2, 'pseudoct: credential handoff failed (%s).\n', ME.identifier);
+    status = 70;
+end
+exit(status);
+MATLAB
+        )
+    then
+        error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.' AUTHENTICATION_FAILED
+    fi
+    credential_handoff=$(cat "$handoff_output")
+    [ -n "$credential_handoff" ] || error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.'
+    python3 - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
+import os, sys
+try:
+    p=sys.argv[1]
+    with open(p,"r+b",buffering=0) as f: f.write(b"\0"*os.fstat(f.fileno()).st_size)
+    os.unlink(p); os.rmdir(os.path.dirname(p))
+except OSError: pass
+PY
+    secret_dir=''
+}
+
+# run_authenticate: one authenticate attempt with the currently staged handoff. Sets
+# auth_code to OK on success, otherwise the failed error code (or UNKNOWN). The
+# specific error message is printed to stderr from the verified summary; no secret.
+run_authenticate() {
+    auth_attempt=$((auth_attempt + 1))
+    auth_request=$tmp_dir/authenticate-request-$auth_attempt.mat
+    auth_result=$tmp_dir/authenticate-result-$auth_attempt.mat
+    if ! matlab_support prepare_authenticate "$auth_request" '' '' '' authenticate; then
+        error_record "$EXIT_RUNTIME" 'The authentication request could not be serialized.'
+    fi
+    rm -f -- "$auth_result"
+    run_headless authenticate "$auth_request" "$auth_result" "authenticate-$auth_attempt"
+    auth_launcher_status=$?
+    if [ ! -s "$auth_result" ]; then
+        error_record "$EXIT_RUNTIME" "Authentication launcher returned no result MAT (status $auth_launcher_status)."
+    fi
+    if ! matlab_support verify_result '' "$auth_result" "$summary_file" authenticate; then
+        error_record "$EXIT_RUNTIME" 'Authentication result MAT failed schema/binding verification.'
+    fi
+    auth_code=$(python3 - "$summary_file" <<'PY'
+import sys
+v = open(sys.argv[1], encoding="utf-8").read().splitlines()
+status = v[0] if len(v) > 0 else ""
+code = v[1] if len(v) > 1 else "-"
+auth = v[2] if len(v) > 2 else "-"
+message = v[9] if len(v) > 9 else "-"
+if status == "ready" and auth == "authenticated" and code == "-":
+    print("OK")
+else:
+    if message not in ("", "-"):
+        print("pseudoct: " + message, file=sys.stderr)
+    print(code if code not in ("", "-") else "UNKNOWN")
+PY
+    ) || auth_code=UNKNOWN
+}
+
+# run_authentication_loop: authenticate until success. Only AUTHENTICATION_FAILED and
+# INVALID_GROUP_ACCOUNT re-prompt; any other code stops with zero submissions. A cancelled
+# prompt exits 66 from prompt_password/prompt_account.
+run_authentication_loop() {
+    auth_attempt=0
+    auth_failures=0
+    while :; do
+        stage_handoff
+        run_authenticate
+        credential_handoff=''
+        if [ "$auth_code" = OK ]; then
+            return 0
+        fi
+        case "$auth_code" in
+            AUTHENTICATION_FAILED) ;;
+            INVALID_GROUP_ACCOUNT)
+                # A command-line --group-account is not corrected by re-entering the
+                # password, so stop here; a prompted account keeps the re-prompt.
+                if [ "$seen_group_account" -eq 1 ]; then
+                    error_record "$EXIT_AUTH" "The MLSC account given with --group-account was rejected; re-run with a valid account. No submission was attempted." "$auth_code"
+                fi ;;
+            *) error_record "$EXIT_AUTH" "Authentication stopped with $auth_code; no submission was attempted." "$auth_code" ;;
+        esac
+        auth_failures=$((auth_failures + 1))
+        if [ -n "$PSEUDOCT_AUTH_RETRY_LIMIT" ] && [ "$auth_failures" -gt "$PSEUDOCT_AUTH_RETRY_LIMIT" ]; then
+            error_record "$EXIT_AUTH" "Authentication failed $auth_failures time(s); PSEUDOCT_AUTH_RETRY_LIMIT=$PSEUDOCT_AUTH_RETRY_LIMIT allows no further retry; no submission was attempted." "$auth_code"
+        fi
+        password=''
+        printf 'Authentication was rejected; enter the password again (cancel: empty input).\n' > /dev/tty
+        prompt_password
+        prompt_account
+    done
+}
+
+if [ "$action" = authenticate ]; then
+    # authenticate: one authentication-only headless request in the private directory.
+    # This branch always exits, so no validate, account or submit code below is reached.
+    auth_request=$tmp_dir/authenticate-request.mat
+    auth_result=$tmp_dir/authenticate-result.mat
+    # cleanup() erases the named handoff if the authenticate action did not consume it.
+    printf '%s\n' "$credential_handoff" > "$handoff_registry" ||
+        error_record "$EXIT_RUNTIME" 'Cannot record the credential handoff for cleanup.'
+    if ! matlab_support prepare_authenticate "$auth_request" '' '' '' authenticate; then
+        error_record "$EXIT_RUNTIME" 'The authentication request could not be serialized.'
+    fi
+    # Marker for op_headless's authenticate-only exception. Created here, in this private
+    # /dev/shm directory only, before the headless call; removed with tmp_dir by cleanup().
+    (umask 077; : > "$tmp_dir/.authenticate-only") ||
+        error_record "$EXIT_RUNTIME" 'Cannot create the authentication marker.'
+    chmod 00600 "$tmp_dir/.authenticate-only" ||
+        error_record "$EXIT_RUNTIME" 'Cannot secure the authentication marker.'
+    run_headless authenticate "$auth_request" "$auth_result"
+    auth_launcher_status=$?
+    if [ ! -s "$auth_result" ]; then
+        error_record "$EXIT_RUNTIME" "Authentication launcher returned no result MAT (status $auth_launcher_status)."
+    fi
+    if ! matlab_support verify_result '' "$auth_result" "$summary_file" authenticate; then
+        error_record "$EXIT_RUNTIME" 'Authentication result MAT failed schema/binding verification.'
+    fi
+    python3 - "$summary_file" "$invocation_id" "$profile" "$format" "${result_file:-}" <<'PY'
+import json, os, sys, tempfile
+
+summary, invocation, profile, output_format, result_path = sys.argv[1:]
+
+def publish_result(path, text):
+    # Atomic write: a private temp file beside PATH, then rename over PATH.
+    fd, temp = tempfile.mkstemp(prefix=".pseudoct-result-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
+values = open(summary, encoding="utf-8").read().splitlines()
+if len(values) < 10:
+    print("pseudoct: verified result summary is incomplete.", file=sys.stderr)
+    raise SystemExit(69)
+status, error_code, auth, submission, backend, science, dispatch, ids, result_action, message = values[:10]
+account = values[10] if len(values) > 10 and values[10] != "-" else ""
+error_code = "" if error_code == "-" else error_code
+message = "" if message == "-" else message
+if result_action != "authenticate":
+    print("pseudoct: authentication result has the wrong action.", file=sys.stderr)
+    raise SystemExit(69)
+VALIDATION_CODES = {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB"}
+if status == "ready" and auth == "authenticated" and not error_code:
+    code, outcome = 0, "authentication_succeeded"
+elif error_code in VALIDATION_CODES:
+    code, outcome = 65, "validation_failed"
+elif error_code:
+    # AUTHENTICATION_FAILED, INVALID_GROUP_ACCOUNT and the other authentication codes.
+    code, outcome = 66, "authentication_failed"
+else:
+    code, outcome = 69, "authentication_unverified"
+record = {
+    "type": "result", "invocation_id": invocation,
+    "action": "authenticate", "profile": profile, "outcome": outcome,
+    "headless_dispatch_returned": True,
+    "dispatch_status": dispatch,
+    "submission_status": "not_attempted",
+    "scheduler_submission_accepted": False,
+    "authentication_status": auth,
+    "scientific_completion": None,
+    "scientific_completion_status": science,
+    "scientific_completion_reason": "Authentication does not run scientific processing.",
+    "backend": backend, "job_ids": [],
+    "group_account": account or None,
+    "group_account_reason": None if account else "No MLSC account was selected by this invocation.",
+    "error_code": error_code or None,
+    "error_message": message or None,
+    "exit_code": code,
+}
+text = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+publish_failed = False
+if result_path:
+    try:
+        publish_result(result_path, text)
+    except OSError:
+        publish_failed = True
+        print("pseudoct: cannot write --result-file", file=sys.stderr)
+if output_format == "jsonl":
+    print(text)
+else:
+    print("pseudoct authentication: " + outcome + (" (" + error_code + ")" if error_code else ""))
+raise SystemExit(69 if publish_failed else code)
+PY
+    auth_status=$?
+    exit "$auth_status"
+fi
 if ! matlab_support prepare_validate "$validate_request" '' '' '' ; then
     error_record "$EXIT_RUNTIME" 'MATLAB could not serialize the v2 request MAT.'
 fi
@@ -1285,8 +1669,40 @@ raise SystemExit(0 if v and v[0] == "ready" and v[8] == "validate" else 1)
 PY
     validation_ready=$?
     if [ "$validation_ready" -ne 0 ]; then
-        python3 - "$summary_file" "$invocation_id" "$profile" "$format" <<'PY'
-import json, sys
+        python3 - "$summary_file" "$invocation_id" "$profile" "$format" "${result_file:-}" "$subject_temp" "$action" <<'PY'
+import datetime, json, os, sys, tempfile
+
+def write_validation_file(mr_pet, invocation, text):
+    # Validate-only record: one exclusive JSONL file in the subject MR_PET folder. A
+    # private temp file is hard-linked to its final name (link fails if it exists),
+    # then removed. No run log is created; no other file is written here.
+    final = os.path.join(mr_pet, "pseudoct-validate-%s-%s.jsonl" % (
+        datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"), invocation))
+    fd, temp = tempfile.mkstemp(prefix=".pseudoct-validate-", suffix=".tmp", dir=mr_pet)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
+        os.link(temp, final)
+    finally:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+
+def publish_result(path, text):
+    # Atomic write: a private temp file beside PATH, then rename over PATH.
+    fd, temp = tempfile.mkstemp(prefix=".pseudoct-result-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
 values = open(sys.argv[1], encoding="utf-8").read().splitlines()
 if len(values) < 10:
     raise SystemExit(69)
@@ -1301,7 +1717,22 @@ record = {"type":"result", "invocation_id":sys.argv[2], "action":"validate", "pr
           "scientific_completion_reason":"Validation did not run scientific processing.",
           "job_ids":[int(x) for x in ids.split()] if ids else [],
           "error_code":code or None, "error_message":message or None}
-if sys.argv[4] == "jsonl": print(json.dumps(record, separators=(",", ":")))
+text = json.dumps(record, separators=(",", ":"))
+if sys.argv[7] == "validate":
+    mr_pet = os.path.dirname(os.path.normpath(sys.argv[6]))
+    if os.path.basename(mr_pet) == "MR_PET" and os.path.isdir(mr_pet):
+        try:
+            write_validation_file(mr_pet, sys.argv[2], text)
+        except OSError:
+            print("pseudoct: cannot write the validation record file", file=sys.stderr)
+    else:
+        print("pseudoct: Cannot resolve or create the subject MR_PET/tmp directory; no validation record file was written.", file=sys.stderr)
+if sys.argv[5]:
+    try:
+        publish_result(sys.argv[5], text)
+    except OSError:
+        print("pseudoct: cannot write --result-file", file=sys.stderr)
+if sys.argv[4] == "jsonl": print(text)
 else:
     print("Validation failed: " + (code or status))
     if message: print(message)
@@ -1309,87 +1740,27 @@ PY
         exit "$EXIT_VALIDATION"
     fi
 
-    if [ "$backend" != local ]; then
-        if [ -z "$credential_handoff" ]; then
-            if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] || \
-                    ! (tty -s < /dev/tty 2>/dev/null); then
-                error_record "$EXIT_AUTH" 'Remote submission requires a terminal prompt or a single-use credential handoff.' AUTHENTICATION_REQUIRED
-            fi
-            printf 'Remote username: ' > /dev/tty
-            IFS= read -r username < /dev/tty || error_record "$EXIT_AUTH" 'Username prompt was cancelled.'
-            [ -n "$username" ] || error_record "$EXIT_AUTH" 'Username cannot be empty.'
-            tty_state=$(stty -g < /dev/tty 2>/dev/null) || error_record "$EXIT_AUTH" 'Cannot disable terminal echo for password input.'
-            stty -echo < /dev/tty 2>/dev/null || error_record "$EXIT_AUTH" 'Cannot disable terminal echo for password input.'
-            printf 'Remote password (not echoed): ' > /dev/tty
-            if IFS= read -r password < /dev/tty; then
-                stty "$tty_state" < /dev/tty 2>/dev/null || true
-                tty_state=''
-                printf '\n' > /dev/tty
-            else
-                stty "$tty_state" < /dev/tty 2>/dev/null || true
-                tty_state=''
-                error_record "$EXIT_AUTH" 'Password prompt was cancelled.'
-            fi
-            [ -n "$password" ] || error_record "$EXIT_AUTH" 'Password cannot be empty.'
-            # Optional account: asked only when --group-account is absent; a handoff
-            # supplies its own account and skips this whole prompt block.
-            if [ "$seen_group_account" -eq 0 ]; then
-                printf 'MLSC Slurm account (blank selects the first discovered account): ' > /dev/tty
-                IFS= read -r group_account < /dev/tty || error_record "$EXIT_AUTH" 'Account prompt was cancelled.'
-            fi
-            [ -d /dev/shm ] && [ -w /dev/shm ] && [ -x /dev/shm ] && \
-                [ "$(stat -f -c %T /dev/shm 2>/dev/null)" = tmpfs ] || \
-                error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
-            secret_dir=$(mktemp -d /dev/shm/pseudoct-cli-credentials-XXXXXX 2>/dev/null) || \
-                error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
-            chmod 00700 "$secret_dir" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
-            (umask 077; printf '%s\n%s\n' "$username" "$password" > "$secret_dir/login") || \
-                error_record "$EXIT_AUTH" 'Credential staging failed.'
-            chmod 600 "$secret_dir/login" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
-            unset username password
-            handoff_output=$handoff_registry
-            if ! (cd -- "$tmp_dir" || exit 69
-                export PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE=store_credentials \
-                PSEUDOCT_CLI_SECRET_FILE="$secret_dir/login" \
-                PSEUDOCT_CLI_HANDOFF_OUTPUT="$handoff_output"
-                if [ "$installed" -eq 1 ]; then
-                    export LD_LIBRARY_PATH=$mcr_ld_path
-                    "$standalone_exe" store_credentials >"$tmp_dir/matlab-diagnostics-store-credentials.log" 2>&1
-                    exit $?
-                fi
-                "$matlab_bin" -nodesktop -nosplash -nodisplay <<'MATLAB' \
-                    >"$tmp_dir/matlab-diagnostics-store-credentials.log" 2>&1
-try
-    root = getenv('PSEUDOCT_CLI_ROOT');
-    addpath(root, '-begin');
-    addpath(genpath(fullfile(root, 'src', 'api')), '-begin');
-    addpath(genpath(fullfile(root, 'src', 'cli')), '-begin');
-    status = pseudoct_cli_bridge('store_credentials');
-catch ME
-    fprintf(2, 'pseudoct: credential handoff failed (%s).\n', ME.identifier);
-    status = 70;
-end
-exit(status);
-MATLAB
-                )
-            then
-                error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.' AUTHENTICATION_FAILED
-            fi
-            credential_handoff=$(cat "$handoff_output")
-            [ -n "$credential_handoff" ] || error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.'
-            python3 - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
-import os, sys
-try:
-    p=sys.argv[1]
-    with open(p,"r+b",buffering=0) as f: f.write(b"\0"*os.fstat(f.fileno()).st_size)
-    os.unlink(p); os.rmdir(os.path.dirname(p))
-except OSError: pass
-PY
-            secret_dir=''
+    # Remote credentials: one interactive entry per run, held in memory until the submit
+    # handoff is staged. A supplied --credential-handoff skips prompting entirely.
+    prompted=0
+    if [ "$backend" != local ] && [ -z "$credential_handoff" ]; then
+        if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] || \
+                ! (tty -s < /dev/tty 2>/dev/null); then
+            error_record "$EXIT_AUTH" 'Remote submission requires a terminal prompt or a single-use credential handoff.' AUTHENTICATION_REQUIRED
         fi
+        case "$PSEUDOCT_AUTH_RETRY_LIMIT" in
+            ''|*[!0-9]*)
+                [ -z "$PSEUDOCT_AUTH_RETRY_LIMIT" ] || error_record "$EXIT_USAGE" 'PSEUDOCT_AUTH_RETRY_LIMIT must be empty or a non-negative integer.' ;;
+        esac
+        prompt_credentials
+        prompted=1
+    fi
+    if [ "$prompted" -eq 1 ] && [ "$check_account" -eq 1 ]; then
+        stage_handoff
+        password=''
     fi
     if [ "$check_account" -eq 1 ]; then
-        # Dry remote check (run validate --check-account): authenticate, discover and
+        # Dry remote check (validate --check-account): authenticate, discover and
         # select the account, then stop.
         # No submit request is built and no scheduler call is made.
         account_check_mode=1
@@ -1407,6 +1778,13 @@ PY
         operation_phase=account_check_done
     fi
     if [ "$action" = run ]; then
+    if [ "$prompted" -eq 1 ]; then
+        # Authenticate (consumes its own handoff), then stage a fresh submit handoff from
+        # the same in-memory credentials. Submission authenticates again in the job manager.
+        run_authentication_loop
+        stage_handoff
+        password=''
+    fi
     if ! matlab_support prepare_submit "$submit_request" "$validate_result" '' '' submit; then
         error_record "$EXIT_RUNTIME" 'Validated job could not be serialized for submit.'
     fi
@@ -1422,9 +1800,40 @@ PY
     fi
 fi
 
-python3 - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" "$run_log_index" <<'PY'
-import json, re, sys
-summary, invocation, profile, action, output_format, backend, log_index = sys.argv[1:]
+python3 - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" "$run_log_index" "${result_file:-}" "$subject_temp" <<'PY'
+import datetime, json, os, re, sys, tempfile
+summary, invocation, profile, action, output_format, backend, log_index, result_path, subject_temp = sys.argv[1:]
+
+def write_validation_file(mr_pet, invocation, text):
+    # Validate-only record: one exclusive JSONL file in the subject MR_PET folder. A
+    # private temp file is hard-linked to its final name (link fails if it exists),
+    # then removed. No run log is created; no other file is written here.
+    final = os.path.join(mr_pet, "pseudoct-validate-%s-%s.jsonl" % (
+        datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"), invocation))
+    fd, temp = tempfile.mkstemp(prefix=".pseudoct-validate-", suffix=".tmp", dir=mr_pet)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
+        os.link(temp, final)
+    finally:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+
+def publish_result(path, text):
+    # Atomic write: a private temp file beside PATH, then rename over PATH.
+    fd, temp = tempfile.mkstemp(prefix=".pseudoct-result-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
 run_logs = []
 try:
     with open(log_index, encoding="utf-8") as index:
@@ -1512,8 +1921,26 @@ elif submission in {"rejected", "unresolved"} or status == "failed" or error_cod
 else:
     code = 69
 record["exit_code"] = code
+text = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+if action == "validate":
+    # Validate-only persistence: exactly one JSONL record in the resolved subject MR_PET.
+    mr_pet = os.path.dirname(os.path.normpath(subject_temp)) if subject_temp else ""
+    if mr_pet and os.path.basename(mr_pet) == "MR_PET" and os.path.isdir(mr_pet):
+        try:
+            write_validation_file(mr_pet, invocation, text)
+        except OSError:
+            print("pseudoct: cannot write the validation record file", file=sys.stderr)
+    else:
+        print("pseudoct: Cannot resolve or create the subject MR_PET/tmp directory; no validation record file was written.", file=sys.stderr)
+publish_failed = False
+if result_path:
+    try:
+        publish_result(result_path, text)
+    except OSError:
+        publish_failed = True
+        print("pseudoct: cannot write --result-file", file=sys.stderr)
 if output_format == "jsonl":
-    print(json.dumps(record, separators=(",", ":"), ensure_ascii=False))
+    print(text)
 else:
     print("pseudoct " + ("validation" if action == "validate" else "run") + ": " + outcome)
     print("  profile: " + profile)
@@ -1532,7 +1959,7 @@ else:
     if not run_logs and outcome in {"scientific_failed", "submission_failed"}:
         print("  No subject run log was created because the output location could not be established.")
     if error_code: print("  error: " + error_code + ": " + message)
-raise SystemExit(code)
+raise SystemExit(69 if publish_failed else code)
 PY
 result_status=$?
 exit "$result_status"
@@ -1549,7 +1976,9 @@ case "$operation" in
     --list-releases)
         [ "$#" -eq 0 ] || fail_op '--list-releases takes no other arguments' "$EXIT_USAGE"
         list_releases ;;
-    run) op_run "$@" ;;
+    run) op_run run "$@" ;;
+    validate) op_run validate "$@" ;;
+    authenticate) op_run authenticate "$@" ;;
     headless) op_headless "$@" ;;
     resolve) op_resolve "$@" ;;
     *) fail_op "unknown operation: $operation (see --help)" "$EXIT_USAGE" ;;

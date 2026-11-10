@@ -40,6 +40,13 @@ if isfield(context, 'record_timestamp') && ischar(context.record_timestamp) && .
         '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$', 'once'))
     timestamp = context.record_timestamp;
 end
+% Persist-only row (the boundary warning summary, already written to the LOG by its
+% caller): JSONL only, with no console, run log or stage numbering.
+if isfield(context, 'jsonl_only') && isequal(context.jsonl_only, true)
+    line = sprintf('[%s] %-7s %s', timestamp, level, message);
+    local_persist_diagnostic(context, level, message);
+    return;
+end
 tags = '';
 if isfield(context, 'subject_index') && isfield(context, 'subject_count') && ...
         ~isempty(context.subject_index) && ~isempty(context.subject_count)
@@ -145,6 +152,69 @@ for ii = 1:length(log_files)
         end
     end
 end
+local_persist_diagnostic(context, level, message);
+end
+
+function local_persist_diagnostic(context, level, message)
+% Single-writer rule: the run JSONL is written only at phase boundaries where no other
+% writer can be active (run start before any launch, or after a runner or Slurm job
+% has exited), because the JSONL writer has no lock; every other row, including
+% heartbeats, WARN/ERROR rows during a run and raw lines, goes to the run LOG only.
+% Only rows flagged jsonl_boundary are persisted; heartbeats are never persisted.
+if ~(isfield(context, 'jsonl_boundary') && isequal(context.jsonl_boundary, true))
+    return;
+end
+if isfield(context, 'raw_diagnostic') && isequal(context.raw_diagnostic, true)
+    return;
+end
+if isfield(context, 'heartbeat') && isequal(context.heartbeat, true)
+    return;
+end
+kind = '';
+if isfield(context, 'lifecycle') && isequal(context.lifecycle, true)
+    kind = 'lifecycle';
+elseif strcmp(level, 'ERROR')
+    kind = 'error';
+elseif strcmp(level, 'WARN')
+    kind = 'warning';
+end
+if isempty(kind)
+    return;
+end
+% The record level is the displayed severity; SUCCESS is a completed lifecycle
+% row, recorded as INFO (the diagnostic level set is INFO, WARN, ERROR).
+record_level = level;
+if strcmp(level, 'SUCCESS')
+    record_level = 'INFO';
+end
+% Run-level contexts may name the run through log_files; only an unambiguous
+% single run log identifies the JSONL file (multi-subject rows are not persisted).
+files = {};
+if isfield(context, 'log_file') && ~isempty(context.log_file)
+    files = context.log_file;
+elseif isfield(context, 'log_files')
+    files = context.log_files;
+end
+if ischar(files)
+    files = {files};
+end
+if ~iscellstr(files) || numel(files) ~= 1
+    return;
+end
+target_context = context;
+target_context.log_file = files{1};
+target = pseudo_CT_scientific_event_target(target_context);
+if isempty(target.path)
+    return;
+end
+if isfield(context, 'job_number') && ~isempty(context.job_number)
+    source = 'mlsc-lifecycle';
+else
+    source = 'local-orchestrator';
+end
+rec = struct('event_type', 'diagnostic', 'level', record_level, 'kind', kind, ...
+    'message', pseudo_CT_sanitize_message(message), 'source', source);
+pseudo_CT_scientific_event(target, rec);
 end
 
 function value = local_to_char(value)

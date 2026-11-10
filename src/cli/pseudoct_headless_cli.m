@@ -75,7 +75,11 @@ elseif status == 3 && strcmp(result.status, 'submitted')
     fprintf(2, ['pseudoct-headless: submission returned, but scientific completion ' ...
         'is %s: the result is unverified (exit 3). Dispatch is not completion evidence.\n'], ...
         result.scientific_completion);
-elseif any(status == [2 3])
+elseif status == 0 && strcmp(result.action, 'authenticate')
+    if ~strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
+        fprintf(1, 'pseudoct-headless: authentication succeeded for %s.\n', result.profile);
+    end
+elseif any(status == [2 3 66])
     fprintf(2, 'pseudoct-headless: %s: %s\n', ...
         result.error_code, result.error_message);
 end
@@ -135,7 +139,7 @@ try
     end
     expected.has_action = expected.has_binding && isfield(request, 'action') && ...
         ischar(request.action) && size(request.action, 1) == 1 && ...
-            any(strcmp(request.action, {'validate'; 'submit'}));
+            any(strcmp(request.action, {'validate'; 'submit'; 'authenticate'}));
 catch
     expected = struct('has_binding', false, 'has_action', false, ...
         'invocation_id', '', 'profile', '');

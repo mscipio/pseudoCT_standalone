@@ -48,7 +48,7 @@ Excluded: obsolete or privacy-risk
   - getting-started.png                          Obsolete. Shows Aether / Launchpad /
         "[Bay8]" legacy profile entries.
   - load-images-empty.png                        Obsolete. Shows OK/Cancel controls and
-        placeholder text; the current window uses Validate, Submit and Close.
+        placeholder text; the current window uses Run and Close.
   - load-images-populated-deidentified.png       Obsolete. Shows OK/Cancel controls.
   - nifti-folder-structure.png                   Obsolete. Log file name uses the retired
         "local-current" key; current run logs are named pseudoct-run-<UTC>-<uuid>.log.

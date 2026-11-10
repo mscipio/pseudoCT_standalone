@@ -4,12 +4,14 @@ function result = pseudo_CT_headless(request_path, result_path)
 %   REQUEST_PATH is a v2 request MAT file (schema pseudoCT.headless-request/v2).
 %   RESULT is the v2 result struct (schema pseudoCT.headless-result/v2), which is
 %   also saved to RESULT_PATH as MAT-file version 6, variable 'result'.
-%   The action is 'validate' or 'submit'. VALIDATE is local-only unless a remote
+%   The action is 'validate', 'submit' or 'authenticate'. VALIDATE is local-only unless a remote
 %   profile supplies a credential handoff: then it authenticates, discovers and
 %   selects the requested account (blank selects the first discovered account)
-%   and returns before any submission. SUBMIT accepts a previously resolved job:
-%   remote profiles consume a secure, single-use credential handoff here, and
-%   local profiles submit without authentication.
+%   and returns before any submission. AUTHENTICATE (remote profiles only) consumes
+%   one credential handoff and performs the same account check WITHOUT validating
+%   inputs or reading input files; it never submits. SUBMIT accepts a previously
+%   resolved job: remote profiles consume a secure, single-use credential handoff
+%   here, and local profiles submit without authentication.
 %   On failure, a pseudoct-headless-diagnostics.txt file is written beside
 %   RESULT_PATH, and RESULT carries status 'failed' with a fixed error_code.
 %   Side effects: reads REQUEST_PATH, writes RESULT_PATH and, on failure, the
@@ -39,9 +41,10 @@ try
     request = local_load_request(request_path);
     result = local_bind_result(request, result);
     if isfield(request, 'action') && ischar(request.action) && ...
-            any(strcmp(request.action, {'validate'; 'submit'})) && ...
+            any(strcmp(request.action, {'validate'; 'submit'; 'authenticate'})) && ...
+            (strcmp(request.action, 'authenticate') || ...
             ~(isfield(request, 'profile') && ...
-            local_is_local_profile(request.profile)) && ...
+            local_is_local_profile(request.profile))) && ...
             isfield(request, 'credential_handoff') && ...
             ischar(request.credential_handoff) && ...
             ~isempty(request.credential_handoff)
@@ -57,6 +60,9 @@ try
     result.profile = request.profile;
     if strcmp(request.action, 'validate')
         result = local_validate(request, result, credentials);
+        clear credentials
+    elseif strcmp(request.action, 'authenticate')
+        result = local_authenticate(request, result, credentials);
         clear credentials
     else
         result = local_submit(request, result, credentials);
@@ -159,7 +165,7 @@ end
 if ~local_plain_text(request.schema) || ...
         ~strcmp(request.schema, 'pseudoCT.headless-request/v2') || ...
         ~local_uuid(request.invocation_id) || ...
-        ~local_enum(request.action, {'validate'; 'submit'}) || ...
+        ~local_enum(request.action, {'validate'; 'submit'; 'authenticate'}) || ...
         ~local_allowed_profile(request.profile)
     error('pseudo_CT:HeadlessRequest', 'Request MAT schema is invalid.');
 end
@@ -178,7 +184,9 @@ if ~isstruct(request.output_config) || numel(request.output_config) ~= 1 || ...
         ~isstruct(request.options) || numel(request.options) ~= 1
     error('pseudo_CT:HeadlessRequest', 'Request output/options fields are invalid.');
 end
-if strcmp(request.action, 'validate')
+if strcmp(request.action, 'authenticate')
+    local_validate_authenticate(request);
+elseif strcmp(request.action, 'validate')
     % Authentication fields are accepted only for a remote account check.
     account_check = ~local_is_local_profile(request.profile) && ...
         ~isempty(request.credential_handoff);
@@ -269,6 +277,37 @@ result.diagnostics = struct('code', '', 'message', '');
 if ~isempty(credentials)
     result = local_account_check(request, result, credentials);
 end
+end
+
+function local_validate_authenticate(request)
+% Authenticate requests carry one single-use handoff and the account choice only:
+% no input paths, processing options, resolved job or artifact root.
+if local_is_local_profile(request.profile)
+    error('pseudo_CT:HeadlessProfile', ...
+        'Authentication is available only for remote profiles.');
+end
+if ~ischar(request.credential_handoff) || isempty(request.credential_handoff) || ...
+        ~isempty(request.subjects) || ~isempty(request.umap_files) || ...
+        ~isempty(fieldnames(request.options)) || ...
+        ~isempty(fieldnames(request.output_config)) || ...
+        ~isempty(request.current_artifact_root) || ...
+        ~isstruct(request.resolved_job) || numel(request.resolved_job) ~= 1 || ...
+        ~isempty(fieldnames(request.resolved_job))
+    error('pseudo_CT:HeadlessRequest', ...
+        'Authenticate requests need one credential handoff and no validation or submit fields.');
+end
+end
+
+function result = local_authenticate(request, result, credentials)
+% Authenticate-only action: the same MLSC session and account selection as the
+% validate account check, but without pseudo_CT_orchestrate('validate') and
+% without touching input files. Nothing is submitted.
+if ~isstruct(credentials) || numel(credentials) ~= 1 || ...
+        ~isfield(credentials, 'username') || ~isfield(credentials, 'password')
+    error('pseudo_CT:HeadlessRequest', ...
+        'A single-use credential handoff is required.');
+end
+result = local_account_check(request, result, credentials);
 end
 
 function result = local_account_check(request, result, credentials)
@@ -444,7 +483,7 @@ if isstruct(request) && numel(request) == 1
     if isfield(request, 'invocation_id') && local_uuid(request.invocation_id)
         result.invocation_id = request.invocation_id;
     end
-    if isfield(request, 'action') && local_enum(request.action, {'validate'; 'submit'})
+    if isfield(request, 'action') && local_enum(request.action, {'validate'; 'submit'; 'authenticate'})
         result.action = request.action;
     end
     if isfield(request, 'profile') && local_allowed_profile(request.profile)
@@ -477,6 +516,9 @@ function code = local_error_code(identifier, operation)
 %   validation (and any failure before the operation is bound) reports
 %   VALIDATION_FAILED, so validation never claims a submission was attempted.
 code = 'VALIDATION_FAILED';
+if strcmp(operation, 'authenticate')
+    code = 'AUTHENTICATION_STEP_FAILED';
+end
 if strcmp(operation, 'submit')
     code = 'SUBMIT_FAILED';
 end
@@ -510,6 +552,8 @@ switch code
         message = 'The requested profile is not enabled for this interface.';
     case 'VALIDATION_FAILED'
         message = 'Local validation failed; no authentication, submission, or dispatch was attempted.';
+    case 'AUTHENTICATION_STEP_FAILED'
+        message = 'The authentication step could not be completed; no submission was attempted.';
     case 'STALE_RESOLVED_JOB'
         message = 'Inputs or artifacts changed; validate again before submit.';
     case 'AUTHENTICATION_FAILED'

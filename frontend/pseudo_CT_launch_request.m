@@ -6,8 +6,11 @@ function out = pseudo_CT_launch_request(action, varargin)
 %   files are checked before the launcher is resolved.
 %
 %   RESULT = PSEUDO_CT_LAUNCH_REQUEST('invoke', REQUEST) runs the compiled
-%   launcher (bin/pseudoct run validate|run ... --format jsonl). Every argument
-%   is POSIX single-quoted; no user text is interpolated unquoted. The child
+%   launcher (bin/pseudoct validate|run ... --format text --result-file PATH).
+%   The launcher's stdout is not redirected, so its progress text is sent to the
+%   MATLAB Command Window. Whether it appears live during the run is not yet
+%   confirmed on the installed MATLAB. The result record is read from PATH.
+%   Every argument is POSIX single-quoted; no user text is interpolated unquoted. The child
 %   process environment drops MATLAB's library and path variables so the
 %   launcher selects its own MATLAB Runtime. RESULT is a struct with ok,
 %   exit_code, action, profile, outcome, submission_status,
@@ -39,9 +42,9 @@ switch lower(action)
         end
         out = local_parse(varargin{1}, varargin{2});
     case 'argv'
-        out = local_argv(varargin{1}, '');
+        out = local_argv(varargin{1}, '', '');
         if nargin > 2
-            out = local_argv(varargin{1}, varargin{2});
+            out = local_argv(varargin{1}, varargin{2}, '');
         end
     case 'config'
         out = local_config_text(varargin{1});
@@ -90,8 +93,8 @@ for kk = 1:2:numel(args)
             req.umap = local_path_list(value, 'UMAP');
         case 'action'
             req.action = lower(local_text(value, 'Action'));
-            if ~any(strcmp(req.action, {'validate'; 'submit'}))
-                error('pseudo_CT:FrontendUsage', 'Action must be validate or submit.');
+            if ~any(strcmp(req.action, {'validate'; 'submit'; 'authenticate'}))
+                error('pseudo_CT:FrontendUsage', 'Action must be validate, submit or authenticate.');
             end
         case 'runtime'
             req.runtime = local_text(value, 'Runtime');
@@ -149,6 +152,16 @@ end
 if strcmp(req.action, 'submit')
     req.cli_action = 'run';
 end
+% Internal to the frontend: 'authenticate' is not a run_pseudo_CT Action value. It is one
+% authentication-only launcher call (authenticate) for an MLSC profile.
+if strcmp(req.action, 'authenticate')
+    req.cli_action = 'authenticate';
+    if isempty(req.credential_handoff) || ...
+            ~any(strcmp(req.profile, {'mlsc'; 'mlsc-mprage-only'}))
+        error('pseudo_CT:FrontendUsage', ...
+            'Authenticate needs an MLSC profile and a CredentialHandoff.');
+    end
+end
 req.launcher = local_resolve_launcher(req.launcher, root_dir);
 req.fingerprint = local_fingerprint(req);
 end
@@ -194,15 +207,21 @@ function flag = local_is_installed(root_dir)
 flag = exist(fullfile(root_dir, 'src'), 'dir') ~= 7;
 end
 
-function argv = local_argv(req, config_path)
-argv = {'run'};
+function argv = local_argv(req, config_path, result_path)
+%LOCAL_ARGV RESULT_PATH empty: the jsonl argument list of the 'argv' action. Otherwise
+%   the text launch whose result record is written to RESULT_PATH ('invoke').
+if strcmp(req.cli_action, 'authenticate')
+    argv = local_authenticate_argv(req, result_path);
+    return;
+end
+argv = {req.cli_action};
 if ~isempty(req.runtime)
     argv = [argv, {'--mcr', req.runtime}];
 end
 if ~isempty(req.mcr_root)
     argv = [argv, {'--mcr-root', req.mcr_root}];
 end
-argv = [argv, {req.cli_action, '--profile', req.profile}];
+argv = [argv, {'--profile', req.profile}];
 if numel(req.mprage) > 1
     argv = [argv, {'--config', config_path}];
 else
@@ -232,7 +251,36 @@ end
 if ~isempty(req.credential_handoff)
     argv = [argv, {'--credential-handoff', req.credential_handoff}];
 end
-argv = [argv, {'--format', 'jsonl'}];
+if isempty(result_path)
+    argv = [argv, {'--format', 'jsonl'}];
+else
+    argv = [argv, {'--format', 'text', '--result-file', result_path}];
+end
+end
+
+function argv = local_authenticate_argv(req, result_path)
+%LOCAL_AUTHENTICATE_ARGV authenticate: one authentication-only launcher call with an
+%   existing credential handoff. No inputs, options or submission.
+argv = {'authenticate'};
+if ~isempty(req.runtime)
+    argv = [argv, {'--mcr', req.runtime}];
+end
+if ~isempty(req.mcr_root)
+    argv = [argv, {'--mcr-root', req.mcr_root}];
+end
+argv = [argv, {'--profile', req.profile, ...
+    '--credential-handoff', req.credential_handoff}];
+if ~isempty(req.group_account)
+    argv = [argv, {'--group-account', req.group_account}];
+end
+if ~isempty(req.host_key_file)
+    argv = [argv, {'--host-key-file', req.host_key_file}];
+end
+if isempty(result_path)
+    argv = [argv, {'--format', 'jsonl'}];
+else
+    argv = [argv, {'--format', 'text', '--result-file', result_path}];
+end
 end
 
 function text = local_config_text(req)
@@ -262,22 +310,26 @@ if exist(req.launcher, 'file') ~= 2
     error('pseudo_CT:FrontendLauncher', 'The launcher is unavailable: %s', req.launcher);
 end
 config_path = '';
-if numel(req.mprage) > 1
+if numel(req.mprage) > 1 && ~strcmp(req.cli_action, 'authenticate')
     config_path = [tempname '.json'];
     local_write_text(config_path, local_config_text(req));
     cleanup_config = onCleanup(@() local_delete(config_path)); %#ok<NASGU>
 end
-out_file = tempname;
+result_file = tempname;
 err_file = tempname;
-cleanup_files = onCleanup(@() local_delete({out_file; err_file})); %#ok<NASGU>
-argv = local_argv(req, config_path);
+cleanup_files = onCleanup(@() local_delete({result_file; err_file})); %#ok<NASGU>
+argv = local_argv(req, config_path, result_file);
+% stdout is not redirected: the progress text goes to the MATLAB Command Window (live
+% display to be confirmed on the installed MATLAB).
+% stderr is kept in a temp file for error parsing only. The record is read from
+% result_file (written atomically by bin/pseudoct --result-file).
 command = [local_clean_prefix() local_sh(req.launcher) local_join_sh(argv) ...
-    ' >' local_sh(out_file) ' 2>' local_sh(err_file)];
-[status, ~] = system(command);
+    ' 2>' local_sh(err_file)];
+status = system(command);
 stderr_text = local_read(err_file);
 script = fullfile(fileparts(mfilename('fullpath')), 'pseudo_CT_result_fields.py');
 [parse_status, parse_text] = system([local_clean_prefix() ...
-    'python3 -I -B ' local_sh(script) ' ' local_sh(out_file)]);
+    'python3 -I -B ' local_sh(script) ' ' local_sh(result_file)]);
 fields = struct();
 if parse_status == 0
     fields = local_key_values(parse_text);
@@ -341,7 +393,7 @@ end
 
 function text = local_fingerprint(req)
 % Action and credential handoff are excluded: the GUI validates first and
-% creates the one-use handoff only for Submit, which must still match.
+% creates the one-use handoff only for the submit call, which must still match.
 parts = {['profile=' req.profile]; ...
     ['runtime=' req.runtime]; ['mcr_root=' req.mcr_root]; ...
     ['aliasing=' req.correct_aliasing]; ['recenter=' req.recenter]; ...

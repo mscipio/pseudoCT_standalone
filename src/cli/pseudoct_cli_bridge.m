@@ -41,6 +41,20 @@ try
             request.host_key_file = spec.host_key_file;
         end
         local_save_request(getenv('PSEUDOCT_CLI_REQUEST'), request);
+    elseif strcmp(mode, 'prepare_authenticate')
+        % Remote authenticate request: one single-use handoff and the chosen account.
+        % No input paths, options or resolved job; the headless action validates that.
+        % The authenticate input has no subject lines (count 0).
+        spec = local_read_input(getenv('PSEUDOCT_CLI_INPUT'), 0);
+        handoff = getenv('PSEUDOCT_CLI_HANDOFF');
+        if isempty(handoff)
+            error('pseudo_CT:CLIAccountCheck', 'Authentication requires a credential handoff.');
+        end
+        request = local_request(spec, 'authenticate');
+        request.credential_handoff = handoff;
+        request.group_account = local_group_account(spec);
+        request.host_key_file = spec.host_key_file;
+        local_save_request(getenv('PSEUDOCT_CLI_REQUEST'), request);
     elseif strcmp(mode, 'prepare_submit')
         spec = local_read_input(getenv('PSEUDOCT_CLI_INPUT'));
         validation = local_load_result(getenv('PSEUDOCT_CLI_RESULT'), ...
@@ -74,7 +88,11 @@ catch ME
 end
 end
 
-function spec = local_read_input(path_name)
+function spec = local_read_input(path_name, min_count)
+% MIN_COUNT (default 1) is the smallest subject count: the authenticate input has none.
+if nargin < 2
+    min_count = 1;
+end
 fid = fopen(path_name, 'r');
 if fid == -1
     error('pseudo_CT:CLIInput', 'CLI input data is unavailable.');
@@ -85,7 +103,7 @@ spec.invocation_id = local_read_line(fid);
 count_text = local_read_line(fid);
 spec.has_umaps = strcmp(local_read_line(fid), '1');
 count = str2double(count_text);
-if ~isfinite(count) || count < 1 || count ~= floor(count) || count > 10000
+if ~isfinite(count) || count < min_count || count ~= floor(count) || count > 10000
     error('pseudo_CT:CLIInput', 'CLI subject count is invalid.');
 end
 spec.subjects = cell(count, 1);

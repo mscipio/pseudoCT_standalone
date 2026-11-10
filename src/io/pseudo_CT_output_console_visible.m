@@ -566,6 +566,26 @@ if isfield(context, 'stage_message') && ischar(context.stage_message) && ...
         ~isempty(strtrim(context.stage_message))
     text = local_public(context.stage_message);
 end
+native = '';
+if isfield(context, 'native_stage_id') && ischar(context.native_stage_id)
+    native = context.native_stage_id;
+end
+if n == 7 && any(strcmp(native, {'dartel'; 'inverse_warp'})) && ...
+        ~(strcmp(native, 'dartel') && strcmp(canon, 'START')) && ...
+        ~(strcmp(native, 'inverse_warp') && strcmp(canon, 'DONE'))
+    % Stage 7 numbering follows the native operation: dartel STARTED is the only
+    % numbered ACTIVE and inverse_warp COMPLETED the only numbered DONE. The other
+    % two stage-7 records are unnumbered informational rows (stage 0).
+    if strcmp(canon, 'START')
+        kind = 'operation_started';
+    else
+        kind = 'operation_completed';
+    end
+    c = local_cand(S, row, 'INFO', 0, ['scientific.' native], kind, text, 'scientific');
+    c.dedupe = ['scientific.' native '|' canon];
+    cands{end + 1} = c;
+    return;
+end
 switch canon
     case 'START'
         if n > 0
@@ -1100,7 +1120,7 @@ if ~S.header_done
     S.header_done = true;
     if S.replay
         text = [text 'pseudoCT ' '—' ' ' local_profile_title(S.profile) ...
-            ' ' '—' ' archived offline replay (not live)' char(10)];
+            ' ' '—' ' archived offline replay (not live; times UTC)' char(10)];
     end
     text = [text sprintf('%-8s %-7s %-7s %-9s %s', 'TIME', 'SUBJECT', 'STAGE', 'STATUS', 'MESSAGE') char(10)];
     text = [text repmat('-', 1, 123) char(10)];
@@ -1110,7 +1130,10 @@ end
 % SKIPPED row). Later rows and wrapped lines never repeat it; STATUS is kept
 % on every line.
 label = '';
-if c.stage > 0 && ~S.subjects(S.subject_slot).label_shown(c.stage)
+% Stage 7 also numbers its single DONE row (the inverse_warp completion): its
+% ACTIVE and DONE are the stage's numbered bounds. Other stages are unchanged.
+numbered_done = c.stage == 7 && strcmp(c.kind, 'stage_completed');
+if c.stage > 0 && (~S.subjects(S.subject_slot).label_shown(c.stage) || numbered_done)
     label = sprintf('[%d/10]', c.stage);
     S.subjects(S.subject_slot).label_shown(c.stage) = true;
 end

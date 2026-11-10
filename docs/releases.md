@@ -119,7 +119,8 @@ repository checkout (`src/` present) keeps its licensed MATLAB behaviour; `--mcr
 `--mcr-root` are errors there, and `resolve` requires an installed distribution.
 
 ```
-pseudoct run      [--mcr LABEL] [--mcr-root DIR] validate|run <CLI options>
+pseudoct run      [--mcr LABEL] [--mcr-root DIR] <CLI options>
+pseudoct validate [--mcr LABEL] [--mcr-root DIR] <CLI options>
 pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
 pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
 pseudoct --list-releases
@@ -129,7 +130,7 @@ pseudoct --help
 - There is no GUI operation in the launcher. The MATLAB window is `run_pseudo_CT`
   (see below). `gui` and `run --orchestrate` were removed; both are refused as unknown
   operations with exit `64`.
-- `run validate|run` is the CLI (validate, or validate and submit) with the same
+- `validate` (validate only) and `run` (validate, then submit) are the CLI with the same
   options, text/JSONL output and exit codes as in [Headless API and CLI](headless-cli.md).
 - `headless` keeps the two-positional contract and runs `runtimes/<LABEL>/pseudoct_job_manager
   headless` with `PSEUDOCT_REQUEST_MAT` and `PSEUDOCT_RESULT_MAT`.
@@ -201,12 +202,12 @@ build and resource manifests and the runner.
 `frontend/` files it needs. Argument mode and the window both call the launcher through
 `frontend/pseudo_CT_launch_request.m`: MATLAB parses the parameters, writes the launcher
 arguments (POSIX single-quoted; no secret ever appears on a command line), runs
-`bin/pseudoct run validate|run ... --format jsonl` in a child environment without MATLAB's
+`bin/pseudoct validate|run ... --format jsonl` in a child environment without MATLAB's
 library and path variables, and displays the result. No validation or science runs in
 MATLAB.
 
 `run_pseudo_CT.m` delegates only to `bin/pseudoct`, for argument mode and for the window's
-Validate and Submit. The packaged frontend contains GUI and launch-bridge files, plus the
+Run action. The packaged frontend contains GUI and launch-bridge files, plus the
 credential helpers (`pseudo_CT_credentials.m`, the password entry dialog and `passwordTools/`)
 only. None of them is a scientific or SSH2 backend.
 
@@ -217,8 +218,8 @@ only. None of them is a scientific or SSH2 backend.
   (`run_pseudo_CT:LauncherOverrideDevelopmentOnly`) and `PSEUDOCT_LAUNCHER` is ignored. In a
   source checkout, `'Launcher'` or `PSEUDOCT_LAUNCHER` names the development or test launcher.
 - `run_pseudo_CT()` (no arguments) opens the profile selector, then the MPRAGE/UMAP
-  window. Validate and Submit use the same bridge and the same gate described in
-  [Validate and submit](headless-cli.md#validate-and-submit).
+  window. Run uses the same bridge and the same validation and submission rules described in
+  [Validation and submission](headless-cli.md#validation-and-submission).
 - The MATLAB Runtime root is the catalog location of the selected release (or the
   `--mcr-root` override); the window never asks for a folder.
 - MLSC submission creates one single-use credential handoff with the existing

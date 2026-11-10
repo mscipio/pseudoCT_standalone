@@ -14,6 +14,13 @@ function status = pseudoct_headless_status(result)
 
 if strcmp(result.status, 'ready') && strcmp(result.action, 'validate')
     status = 0;
+elseif strcmp(result.status, 'ready') && strcmp(result.action, 'authenticate')
+    % Authentication succeeded and the account was selected; nothing was submitted.
+    status = 0;
+elseif strcmp(result.status, 'failed') && strcmp(result.action, 'authenticate') && ...
+        any(strcmp(result.error_code, {'AUTHENTICATION_FAILED'; 'INVALID_GROUP_ACCOUNT'}))
+    % Credential or account rejection: the shell may re-prompt (exit 66).
+    status = 66;
 elseif strcmp(result.status, 'submitted') && strcmp(result.action, 'submit')
     if strcmp(result.scientific_completion, 'completed')
         status = 0;

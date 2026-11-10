@@ -8,6 +8,7 @@ assembles one distribution directory from the verified build output only:
     pseudoct-<version>/
       bin/pseudoct                                  (the public launcher, copied)
       run_pseudo_CT.m                               (MATLAB frontend, copied)
+      README.md                                     (user README, copied from the repo root)
       frontend/<allowlisted files>                  (MATLAB frontend, copied verbatim)
       help/index.html, help/style.css               (help documents from docs/help/;
                                                      docs/help/assets/ is never shipped)
@@ -84,6 +85,9 @@ LAUNCHER_REL = 'bin/pseudoct'
 LAUNCHER_SOURCE = os.path.join(REPO_ROOT, 'bin', 'pseudoct')
 FRONTEND_ENTRY = 'run_pseudo_CT.m'
 FRONTEND_ENTRY_SOURCE = os.path.join(REPO_ROOT, FRONTEND_ENTRY)
+# User README, shipped at the package root from the repository root.
+README_NAME = 'README.md'
+README_SOURCE = os.path.join(REPO_ROOT, README_NAME)
 FRONTEND_DIR = os.path.join(REPO_ROOT, 'frontend')
 # Frontend files whose single source is frontend/ (check_sources requires the directory
 # to hold exactly these files). The credential store and the password dialog are shared
@@ -285,7 +289,7 @@ def frontend_files_on_disk():
 def check_sources():
     """Raise unless the launcher, runner, entry point, build script and copied sources exist
     and frontend/ holds exactly the FRONTEND_OWN files."""
-    for path in (LAUNCHER_SOURCE, RUNNER_SOURCE, FRONTEND_ENTRY_SOURCE, BUILDER_SCRIPT,
+    for path in (LAUNCHER_SOURCE, RUNNER_SOURCE, FRONTEND_ENTRY_SOURCE, README_SOURCE, BUILDER_SCRIPT,
                  *FRONTEND_FROM_SRC.values(), *[os.path.join(HELP_DIR, name) for name in HELP_FILES],
                  *[os.path.join(SSH2_SOURCE_ROOT, *rel.split('/')) for rel in SSH2_FILES]):
         if not os.path.isfile(path):
@@ -463,6 +467,7 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
                       os.path.join(pkg, 'resources', name), 0o644)
         copy_file(LAUNCHER_SOURCE, os.path.join(pkg, *LAUNCHER_REL.split('/')), 0o755)
         copy_file(FRONTEND_ENTRY_SOURCE, os.path.join(pkg, FRONTEND_ENTRY), 0o644)
+        copy_file(README_SOURCE, os.path.join(pkg, README_NAME), 0o644)
         for rel in FRONTEND_FILES:
             copy_file(frontend_source(rel), os.path.join(pkg, 'frontend', *rel.split('/')), 0o644)
         for name in HELP_FILES:
@@ -521,9 +526,9 @@ def print_plan(version, selected, roots, output_dir):
                                   ' '.join(MATLAB_FLAGS)))
         print('PLAN %s build: build_application(%s, Mode build, OutputRoot <staging>/b)'
               % (label, label))
-    print('PLAN ship: %s, %s, frontend/ (%d files), help/ (%d files), %s/ (%d files), resources/, '
+    print('PLAN ship: %s, %s, %s, frontend/ (%d files), help/ (%d files), %s/ (%d files), resources/, '
           'manifest.json, SHA256SUMS'
-          % (LAUNCHER_REL, FRONTEND_ENTRY, len(FRONTEND_FILES), len(HELP_FILES),
+          % (LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, len(FRONTEND_FILES), len(HELP_FILES),
              SSH2_ROOT_REL, len(SSH2_FILES)))
     print('PLAN publish: %s (lock %s)' % (dest, os.path.join(output_dir, LOCK_NAME)))
     print('DRY_RUN_PASS (no MATLAB invoked, nothing written)')
@@ -591,7 +596,7 @@ def forbidden(rel):
 def path_allowed(rel, labels):
     """The shipped allowlist: launcher, entry point, frontend files, help documents, the
     release runtime files of the listed labels, and the atlas resources."""
-    if rel in (LAUNCHER_REL, FRONTEND_ENTRY):
+    if rel in (LAUNCHER_REL, FRONTEND_ENTRY, README_NAME):
         return True
     if rel.startswith('frontend/') and rel[len('frontend/'):] in FRONTEND_FILES:
         return True
@@ -608,7 +613,7 @@ def path_allowed(rel, labels):
 
 
 def required_paths(labels):
-    paths = [LAUNCHER_REL, FRONTEND_ENTRY]
+    paths = [LAUNCHER_REL, FRONTEND_ENTRY, README_NAME]
     paths += ['frontend/' + rel for rel in FRONTEND_FILES]
     paths += ['help/' + name for name in HELP_FILES]
     paths += [SSH2_ROOT_REL + '/' + rel for rel in SSH2_FILES]

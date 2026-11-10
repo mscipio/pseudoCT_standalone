@@ -1,81 +1,61 @@
 # Headless API and CLI
 
-This page is the authoritative reference for the terminal CLI (`bin/pseudoct`)
-and the MATLAB headless API (`pseudo_CT_headless`): options, validate and submit
-semantics, logs and progress, exit codes, and cancellation. Installation is in
-[Installation](installation.md); packaging and runtime selection are in
-[Release catalog and layout](releases.md). Run `bin/pseudoct --help` for the
-installed usage text.
+This page is the reference for the terminal launcher (`bin/pseudoct`): options, validation
+and submission, output files, exit codes and cancellation. Installation is in
+[Installation](installation.md), and packaging and runtime selection are in
+[Release catalog and layout](releases.md). `bin/pseudoct --help` prints the usage text of
+the installed launcher. The step-by-step workflow for the window is in the
+[PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/).
+
+Developer material (the MATLAB request and result contract, the `headless` and `resolve`
+operations) is at the end of this page.
 
 ## Entry points
 
 ```sh
-bin/pseudoct run validate --profile local \
+bin/pseudoct validate --profile local \
   --mprage /subject/MR/MPRAGE/one.dcm \
   --umap /subject/MR/UMAP/one.dcm --format jsonl
-bin/pseudoct run run --profile local \
+bin/pseudoct run --profile local \
   --mprage /subject/MR/MPRAGE/one.dcm \
   --umap /subject/MR/UMAP/one.dcm --format jsonl
 ```
 
-`run validate` checks a request. `run run` validates the same request and then
-submits it; see [Validate and submit](#validate-and-submit).
+`validate` checks a request. `run` validates the same request and then submits it;
+see [Validation and submission](#validation-and-submission).
 
-The lower-level operation takes one request MAT file and writes one result MAT file:
-
-```sh
-bin/pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
-```
-
-`--mcr` and `--mcr-root` apply to an installed distribution only; see
-[Release selection](#release-selection-installed-distribution).
-
-```matlab
-pseudo_CT_headless(request_path, result_path)
-```
-
-`REQUEST.mat` must contain a single scalar variable named `request`, saved as
-MAT v5 (for example with `save(..., '-v6')`). The result parent must already
-exist and be writable. Direct launcher result files must be under the subject's
-`MR_PET/tmp/`; the private invocation directory there is removed on exit.
-
-In a repository checkout, the headless bootstrap runs MATLAB. Its default
-executable is `/usr/pubsw/common/matlab/7.11/bin/matlab`; set `PSEUDOCT_MATLAB`
-to use another executable. An installed distribution runs its compiled engine
-with the selected MATLAB Runtime instead (see [Releases](releases.md)).
+The window (`run_pseudo_CT`) and the launcher share the same rules. The window runs
+`bin/pseudoct run` with a text result and reads the final result record from a file.
 
 ## Release selection (installed distribution)
 
 An installed distribution (`runtimes/` beside `bin/`) ships one compiled release per
 MATLAB Runtime. `bin/pseudoct` selects one of them for `run`, `headless` and `resolve`.
-A repository checkout refuses `--mcr` and `--mcr-root`, and `resolve` requires an
-installed distribution.
+A repository checkout refuses `--mcr` and `--mcr-root`, and `resolve` requires an installed
+distribution.
 
-- `--mcr LABEL`: the release, as an exact catalog label such as `R2019b`. The default is
-  the catalog default, R2010b.
+- `--mcr LABEL`: the release, as an exact catalog label such as `R2019b`. The default is the
+  catalog default, R2010b.
 - `--mcr-root DIR`: the MATLAB Runtime root. Without it, the root is the catalog location
   `/usr/pubsw/common/matlab/<D>` of the release, where `<D>` is the first two dotted
-  components of its `matlab_version`. The runtime identity is always
-  validated against the catalog, so a root never bypasses that check.
+  components of its `matlab_version`. The runtime identity is always validated against the
+  catalog, so a root never bypasses that check.
 - `--list-releases`: prints one line per installed release, as
-  `label<TAB>mcr_version<TAB>default|-`. It needs no MATLAB or MCR. In a repository
-  checkout it lists every entry in `config/releases.json`.
-- `resolve [--mcr LABEL] [--mcr-root DIR]`: validates one MATLAB Runtime and prints
-  single-quoted, sourceable `PSEUDOCT_EXE`, `PSEUDOCT_MCR_ROOT`, `PSEUDOCT_RUNNER`,
-  `PSEUDOCT_INSTALL_ROOT`, `PSEUDOCT_RUNTIME_RELEASE` and `PSEUDOCT_RUNTIME_MCR_ROOT` lines.
+  `label<TAB>mcr_version<TAB>default|-`. It needs no MATLAB or MCR. In a repository checkout it
+  lists every entry in `config/releases.json`.
 
-An unknown label, a bad `--mcr-root` value or a usage error exits `64`. An incomplete
-release, an unsupported architecture, or a missing or mismatched MATLAB Runtime exits
-`69`. Details are in [Releases](releases.md#release-and-matlab-runtime-root-selection).
+An unknown label, a bad `--mcr-root` value or a usage error exits `64`. An incomplete release,
+an unsupported architecture, or a missing or mismatched MATLAB Runtime exits `69`. Details are
+in [Releases](releases.md#release-and-matlab-runtime-root-selection).
 
-## Options (`run validate|run`)
+## Options (`validate`, `run`)
 
-- `--profile NAME`: one of the four canonical profiles (`local`, `mlsc`,
+- `--profile NAME` (required): one of the four canonical profiles (`local`, `mlsc`,
   `local-mprage-only`, `mlsc-mprage-only`); see [Installation](installation.md#supported-profiles).
-- `--mprage FILE [--umap FILE]`: one subject. The UMAP may be omitted for local
-  discovery on standard profiles. MPRAGE-only profiles reject `--umap`.
-- `--config job.json`: several subjects. The JSON object has a non-empty `mprage`
-  string array and an optional positionally paired `umap` string array:
+- `--mprage FILE [--umap FILE]`: one subject. On standard profiles the UMAP may be omitted;
+  the launcher then discovers it from the subject layout. MPRAGE-only profiles reject `--umap`.
+- `--config job.json`: several subjects. The JSON object has a non-empty `mprage` string
+  array and an optional `umap` string array, paired by position:
 
   ```json
   {"mprage":["/data/one/MPRAGE.dcm","/data/two/MPRAGE.dcm"],
@@ -84,104 +64,174 @@ release, an unsupported architecture, or a missing or mismatched MATLAB Runtime 
 
 - `--correct-aliasing yes|no`, `--recenter-before-normalization yes|no`,
   `--cleanup-on-success yes|no`: override the profile defaults.
-- `--current-artifact-root PATH`: development-only override. It is accepted only
-  by the MLSC profiles (`mlsc`, `mlsc-mprage-only`); the local profiles reject it
-  with exit `64` (the same rule applies to the MATLAB frontend and the headless
-  API, which return the identifier `run_pseudo_CT:InvalidMlscCurrentOverride`).
-  An installed distribution does not need it. No other artifact-root or
-  Gate-A-record override is exposed.
-- `--group-account ACCOUNT`, `--host-key-file FILE`, `--credential-handoff FILE`:
-  MLSC inputs. The handoff is an existing single-use credential file created for
-  the submit step. Secrets are never accepted on the command line.
-- `--check-account`: MLSC only, `run validate` only. It authenticates, discovers the
-  MLSC accounts and applies the account rule before reporting: a blank or omitted
-  `--group-account` selects the first discovered account, and an explicit account
-  must be one of the discovered accounts. It then stops. It never submits: the
-  result reports `submission_status` `not_attempted`, no job IDs, and no `sbatch`
-  call is made. An invalid explicit account returns `INVALID_GROUP_ACCOUNT` (exit
-  `66`) before any submission. The credential (a terminal prompt, or
-  `--credential-handoff`) is consumed once by this check; a later `run run`
-  authenticates again. Combining it with another action or a non-MLSC profile
-  exits `64`.
-- `--format text|jsonl`: output format (default `text`).
+- `--group-account ACCOUNT` (MLSC): the account to use. Blank or omitted: the first discovered
+  account is selected, or, at a terminal prompt, you are asked for one.
+- `--check-account` (MLSC, `validate` only): logs in, discovers the MLSC accounts and applies
+  the account rule, then stops. It never submits: the result reports `submission_status`
+  `not_attempted`, no job IDs, and no `sbatch` call is made. An invalid explicit account returns
+  `INVALID_GROUP_ACCOUNT` (exit `66`). Combining it with another action or a non-MLSC profile exits
+  `64`. It makes one login attempt; the retry rules below apply to `run`.
+- `--host-key-file FILE` (MLSC): the strict host-key input for the cluster connection.
+- `--format text|jsonl`: output format (default `text`). See
+  [Output, logs and progress](#output-logs-and-progress).
+- `--result-file PATH`: also writes the final JSON result record to `PATH`, atomically (a
+  temporary file is renamed over `PATH`), in either format. Standard output is unchanged. The
+  directory must exist and be writable.
+- `--current-artifact-root PATH`: **developer only.** Accepted only by the MLSC profiles; the local
+  profiles reject it with exit `64`. Installed distributions do not need it.
+- `--credential-handoff FILE`: **internal.** An existing single-use credential file created by the
+  window for the submit step. Do not create or reuse it by hand. Secrets are never accepted on the
+  command line.
 
-## Validate and submit
+Credentials are never accepted as command-line options or environment variables. For MLSC, the
+launcher asks for the username and password at the terminal (with echo off), and then for the
+account when `--group-account` is absent.
 
-This is the single authoritative description of validation and submission.
+### Environment variable: `PSEUDOCT_AUTH_RETRY_LIMIT`
 
-- **Validate** (`run validate`, the GUI Validate button, or a `validate` request)
-  resolves and checks the selected profile, inputs, outputs, dependencies and,
-  for MLSC, the applicable artifact integrity. It does not authenticate, contact
-  remote services, or run scientific processing; the only exception is the MLSC
-  `--check-account` option (see [Options](#options-run-validaterun)), which
-  authenticates and checks the account but still never submits. A successful
-  validation reports `ready`; it is not a processing result.
-- **Submit** (`run run`, the GUI Submit button, or a `submit` request) uses the
-  resolved job bound by a successful validation and rechecks inputs and artifacts;
-  changed or stale inputs fail closed. Local submit runs synchronously in the
-  current invocation. MLSC submit authenticates (a terminal prompt, or the
-  one-time `--credential-handoff` file), submits to Slurm and monitors the job
-  until a verified outcome or an unverified one (see [Cancellation](#cancellation-and-interruption)).
-- **GUI gate** (`run_pseudo_CT`): Submit is enabled only after a successful
-  Validate of exactly the current profile, input files and options. Changing any
-  input, option or input file disables Submit until Validate runs again. A
-  submission consumes its validation, so each Submit needs a new Validate. For
-  MLSC, Submit asks for the login in a dialog and passes only a single-use
-  credential handoff path to the launcher.
+Limits the number of retries of the **terminal** login prompt in `run` for MLSC.
+
+- Unset or empty (the default): no limit. After each rejected login, the launcher asks for the
+  password again, and you cancel with an empty input.
+- `N` (a non-negative integer): `N` retries after the first failed attempt. `0` means no retry. When
+  the limit is exceeded, the run stops with exit `66` and no submission is attempted.
+- Any other value exits `64` when the terminal prompt is used.
+
+Only these authentication failures re-prompt: `AUTHENTICATION_FAILED`, and `INVALID_GROUP_ACCOUNT` when
+the account was prompted. A host-key problem (`HOST_KEY_UNAVAILABLE`) and other errors are not retried:
+the run stops with exit `66`. The window (GUI) retries in place: after a rejected login, the window
+shows the failure and reopens the login dialog, without pressing Run again. Cancelling the dialog submits nothing.
+
+## Validation and submission
+
+- **Validate** (`validate`, the validation step of a window Run, or a `validate` request) resolves
+  and checks the selected profile, inputs, outputs, dependencies and, for MLSC, the artifact integrity.
+  It does not authenticate, contact remote services, or run scientific processing. The only exception
+  is `--check-account` (see [Options](#options-validate-run)), which logs in and checks the account
+  but still never submits. A successful validation reports `ready`; it is not a processing result.
+- **Submit** (`run`, the submission step of a window Run, or a `submit` request) uses the resolved
+  job bound by a successful validation and rechecks inputs and artifacts. Changed or stale inputs fail
+  closed. Local submit runs synchronously in the current invocation. MLSC submit logs in (a terminal
+  prompt, or the one-time credential file of the window), submits to Slurm and monitors the job until a
+  verified or an unverified outcome (see [Cancellation and interruption](#cancellation-and-interruption)).
+- **Window Run**: validates the profile, input files and options, then submits them when validation
+  passes; a failed validation submits nothing. For MLSC, Run validates without logging in, then asks for
+  the username, password and optional account in a dialog, and passes only a single-use credential file
+  path to the launcher. A cancelled dialog submits nothing.
 
 ## Output, logs and progress
 
-- **Final outputs** are written under `<subject>/MR_PET/` (NIfTI, QC TIFF and
-  version text). DICOM output goes to `<subject>/MR/pseudo_muMAP/` for the
-  `nifti-and-dicom` profiles only. Inspect the QC image before use (see
-  [Scientific notes](scientific-notes.md#interpretation-and-quality-control)).
-- **Run log**: each requested subject gets one owner-only log,
-  `<subject>/MR_PET/pseudoct-run-<UTC>-<invocationUUID>.log`. It is created only
-  after validation and output-location resolution, and the pipeline never deletes
-  or prunes it.
-- **Structured events**: scientific and MLSC lifecycle events are appended as
-  JSONL to `<subject>/MR_PET/pseudoct-run-<UTC>-<invocationUUID>.jsonl`, retained
-  after success, failure and cancellation.
-- **Progress**: `--format text` prints progress to the console; `--format jsonl`
-  emits one JSON record per line (progress and final result records). The result
-  record carries the exit code and, for MLSC, the job IDs and run-log paths.
-- **Console stages** (`--format text`; this is the authoritative description): every
-  configured stage appears for each subject, including stages that did not run.
-  A stage with no work shows `SKIPPED` with its reason where known (MPRAGE-only profiles
-  skip stages 9 and 10 by policy); otherwise the reason is `not run`. The stage number
-  `[n/10]` is printed once per stage, on that stage's first row: its start row, or its
-  `SKIPPED` row when it has no start row. Later rows and wrapped lines leave it blank.
-  `STATUS` is on every row, including wrapped lines. Scientific events, outputs and JSONL
-  records are unchanged; only the text rendering differs.
-  - **Known limitation (MLSC):** post-processing for stage 5 is not reported as a numbered
-    stage. Its work appears as `not reported` rather than as a numbered stage 5 row.
-- **Intermediates**: `<subject>/MR_PET/tmp/` holds per-subject working files. They
-  are removed after successful promotion when `cleanup_on_success` is true, and
-  kept when promotion fails or cleanup is off. The CLI's private invocation
-  directory under `MR_PET/tmp/` (request/result MAT files, handoff path, captured
-  MATLAB diagnostics) is removed when the launcher exits.
-- **Window output**: the MATLAB window stays open after a request, but MATLAB is
-  busy while Validate or Submit runs, because the launcher runs synchronously.
+Each requested subject gets a set of files in its `MR_PET` folder. Their names share one stem,
+`pseudoct-<kind>-<UTC>-<invocationUUID>`, where `<UTC>` is the start time (`YYYYMMDDTHHMMSSZ`) and
+`<invocationUUID>` identifies the invocation.
 
-## MATLAB request (v2): validate, then submit
+- **Final outputs** (`<subject>/MR_PET/`): `att_map.nii` (attenuation map), the QC image
+  `Fusion_MR_Pseudo_CT_validation.tiff` and the version record `Pseudo_CT_AC_Version.txt`. DICOM output
+  goes to `<subject>/MR/pseudo_muMAP/` for the standard profiles only. Inspect the QC image before use
+  (see [Scientific notes](scientific-notes.md#interpretation-and-quality-control)).
+- **Run log** (`<subject>/MR_PET/pseudoct-run-<UTC>-<invocationUUID>.log`): the detailed run log, one
+  owner-only file per subject. It is created after validation and output-location resolution, and the
+  pipeline never deletes or prunes it. It contains the detailed line of each event, including heartbeat
+  lines and the raw scientific and backend diagnostics. It is not a copy of the console table.
+- **Structured record** (`<subject>/MR_PET/pseudoct-run-<UTC>-<invocationUUID>.jsonl`): one JSON object per
+  line, with typed records: `stage` records (stage identifier, index of 10, status), `run` records (outcome
+  `SUCCEEDED`, `FAILED` or `CANCELLED`) and `diagnostic` records (`warning`, `error` or `lifecycle`). It is
+  written at phase boundaries, and it is kept after success, failure and cancellation. Heartbeats are not
+  written to it. It is the canonical machine-readable record of the run.
+- **Validation record** (`validate` only): one file, `<subject>/MR_PET/pseudoct-validate-<UTC>-<invocationUUID>.jsonl`,
+  containing one result record. It is written only when the subject's `MR_PET` folder can be resolved. If it
+  cannot be resolved, stderr says that no validation record file was written. No run log is created by
+  validation.
+- **Secrets**: passwords and login details are not written to any of these files.
+- **Intermediates**: `<subject>/MR_PET/tmp/` holds per-subject working files. They are removed after
+  successful promotion when `cleanup_on_success` is true, and kept when promotion fails or cleanup is off.
+  The launcher's private invocation directory under `MR_PET/tmp/` (request and result MAT files, handoff
+  path, captured MATLAB diagnostics) is removed when the launcher exits. The run log and the JSONL file
+  are never removed by the launcher.
 
-The `request` variable must be a scalar struct with exactly these fields:
+**Progress**:
+
+- `--format text` (default): progress rows are printed to the console. Each stage row carries the subject
+  index, the stage number `[n/10]` (printed once per stage) and the `STATUS`. Stages that did not run are
+  shown as `SKIPPED` with the reason where known (MPRAGE-only profiles skip stages 9 and 10 by policy);
+  otherwise the reason is `not run`. `WARN` and `ERROR` rows report problems. A `still running (elapsed …)`
+  line shows that a long step is progressing. The final summary gives the outcome, the dispatch and
+  submission status, the scientific completion status, the MLSC account and job IDs, and the run-log paths.
+  - **Known limitation (MLSC):** post-processing for stage 5 is not reported as a numbered stage. Its work
+    appears as `not reported`.
+- `--format jsonl`: one JSON record per line on standard output, for progress and for the final result. The
+  final result record carries `outcome`, `exit_code`, the submission and scientific completion fields and, for
+  MLSC, the job IDs and run-log paths.
+- `--result-file PATH` writes the final result record as JSON to `PATH` in either format.
+
+## Exit codes
+
+`bin/pseudoct validate` and `bin/pseudoct run` return:
+
+| Code | Meaning |
+|---:|---|
+| `0` | Validation passed, or the run completed with verified results. |
+| `64` | Usage or configuration error. |
+| `65` | Invalid request or validation failure. |
+| `66` | Authentication failure. |
+| `67` | Submission failure. |
+| `68` | Scientific failure, or completion not verified. |
+| `69` | Launcher or runtime failure. |
+| `70` | MATLAB dispatch or runtime failure (listed in `--help`): the MATLAB CLI support, diagnostics or headless bootstrap could not start or returned no valid result. |
+
+A scheduler acceptance or a submitted job is not completion. Exit `0` for `run` requires verified
+completion.
+
+## Cancellation and interruption
+
+- **Timeout:** when polling reaches the configured timeout before terminal accounting, the lifecycle
+  requests cancellation (`scancel`) and then reports the outcome from accounting. If terminal accounting is
+  still unavailable, the result is a timeout failure, not a completion.
+- **Interruption after submission:** a polling error or a lost connection after the Slurm job was accepted
+  never cancels the job. The result is reported as unverified (exit `68`). The job ID and the command
+  `scancel <job id>` are printed. The job keeps running until it is cancelled by hand. Interrupting the
+  launcher (for example Ctrl-C) is not a cancellation: the launcher does not call `scancel`.
+- **Before submission:** nothing was accepted by the scheduler, so there is nothing to cancel. Cancelling
+  the MLSC login dialog submits nothing.
+- **Window:** the window has no cancel control for a running request. **Close** and the window close button
+  do not stop a running request; they are unavailable until the run finishes, and MATLAB stays busy while a
+  synchronous request runs.
+
+## Developer reference
+
+This section is for developers and integrators. Users do not need it.
+
+### MATLAB headless API
+
+```matlab
+pseudo_CT_headless(request_path, result_path)
+```
+
+`REQUEST.mat` must contain a single scalar variable named `request`, saved as MAT v5 (for example with
+`save(..., '-v6')`). The result parent must already exist and be writable. Direct launcher result files must
+be under the subject's `MR_PET/tmp/`; the private invocation directory there is removed on exit.
+
+In a repository checkout, the headless bootstrap runs MATLAB. Its default executable is
+`/usr/pubsw/common/matlab/7.11/bin/matlab`; set `PSEUDOCT_MATLAB` to use another executable. An installed
+distribution runs its compiled engine with the selected MATLAB Runtime instead (see [Releases](releases.md)).
+
+The request is a `pseudoCT.headless-request/v2` struct with exactly these fields:
 
 | Field | Meaning |
 |---|---|
 | `schema` | `pseudoCT.headless-request/v2`. |
-| `invocation_id` | UUID identifying the validate→submit workflow; reuse it for submit. |
+| `invocation_id` | UUID identifying the validate-then-submit workflow; reuse it for submit. |
 | `action` | `validate` or `submit`. |
 | `profile` | One of the four canonical profile keys. |
 | `subjects` | Validate: MPRAGE path(s). Submit: empty. |
-| `umap_files` | Validate: empty for discovery or positionally paired path(s). Submit: empty. |
+| `umap_files` | Validate: empty for discovery, or positionally paired path(s). Submit: empty. |
 | `output_config` | Validate: empty or `struct('layout','profile-default')`. Submit: empty struct. |
 | `options` | Validate: optional aliasing, recentering and cleanup booleans. Submit: empty struct. |
 | `resolved_job` | Validate: empty struct. Submit: the `resolved_job` from a successful validation result. |
-| `group_account` | Empty except optional MLSC account selection at submit. |
+| `group_account` | Empty, except an optional MLSC account at submit. |
 | `credential_handoff` | Empty for validate and local submit; remote submit uses a private single-use handoff path. |
-| `host_key_file` | Optional MLSC host-key file path; do not include host-key contents. |
-| `current_artifact_root` | Optional development-only MLSC artifact-validation override; rejected for local profiles. |
+| `host_key_file` | Optional MLSC host-key file path; never the file contents. |
+| `current_artifact_root` | Optional development-only MLSC override; rejected for local profiles. |
 
 Example local validation request:
 
@@ -201,70 +251,42 @@ save('validate.mat', 'request', '-v6');
 pseudo_CT_headless('validate.mat', 'validate-result.mat');
 ```
 
-Submit uses the bound resolved job and rechecks inputs and artifacts. Requests,
-results, command-line arguments and environment variables must not contain
-passwords or other credential values; remote submit uses a separate submit
-request/result pair and the one-time handoff path.
+Submit uses the bound resolved job and rechecks inputs and artifacts. Requests, results, command-line
+arguments and environment variables must not contain passwords or other credential values; remote submit
+uses a separate submit request and result pair and the one-time handoff path.
 
-## Result and completion semantics
+### Result and completion semantics
 
-The result MAT contains one scalar `result` struct with schema
-`pseudoCT.headless-result/v2`. Its status is `ready`, `submitted` or `failed`.
-The result separates dispatch, authentication, scheduler submission and
-scientific completion evidence. A remote positive job ID and an accepted
-scheduler submission do not establish scientific completion. MLSC `COMPLETED` is
-success only when required outputs and copy-back evidence have been verified.
-A local submit reports success only after verified completion.
+The result MAT contains one scalar `result` struct with schema `pseudoCT.headless-result/v2`. Its status is
+`ready`, `submitted` or `failed`. The result separates dispatch, authentication, scheduler submission and
+scientific completion evidence. A remote positive job ID and an accepted scheduler submission do not establish
+scientific completion. MLSC `COMPLETED` is success only when required outputs and copy-back evidence have been
+verified. A local submit reports success only after verified completion.
 
-Use `pseudo_CT_validate_headless_result(RESULT_MAT, INVOCATION_ID, PROFILE)` to
-validate and bind a result to its request. Inspect the bound status and
-completion fields rather than inferring completion from process exit alone.
+Use `pseudo_CT_validate_headless_result(RESULT_MAT, INVOCATION_ID, PROFILE)` to validate and bind a result to
+its request. Inspect the bound status and completion fields rather than inferring completion from process exit
+alone.
 
-## Exit codes
+### `headless` and `resolve` operations
 
-`bin/pseudoct run validate|run` returns:
+```sh
+bin/pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
+bin/pseudoct resolve [--mcr LABEL] [--mcr-root DIR]
+```
 
-| Code | Meaning |
-|---:|---|
-| `0` | Validation passed, or the run completed with verified results. |
-| `64` | Usage or configuration error. |
-| `65` | Invalid request or validation failure. |
-| `66` | Authentication failure. |
-| `67` | Submission failure. |
-| `68` | Scientific failure, or completion not verified. |
-| `69` | Launcher or runtime failure. |
-| `70` | MATLAB dispatch or runtime failure (listed in `--help`): the MATLAB CLI support, diagnostics or headless bootstrap could not start or returned no valid result. |
+`headless` runs one v2 request MAT into one result MAT. It returns `0` for success; `2` for a rejected request
+or profile; `3` for an authentication, account or submission failure, for any other failed headless result
+(including validation failures), and for a submitted result whose scientific completion is not verified; `64`
+to `66` for argument or path errors; `69` when MATLAB is unavailable; and `70` for bootstrap, dispatch, runtime
+or invalid-result failures (not listed in `--help`).
 
-`bin/pseudoct headless` returns `0` for success; `2` for a rejected request or
-profile; `3` for an authentication, account or submission failure, for any other
-failed headless result (including validation failures), and for a submitted
-result whose scientific completion is not verified (dispatch or scheduler
-acceptance alone is not completion evidence); `64`–`66` for argument or path
-errors; `69` when MATLAB is unavailable; and `70` for bootstrap, dispatch,
-runtime or invalid-result failures (not listed in `--help`).
+`resolve` validates one MATLAB Runtime and prints single-quoted, sourceable `PSEUDOCT_EXE`, `PSEUDOCT_MCR_ROOT`,
+`PSEUDOCT_RUNNER`, `PSEUDOCT_INSTALL_ROOT`, `PSEUDOCT_RUNTIME_RELEASE` and `PSEUDOCT_RUNTIME_MCR_ROOT` lines. It
+requires an installed distribution.
 
-## Cancellation and interruption
+### Related
 
-- **Timeout:** when polling reaches the configured timeout before terminal
-  accounting, the lifecycle requests cancellation (`scancel`), then reports the
-  outcome from accounting. If terminal accounting is still unavailable, the
-  result is a timeout failure, not a completion.
-- **Interruption after submission:** a polling error or a lost connection after
-  the Slurm job was accepted never cancels the job. The result is reported as
-  unverified (`bin/pseudoct run`: exit `68`; raw `headless`: exit `3`). The job ID
-  and the manual command `scancel <job id>` are printed. The job keeps running
-  until it is cancelled by hand. Interrupting the launcher (for example Ctrl-C)
-  is not a cancellation: the launcher does not call `scancel`.
-- **Before submission:** nothing was accepted by the scheduler, so there is
-  nothing to cancel. Cancelling the MLSC login dialog stops before submission
-  ("no Slurm job was submitted").
-- **No in-application cancel control:** the window's Close button closes the
-  window only. It does not stop a running request, and a synchronous request
-  keeps MATLAB busy.
-
-## Related
-
-- [README](../README.md): overview and profile summary.
+- [README](../README.md): overview, profiles and the window and command-line steps.
 - [Installation](installation.md): installation, requirements and profiles.
 - [Releases](releases.md): packaging, runtime identity and layout.
 - [Scientific notes](scientific-notes.md): method and evidence limits.

@@ -19,8 +19,8 @@
           <a href="#quick-start">Quick start</a>
           <a href="#profiles">Profiles</a>
           <a href="#inputs">Inputs</a>
-          <a href="#mlsc">MLSC</a>
           <a href="#outputs">Outputs</a>
+          <a href="#logs">Progress</a>
           <a href="#qc">QC</a>
         </nav>
       </div>
@@ -32,13 +32,14 @@
           <strong>Contents</strong>
           <a href="#overview">Overview</a>
           <a href="#quick-start">Quick start</a>
-          <a href="#profiles">Supported profiles</a>
+          <a href="#profiles">Choosing a profile</a>
           <a href="#interfaces">Interfaces</a>
           <a href="#cli">Command line</a>
           <a href="#inputs">Inputs</a>
-          <a href="#mlsc">MLSC workflow</a>
+          <a href="#mlsc">MLSC login and submission</a>
           <a href="#outputs">Outputs</a>
-          <a href="#logs">Logs and exit codes</a>
+          <a href="#files">Files written by a run</a>
+          <a href="#logs">Progress and exit codes</a>
           <a href="#cancellation">Cancellation</a>
           <a href="#qc">Quality control</a>
           <a href="#troubleshooting">Troubleshooting</a>
@@ -59,11 +60,11 @@
             <strong>Version and verification status</strong>
             <p>This page describes pseudoCT 3.2.0 as documented in the repository. Version 3.2.0 is unpublished prerelease work. This page is not a release, deployment or certification statement.</p>
             <p>A compiled R2010b local run is reported as verified by the maintainer against v3.0.2. No evidence file for that run is included in the repository.</p>
-            <p>The MLSC installed submit path is implemented and offline-tested. It has <strong>not</strong> been independently verified against a live scheduler.</p>
+            <p>The MLSC submission path is implemented and tested offline. It has <strong>not</strong> been independently verified against a live scheduler.</p>
           </div>
           <div class="callout recommendation">
             <strong>Before processing</strong>
-            <p>Choose the profile that matches the input/reference and output policy, Validate before you Submit, keep MATLAB open during a run, and review the QC before using the generated map.</p>
+            <p>Choose the profile that matches the inputs and the output you need, click <em>Run</em>, keep MATLAB open until the run finishes, and review the QC image before using the generated map.</p>
           </div>
           <p class="citation">
             D. Izquierdo-Garcia, A.E. Hansen, S. Förster, D. Benoit, S.
@@ -76,44 +77,52 @@
           <p class="small-note">When using the method, cite the publication, and acknowledge the software and its maintainers as appropriate. See <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/scientific-notes.md#method-and-attribution">Scientific notes</a>.</p>
 
           <h3>Requirements and distribution</h3>
-          <p>A source checkout needs R2010b-compatible MATLAB (MATLAB 7.11 minimum). An installed release runs on its own MATLAB Runtime (MCR). The default release, R2010b, runs on MATLAB Runtime 7.14. The other exact labels (R2014a to R2026a) are listed in the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md#supported-exact-release-labels">release catalog</a>.</p>
-          <p>An installed distribution contains one command-line launcher (<code>bin/pseudoct</code>), one MATLAB entry point (<code>run_pseudo_CT</code>), and, for each release, two compiled executables: the job manager <code>pseudoct_job_manager</code> and the science pipeline <code>pseudoct_pipeline</code>. It does not ship build or resource manifests. See the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md#distribution-layout">distribution layout</a>.</p>
+          <p>An installed release runs on its own MATLAB Runtime. The default release, R2010b, runs on MATLAB Runtime 7.14. The other releases (R2014a to R2026a) are listed in the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md#supported-exact-release-labels">release catalog</a>. A source checkout is for development only.</p>
         </section>
 
         <section id="quick-start">
           <h2>Quick start</h2>
           <ol class="steps">
             <li>
-              <strong>Load the deployed installation.</strong>
+              <strong>Load the installed application.</strong>
               <pre><code>addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-latest')
 run_pseudo_CT</code></pre>
+              <p>A profile selector opens first. Choose one of the four profiles.</p>
             </li>
-            <li><strong>Select one of the four supported profiles</strong> and choose <em>Run Selected</em>. The standard profiles use an MPRAGE and a UMAP reference; MPRAGE-only profiles do not use a UMAP.</li>
-            <li><strong>Select or confirm the input files.</strong> Use the file selectors and verify that the subject and reference belong together.</li>
-            <li><strong>Click Validate.</strong> Validate checks the profile, inputs, outputs and dependencies. It does not authenticate, contact remote services or run processing.</li>
-            <li><strong>Click Submit.</strong> Submit is enabled only after a successful Validate of exactly the current profile, input files and options. Changing any of them disables Submit until you Validate again. Each Submit uses up its validation.</li>
-            <li><strong>Wait for the request to finish.</strong> The window stays open, but MATLAB is busy while Validate or Submit runs. Close only closes the window; it does not stop a running request. For MLSC, keep MATLAB open until monitoring and output finalization finish.</li>
+            <li><strong>Select the MPRAGE.</strong> Use <em>Browse MPRAGE</em> to select one MPRAGE file (DICOM or NIfTI) for the subject.</li>
+            <li><strong>Check the UMAP reference</strong> (standard profiles only). The window looks for a matching UMAP beside the MPRAGE and shows it. If none is found, select the UMAP yourself. MPRAGE-only profiles do not use a UMAP.</li>
+            <li><strong>Check the processing options.</strong> The defaults come from the profile.</li>
+            <li>
+              <strong>Click Run.</strong> Run validates the profile, the inputs, the outputs and the dependencies. Validation does not log in, contact remote services or run processing.
+              <ul class="checklist">
+                <li>Local profiles: Run submits the request as soon as validation passes.</li>
+                <li>MLSC profiles: Run validates first. Only after validation passes does a login dialog ask for your username, your password and an optional group account. Then the job is submitted once.</li>
+                <li>If validation fails, or you cancel the login dialog, nothing is submitted.</li>
+              </ul>
+            </li>
+            <li><strong>Wait for the run to finish.</strong> The window stays open, but MATLAB is busy while Run runs. The inputs, the options and <em>Close</em> are disabled, and the window close button is ignored. Do not close MATLAB during an MLSC run.</li>
+            <li><strong>Read the result.</strong> A message box reports the outcome. A failure shows a warning with the error code. The status line at the bottom of the window also shows the outcome.</li>
             <li><strong>Review the outputs and QC.</strong> Do not infer scientific completion from job submission or a scheduler state alone.</li>
           </ol>
           <p>Requirements and installation details are in the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/installation.md">Installation</a> guide.</p>
         </section>
 
         <section id="profiles">
-          <h2>Supported profiles</h2>
-          <p>The window shows display names. The command line, the MATLAB API and the launcher use exactly these canonical keys:</p>
+          <h2>Choosing a profile</h2>
+          <p>The window shows the profile names. The command line uses exactly these canonical keys:</p>
           <div class="table-scroll" role="region" aria-label="Supported profile policies" tabindex="0">
             <table>
-              <thead><tr><th>Profile key</th><th>Execution</th><th>Reference</th><th>Output</th></tr></thead>
+              <thead><tr><th>Profile key</th><th>Where it runs</th><th>Inputs</th><th>Output</th><th>Cluster login</th></tr></thead>
               <tbody>
-                <tr><td data-label="Profile key"><code>local</code></td><td data-label="Execution">Local MATLAB</td><td data-label="Reference">MPRAGE + UMAP</td><td data-label="Output">NIfTI (<code>att_map.nii</code>), QC image, version record and DICOM</td></tr>
-                <tr><td data-label="Profile key"><code>mlsc</code></td><td data-label="Execution">MLSC (Slurm)</td><td data-label="Reference">MPRAGE + UMAP</td><td data-label="Output">NIfTI (<code>att_map.nii</code>), QC image, version record and DICOM</td></tr>
-                <tr><td data-label="Profile key"><code>local-mprage-only</code></td><td data-label="Execution">Local MATLAB</td><td data-label="Reference">MPRAGE only</td><td data-label="Output">NIfTI, QC image and version record; no DICOM</td></tr>
-                <tr><td data-label="Profile key"><code>mlsc-mprage-only</code></td><td data-label="Execution">MLSC (Slurm)</td><td data-label="Reference">MPRAGE only</td><td data-label="Output">NIfTI, QC image and version record; no DICOM</td></tr>
+                <tr><td data-label="Profile key"><code>local</code></td><td data-label="Where it runs">This computer</td><td data-label="Inputs">MPRAGE and UMAP</td><td data-label="Output">NIfTI attenuation map, QC image, version record and DICOM</td><td data-label="Cluster login">No</td></tr>
+                <tr><td data-label="Profile key"><code>mlsc</code></td><td data-label="Where it runs">MLSC cluster (Slurm), monitored from this computer</td><td data-label="Inputs">MPRAGE and UMAP</td><td data-label="Output">NIfTI attenuation map, QC image, version record and DICOM</td><td data-label="Cluster login">Yes: MLSC username and password, optional group account</td></tr>
+                <tr><td data-label="Profile key"><code>local-mprage-only</code></td><td data-label="Where it runs">This computer</td><td data-label="Inputs">MPRAGE only</td><td data-label="Output">NIfTI attenuation map, QC image and version record; no DICOM</td><td data-label="Cluster login">No</td></tr>
+                <tr><td data-label="Profile key"><code>mlsc-mprage-only</code></td><td data-label="Where it runs">MLSC cluster (Slurm), monitored from this computer</td><td data-label="Inputs">MPRAGE only</td><td data-label="Output">NIfTI attenuation map, QC image and version record; no DICOM</td><td data-label="Cluster login">Yes</td></tr>
               </tbody>
             </table>
           </div>
-          <p>The local and MLSC profiles run the same shared compiled pipeline. The profile chooses the execution location and the input/output policy, not a different algorithm. Missing or invalid MLSC artifact requirements fail closed.</p>
-          <p>Profile defaults come from the profile files: nose/back aliasing correction on, recentering before normalization on, and cleanup of intermediate files after success on. The command line can override each of them (see <a href="#cli">Command line</a>).</p>
+          <p>The local and MLSC profiles run the same compiled pipeline. The profile chooses where it runs and which outputs are written, not a different algorithm. If the MLSC artifacts that a run requires are missing or invalid, the run stops before submission.</p>
+          <p>Each profile has its own defaults: nose and back aliasing correction on, recentering before normalization on, and removal of intermediate files after success on. You can change these in the window or on the command line (see <a href="#cli">Command line</a>).</p>
         </section>
 
         <section id="interfaces">
@@ -122,94 +131,112 @@ run_pseudo_CT</code></pre>
             <table>
               <thead><tr><th>Entry point</th><th>Use</th><th>Notes</th></tr></thead>
               <tbody>
-                <tr><td data-label="Entry point"><code>run_pseudo_CT</code></td><td data-label="Use">MATLAB window and scripting</td><td data-label="Notes">No arguments opens the profile selector, then the MPRAGE/UMAP window. Name-value arguments run the same launcher. Validation is the default; <code>'Action', 'submit'</code> submits.</td></tr>
-                <tr><td data-label="Entry point"><code>pseudo_CT_headless</code></td><td data-label="Use">MATLAB API with request and result MAT files</td><td data-label="Notes">Versioned v2 contract (<code>pseudoCT.headless-request/v2</code>): validate first, then submit the bound job.</td></tr>
-                <tr><td data-label="Entry point"><code>bin/pseudoct</code></td><td data-label="Use">Terminal and application integration</td><td data-label="Notes"><code>run validate</code>, <code>run run</code>, <code>headless</code>, <code>resolve</code> and <code>--list-releases</code>; text or JSONL output and stable exit codes.</td></tr>
+                <tr><td data-label="Entry point"><code>run_pseudo_CT</code></td><td data-label="Use">MATLAB window</td><td data-label="Notes">With no arguments it opens the profile selector and then the input window. Run is the action button; Close closes the window.</td></tr>
+                <tr><td data-label="Entry point"><code>bin/pseudoct</code></td><td data-label="Use">Terminal and scripts</td><td data-label="Notes"><code>validate</code> checks a request; <code>run</code> validates and submits it. Text or JSON Lines output, and stable exit codes.</td></tr>
               </tbody>
             </table>
           </div>
-          <p>See the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md">Headless API and CLI reference</a> for request schemas, options, credential handling and exit semantics.</p>
+          <p>The window and the command line use the same launcher and the same rules. The reference for every option and exit code is the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md">Headless API and CLI reference</a>.</p>
         </section>
 
         <section id="cli">
           <h2>Command line</h2>
-          <p><code>bin/pseudoct run validate</code> checks a request. <code>bin/pseudoct run run</code> validates the same request and then submits it.</p>
-          <pre><code>bin/pseudoct run validate --profile local \
+          <p><code>bin/pseudoct validate</code> checks a request. <code>bin/pseudoct run</code> validates the same request and then submits it.</p>
+          <pre><code>bin/pseudoct validate --profile local \
   --mprage /subject/MR/MPRAGE/one.dcm \
-  --umap /subject/MR/UMAP/one.dcm --format jsonl
-bin/pseudoct run run --profile local \
+  --umap /subject/MR/UMAP/one.dcm
+bin/pseudoct run --profile local \
   --mprage /subject/MR/MPRAGE/one.dcm \
-  --umap /subject/MR/UMAP/one.dcm --format jsonl</code></pre>
+  --umap /subject/MR/UMAP/one.dcm</code></pre>
           <ul class="checklist">
-            <li><code>--profile NAME</code> (required): one of the four canonical keys.</li>
-            <li><code>--mprage FILE [--umap FILE]</code>: one subject. The UMAP may be omitted on standard profiles. MPRAGE-only profiles reject <code>--umap</code>.</li>
+            <li><code>--profile NAME</code> (required): one of the four canonical profile keys.</li>
+            <li><code>--mprage FILE [--umap FILE]</code>: one subject. On standard profiles the UMAP may be omitted, and the command line then tries to find it in the subject layout. MPRAGE-only profiles reject <code>--umap</code>.</li>
             <li><code>--config job.json</code>: several subjects. The JSON object has a non-empty <code>mprage</code> array and an optional <code>umap</code> array, paired by position:
               <pre><code>{"mprage":["/data/one/MPRAGE.dcm","/data/two/MPRAGE.dcm"],
  "umap":["/data/one/UMAP.dcm","/data/two/UMAP.dcm"]}</code></pre>
             </li>
-            <li><code>--correct-aliasing yes|no</code>, <code>--recenter-before-normalization yes|no</code>, <code>--cleanup-on-success yes|no</code>: override the profile defaults.</li>
-            <li><code>--current-artifact-root PATH</code>: development-only override, accepted only with the MLSC profiles; local profiles reject it.</li>
-            <li><code>--group-account ACCOUNT</code>, <code>--host-key-file FILE</code>, <code>--credential-handoff FILE</code>: MLSC inputs. The handoff is an existing single-use credential file created for the submit step.</li>
-            <li><code>--format text|jsonl</code>: output format (default <code>text</code>). <code>bin/pseudoct --help</code> prints the installed usage text.</li>
+            <li><code>--correct-aliasing yes|no</code>, <code>--recenter-before-normalization yes|no</code>, <code>--cleanup-on-success yes|no</code>: change the profile defaults.</li>
+            <li><code>--group-account ACCOUNT</code> (MLSC): the cluster account. If it is omitted, the first account found for you is used.</li>
+            <li><code>--check-account</code> (MLSC, <code>validate</code> only): logs in, checks the account and stops. It never submits.</li>
+            <li><code>--format text|jsonl</code>: <code>text</code> (default) prints readable progress. <code>jsonl</code> prints one JSON record per line, for scripts.</li>
+            <li><code>--result-file PATH</code>: also writes the final result record to <code>PATH</code>, in either format.</li>
+            <li><code>bin/pseudoct --help</code> prints the usage text of the installed launcher.</li>
           </ul>
-          <p>Credentials are never accepted on the command line. MLSC submit authenticates with a terminal prompt or with the one-time <code>--credential-handoff</code> file.</p>
+          <p>Passwords are never accepted on the command line. For MLSC, the command line asks for the username and the password at the terminal, and the password is not shown as you type it.</p>
         </section>
 
         <section id="inputs">
           <h2>Preparing input data</h2>
           <div class="profile-card">
             <div class="profile-title"><h3>Standard profiles</h3><span class="badge good">MPRAGE + UMAP</span></div>
-            <p>Provide an MPRAGE (DICOM or NIfTI) and its matched UMAP reference. If the UMAP is omitted, the application may discover it from the subject layout. Confirm the selected files before submitting.</p>
+            <p>Provide an MPRAGE (DICOM or NIfTI) and its matched UMAP reference. The window looks for the UMAP in the subject's <code>MR</code> folder: it searches for a sub-folder whose name contains <code>umap</code>, <code>ute</code>, <code>mu_map</code> or <code>mumap</code>, and uses the first file in that folder whose name contains <code>0001</code>. If nothing is found, select the UMAP yourself. Confirm the selected files before you click Run.</p>
           </div>
           <div class="profile-card">
             <div class="profile-title"><h3>MPRAGE-only profiles</h3><span class="badge">MPRAGE only</span></div>
-            <p>Provide an MPRAGE without a UMAP. These profiles reject a UMAP and write NIfTI-only output.</p>
+            <p>Provide an MPRAGE without a UMAP. These profiles reject a UMAP and write NIfTI output only.</p>
           </div>
-          <p>The examples use the subject layout <code>&lt;subject&gt;/MR/MPRAGE/</code> and <code>&lt;subject&gt;/MR/UMAP/</code>. For multi-subject requests, pair the MPRAGE and UMAP entries by position (see <a href="#cli">Command line</a>).</p>
+          <p>The examples use the subject layout <code>&lt;subject&gt;/MR/MPRAGE/</code> and <code>&lt;subject&gt;/MR/UMAP/</code>. For multi-subject requests on the command line, pair the MPRAGE and UMAP entries by position (see <a href="#cli">Command line</a>).</p>
         </section>
 
         <section id="mlsc">
-          <h2>MLSC workflow</h2>
-          <p>The MLSC profiles submit the job to Slurm after a successful Validate of the same inputs and options. Submit authenticates, submits the job, monitors it, and finalizes the local outputs. In the window, Submit asks for the login in a dialog and passes only a single-use credential handoff path to the launcher.</p>
+          <h2>MLSC login and submission</h2>
+          <p>For the MLSC profiles, Run validates the inputs without logging in. If validation passes, a login dialog asks for your MLSC username, your password and an optional group account. Then the job is submitted to Slurm, monitored, and its outputs are copied back and finalized locally. The password is used for the login only. It is not written to any file.</p>
           <ul class="checklist">
-            <li>Use an MLSC profile and an account authorized for the project.</li>
-            <li>Make sure the configured shared filesystem, the subject workspace and the inputs are accessible from the cluster.</li>
-            <li>The default Slurm request for MLSC profiles is 1 node, 1 task, 4 CPUs, 8 GB memory and a 2-hour time limit.</li>
-            <li>Keep MATLAB open until monitoring and output verification finish.</li>
-            <li>Do not treat an accepted submission or Slurm <code>COMPLETED</code> alone as a verified pseudoCT result. Completion is verified only when the required outputs and copy-back evidence are verified.</li>
+            <li>Use an MLSC profile and an account that is authorized for the project.</li>
+            <li>Make sure the configured shared filesystem, the subject folder and the inputs are reachable from the cluster.</li>
+            <li>Cancelling the login dialog submits nothing.</li>
+            <li>If the login is rejected, the window reports the failure and the login dialog reopens automatically. Enter the password (and the account) again. Cancel submits nothing. Nothing is submitted without a successful login.</li>
+            <li>Keep MATLAB open until monitoring and output finalization finish.</li>
+            <li>Do not treat an accepted submission or a Slurm <code>COMPLETED</code> state alone as a verified pseudoCT result. The result is verified only when the required outputs and their copy-back evidence are verified.</li>
           </ul>
           <div class="callout warning">
             <strong>Verification status</strong>
-            <p>MLSC installed submit is implemented and offline-tested. It has <strong>not</strong> been independently verified against a live scheduler or cluster.</p>
+            <p>MLSC submission is implemented and tested offline. It has <strong>not</strong> been independently verified against a live scheduler or cluster.</p>
           </div>
-          <p>Never place passwords, private keys or other credential values in CLI arguments, environment variables, request files or logs.</p>
         </section>
 
         <section id="outputs">
           <h2>Outputs</h2>
           <div class="output-grid">
-            <div><h3>Final outputs</h3><p>Written under the subject's <code>MR_PET/</code> directory.</p></div>
+            <div><h3>Final outputs</h3><p>Written under the subject's <code>MR_PET/</code> folder.</p></div>
             <div><h3>Attenuation map</h3><p>The NIfTI attenuation map is <code>att_map.nii</code>. All four profiles write it.</p></div>
             <div><h3>QC and version</h3><p>The QC image is <code>Fusion_MR_Pseudo_CT_validation.tiff</code>. The version record is <code>Pseudo_CT_AC_Version.txt</code>.</p></div>
             <div><h3>DICOM</h3><p>Standard profiles write DICOM under <code>MR/pseudo_muMAP/</code>. MPRAGE-only profiles produce no DICOM.</p></div>
           </div>
-          <h3>Run log and events</h3>
-          <ul class="checklist">
-            <li>Each subject gets one owner-only run log, <code>MR_PET/pseudoct-run-&lt;UTC&gt;-&lt;invocationUUID&gt;.log</code>. It is created after validation and output-location resolution. The pipeline never deletes or prunes it.</li>
-            <li>Scientific and MLSC lifecycle events are appended as JSONL to <code>MR_PET/pseudoct-run-&lt;UTC&gt;-&lt;invocationUUID&gt;.jsonl</code>. They are kept after success, failure and cancellation.</li>
-          </ul>
+          <p>Inspect the QC image for every subject before you use the map (see <a href="#qc">Quality control</a>).</p>
           <h3>Temporary files</h3>
-          <p>Per-subject working files are in <code>MR_PET/tmp/</code>. They are removed after a successful promotion when cleanup on success is on, and kept when promotion fails or cleanup is off. The command line's private invocation directory under <code>MR_PET/tmp/</code> is removed when the launcher exits.</p>
+          <p>Working files for each subject are in <code>MR_PET/tmp/</code>. They are removed after a successful run when cleanup on success is on. They are kept when a run fails or cleanup is off.</p>
+        </section>
+
+        <section id="files">
+          <h2>Files written by a run</h2>
+          <p>Every run writes two files per subject, in the subject's <code>MR_PET/</code> folder. Both share the same name stem, <code>pseudoct-run-&lt;UTC&gt;-&lt;invocation&gt;</code>. <code>&lt;UTC&gt;</code> is the start time, and <code>&lt;invocation&gt;</code> identifies the run.</p>
+          <div class="table-scroll" role="region" aria-label="Files written by a run" tabindex="0">
+            <table>
+              <thead><tr><th>File</th><th>What it contains</th><th>Use</th></tr></thead>
+              <tbody>
+                <tr><td data-label="File"><code>pseudoct-run-&lt;UTC&gt;-&lt;invocation&gt;.jsonl</code></td><td data-label="What it contains">One JSON record per line: stage records (status per stage), run records (outcome: succeeded, failed or cancelled), and warning, error and lifecycle records. It is written at the phase boundaries and kept after success, failure and cancellation. Heartbeats are not written to it.</td><td data-label="Use">The canonical machine-readable record of the run. Use it for records and scripts.</td></tr>
+                <tr><td data-label="File"><code>pseudoct-run-&lt;UTC&gt;-&lt;invocation&gt;.log</code></td><td data-label="What it contains">The detailed run log, including heartbeat lines and the raw diagnostics of the processing steps. It is not a copy of the console table. It is created after validation and output-location resolution, and it is not deleted by the application.</td><td data-label="Use">Detailed diagnosis. Keep it for support.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><code>validate</code> writes one file instead: <code>pseudoct-validate-&lt;UTC&gt;-&lt;invocation&gt;.jsonl</code>, with one result record, in the subject's <code>MR_PET/</code> folder. It is written only when that folder can be found. If it cannot be found, the message on stderr says that no validation record was written. Validation creates no run log.</p>
+          <div class="callout info">
+            <strong>No passwords or login details</strong>
+            <p>Passwords and login details are never written to either file or to the validation record.</p>
+          </div>
         </section>
 
         <section id="logs">
-          <h2>Progress, logs and exit codes</h2>
+          <h2>Progress and exit codes</h2>
           <ul class="checklist">
-            <li><strong>Text</strong> (default): progress is printed to the console.</li>
-            <li><strong>JSONL</strong> (<code>--format jsonl</code>): one JSON record per line, for progress and for the final result. The result record carries the exit code and, for MLSC, the job IDs and run-log paths.</li>
-            <li>The window shows the launcher's result when a request finishes. MATLAB is busy while a request runs.</li>
+            <li><strong>Text</strong> (command line default): progress is printed to the terminal, one row per stage and event. <code>[n/10]</code> is the stage number. <code>SKIPPED</code> shows a stage that does not apply to the profile, with its reason.</li>
+            <li><strong>Warnings and errors</strong> are shown as <code>WARN</code> and <code>ERROR</code> rows during the run. A <em>still running</em> line shows that a long step is in progress.</li>
+            <li><strong>JSONL</strong> (<code>--format jsonl</code>): one JSON record per line. The final record carries the outcome and the exit code. For MLSC, it also carries the job IDs and the run-log paths.</li>
+            <li><strong>Completion</strong> is reported when the scientific processing is complete and verified. Only then is the exit code <code>0</code>.</li>
+            <li><strong>In the window</strong>, the progress text is sent to the MATLAB Command Window. Whether it appears live during the run has not yet been confirmed on the installed MATLAB. The files in <a href="#files">Files written by a run</a> are the complete record either way.</li>
           </ul>
-          <p><code>bin/pseudoct run validate</code> and <code>bin/pseudoct run run</code> return:</p>
+          <p><code>bin/pseudoct validate</code> and <code>bin/pseudoct run</code> return:</p>
           <div class="table-scroll" role="region" aria-label="Exit codes" tabindex="0">
             <table>
               <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
@@ -221,7 +248,7 @@ bin/pseudoct run run --profile local \
                 <tr><td data-label="Code">67</td><td data-label="Meaning">Submission failure.</td></tr>
                 <tr><td data-label="Code">68</td><td data-label="Meaning">Scientific failure, or completion not verified.</td></tr>
                 <tr><td data-label="Code">69</td><td data-label="Meaning">Launcher or runtime failure.</td></tr>
-                <tr><td data-label="Code">70</td><td data-label="Meaning">MATLAB dispatch or runtime failure (listed in <code>--help</code>): the MATLAB CLI support, diagnostics or headless bootstrap could not start or returned no valid result. See the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md#exit-codes">CLI reference</a>.</td></tr>
+                <tr><td data-label="Code">70</td><td data-label="Meaning">MATLAB dispatch or runtime failure. See the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md#exit-codes">CLI reference</a>.</td></tr>
               </tbody>
             </table>
           </div>
@@ -230,10 +257,10 @@ bin/pseudoct run run --profile local \
         <section id="cancellation">
           <h2>Cancellation</h2>
           <ul class="checklist">
-            <li><strong>Before submission:</strong> the scheduler has accepted nothing, so there is nothing to cancel. Cancelling the MLSC login dialog stops before submission.</li>
-            <li><strong>Timeout:</strong> if polling reaches the configured timeout before terminal accounting, the launcher requests cancellation with <code>scancel</code> and then reports the outcome from accounting. If terminal accounting is still unavailable, the result is a timeout failure, not a completion.</li>
-            <li><strong>Interruption after submission:</strong> a polling error, a lost connection or Ctrl-C after the Slurm job was accepted does not cancel the job. The result is reported as unverified (exit 68 for <code>bin/pseudoct run</code>). The job ID and the command <code>scancel &lt;job id&gt;</code> are printed. The job keeps running until you cancel it by hand.</li>
-            <li><strong>Window:</strong> there is no in-application cancel control. Close closes the window only and does not stop a running request; MATLAB stays busy while a synchronous request runs.</li>
+            <li><strong>Before submission:</strong> the cluster has accepted nothing, so there is nothing to cancel. Cancelling the MLSC login dialog stops before submission.</li>
+            <li><strong>Timeout:</strong> if the monitoring reaches its configured timeout before the job's final state is known, the launcher asks the scheduler to cancel the job and then reports the outcome. If the final state is still unavailable, the result is a timeout failure, not a completion.</li>
+            <li><strong>Interruption after submission:</strong> an error while monitoring, a lost connection or Ctrl-C after the Slurm job was accepted does not cancel the job. The result is reported as unverified (exit 68 on the command line). The job ID and the command <code>scancel &lt;job id&gt;</code> are printed. The job keeps running until you cancel it by hand.</li>
+            <li><strong>Window:</strong> there is no cancel button for a running request. <em>Close</em> and the window close button do not stop it. The window stays busy until the run finishes.</li>
           </ul>
         </section>
 
@@ -241,33 +268,82 @@ bin/pseudoct run run --profile local \
           <h2>Quality control</h2>
           <p>Review QC for every subject before using an attenuation map in PET processing.</p>
           <ul class="checklist">
-            <li>Inspect the MPRAGE/pseudoCT fusion QC image for registration and anatomical coverage.</li>
+            <li>Inspect the MPRAGE and pseudoCT fusion QC image for registration and anatomical coverage.</li>
             <li>Scroll through the final volume and check for misregistration, missing anatomy or unexpected attenuation outside the head.</li>
-            <li>Confirm that outputs belong to the intended subject and that completion was verified.</li>
-            <li>Run logs and JSONL events record what happened, but they do not replace the QC review.</li>
+            <li>Confirm that the outputs belong to the intended subject and that completion was verified.</li>
+            <li>The run log and the JSONL file record what happened. They do not replace the QC review.</li>
             <li>Document any failure or questionable result. Do not assume that one successful subject establishes general accuracy; see <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/scientific-notes.md#interpretation-and-quality-control">Scientific notes</a>.</li>
           </ul>
         </section>
 
         <section id="troubleshooting">
           <h2>Troubleshooting</h2>
-          <ul>
-            <li><strong>Input not found:</strong> check the MPRAGE or UMAP path, the subject directory and file readability.</li>
-            <li><strong>Reference missing:</strong> select the matched UMAP explicitly, or choose an MPRAGE-only profile if appropriate. MPRAGE-only profiles reject a UMAP.</li>
-            <li><strong>Submit is disabled:</strong> Validate the current inputs and options again. Any change disables Submit.</li>
-            <li><strong>MATLAB Runtime not found or identity mismatch:</strong> the MATLAB Runtime root is resolved automatically from the catalog convention for the selected release, and <code>--mcr-root</code> is an optional explicit override. No environment variable is read. The runtime identity is checked against the release catalog, and a root never bypasses that check.</li>
-            <li><strong>Dependency or artifact validation failed:</strong> stop and contact the application maintainer. Do not substitute a different runtime or resource path.</li>
-            <li><strong>MLSC still running:</strong> leave MATLAB open and let the existing monitor finish. Do not submit a duplicate job.</li>
-            <li><strong>Exit 68 after a submitted job:</strong> the outcome is unverified. Keep the run log and JSONL events. If the job must stop, cancel it by hand with <code>scancel</code>.</li>
-            <li><strong>QC or outputs incomplete:</strong> treat the run as unverified and retain its diagnostics for support.</li>
-          </ul>
+          <div class="table-scroll" role="region" aria-label="Troubleshooting" tabindex="0">
+            <table>
+              <thead><tr><th>Symptom</th><th>What to do</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td data-label="Symptom"><strong>Login failed</strong> (authentication failed, exit 66)</td>
+                  <td data-label="What to do">In the window, the login dialog reopens automatically: enter the password (and the account) again, or press Cancel to submit nothing. On the command line, you are asked again for the password (and for the account, if you did not give <code>--group-account</code>). An empty input cancels the retry. Retries are unlimited unless the administrator sets <code>PSEUDOCT_AUTH_RETRY_LIMIT</code>. With a limit of N, the run stops after N retries, with exit 66 and nothing submitted. The limit applies only to the command-line prompt.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>Invalid group account</strong></td>
+                  <td data-label="What to do">Enter a valid account. On the command line with <code>--group-account</code>, the run stops with exit 66. Run it again with a valid account.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>Host key problem</strong> (<code>HOST_KEY_UNAVAILABLE</code>)</td>
+                  <td data-label="What to do">Not retried: the run stops with exit 66. Contact the application maintainer.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>Input not found</strong></td>
+                  <td data-label="What to do">Check the MPRAGE or UMAP path, the subject folder and that the file can be read.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>Reference missing</strong></td>
+                  <td data-label="What to do">Select the matched UMAP yourself, or choose an MPRAGE-only profile if that is appropriate. MPRAGE-only profiles reject a UMAP.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>Run is disabled</strong></td>
+                  <td data-label="What to do">Check that the MPRAGE (and, for standard profiles, the UMAP) can be read. Run is also disabled while a request is running.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>"This is a source checkout"</strong> message</td>
+                  <td data-label="What to do">The window was started from a source checkout, which is for development only. Use the installed application.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>"Installation is incomplete"</strong> message</td>
+                  <td data-label="What to do">Files of the installed application are missing (the <code>runtimes</code> folder). Reinstall the distribution.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>MATLAB Runtime not found, or identity mismatch</strong></td>
+                  <td data-label="What to do">The runtime for the selected release is found from the release catalog. Do not substitute another runtime or resource path. Contact the maintainer if the runtime is installed elsewhere.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>Dependency or artifact check failed</strong></td>
+                  <td data-label="What to do">Stop, and contact the application maintainer. Do not substitute a different runtime or resource path.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>MLSC job still running</strong></td>
+                  <td data-label="What to do">Leave MATLAB open and let the monitoring finish. Do not submit a duplicate job.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>Exit 68 after a submitted job</strong></td>
+                  <td data-label="What to do">The outcome is unverified. Keep the run log and the JSONL file. If the job must stop, cancel it by hand with <code>scancel</code>.</td>
+                </tr>
+                <tr>
+                  <td data-label="Symptom"><strong>Outputs or QC incomplete</strong></td>
+                  <td data-label="What to do">Treat the run as unverified. Keep its log and JSONL file for support.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section id="more">
           <h2>More information</h2>
           <ul>
             <li><a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/installation.md">Installation and requirements</a></li>
-            <li><a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md">Headless API and CLI</a></li>
+            <li><a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md">Headless API and CLI reference</a></li>
             <li><a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md">Release catalog, layout and verification status</a></li>
             <li><a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/scientific-notes.md">Scientific method and evidence</a></li>
             <li><a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/README.md">Repository README</a></li>
@@ -281,7 +357,7 @@ bin/pseudoct run run --profile local \
     <footer class="page-footer">
       <div class="wrap">
         <p>PseudoCT for PET/MR attenuation correction.</p>
-        <p class="privacy-note">Do not include credential values in requests, logs, command-line arguments or environment variables.</p>
+        <p class="privacy-note">Do not include passwords or other login details in requests, logs, command-line arguments or environment variables.</p>
       </div>
     </footer>
   </body>

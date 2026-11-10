@@ -1,7 +1,7 @@
 function report = run_pseudo_CT(varargin)
 %RUN_PSEUDO_CT Public pseudoCT MATLAB frontend; delegates to the compiled launcher.
 %   REPORT = RUN_PSEUDO_CT('Profile', P, 'MPRAGE', FILE_OR_CELL, ...) validates
-%   (default) or submits one request through bin/pseudoct run validate|run.
+%   (default) or submits one request through bin/pseudoct validate|run.
 %   MATLAB only parses the parameters, writes the launcher arguments, invokes
 %   the launcher and displays its result. The scientific pipeline and the
 %   validation are not executed in MATLAB.
@@ -36,10 +36,10 @@ function report = run_pseudo_CT(varargin)
 %   in bin/pseudoct, the frontend and the headless API.
 %
 %   RUN_PSEUDO_CT() with no arguments opens the pseudoCT window: profile
-%   selection, then the MPRAGE/UMAP window. Validate and Submit call the same
-%   launcher path as the arguments above. The window stays open after each
-%   request, but MATLAB is busy while Validate or Submit runs: the launcher
-%   runs synchronously through system() (frontend/pseudo_CT_launch_request.m).
+%   selection, then the MPRAGE/UMAP window. Run validates the inputs and, when they
+%   pass, submits them, through the same launcher path as the arguments above. The
+%   window stays open after each request, but MATLAB is busy while Run runs: the
+%   launcher runs synchronously through system() (frontend/pseudo_CT_launch_request.m).
 %   Minimum supported MATLAB: R2010b.
 
 root_dir = fileparts(mfilename('fullpath'));

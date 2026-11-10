@@ -4,7 +4,12 @@ function ok = pseudo_CT_scientific_event(target, rec)
 %   newline-terminated JSON object to TARGET.path (see
 %   pseudo_CT_scientific_event_target). REC is a scalar struct whose fields
 %   are all optional:
-%     event_type       'stage' (default) or 'run'
+%     event_type       'stage' (default), 'run' or 'diagnostic'
+%     level            'INFO', 'WARN' or 'ERROR' (diagnostic records only)
+%     kind             'warning', 'error', 'heartbeat' or 'lifecycle'
+%                      (diagnostic records only; written by the orchestrator at
+%                      phase boundaries only. 'heartbeat' is accepted by this
+%                      validator but no writer emits it; never stage rows)
 %     stage_id         lowercase identifier, e.g. 'segment' or the canonical
 %                      'workflow.recenter' form (stage records)
 %     stage_index      canonical ten-stage index 1..10, or [] when none
@@ -21,9 +26,11 @@ function ok = pseudo_CT_scientific_event(target, rec)
 %
 %   Record fields: schema, schema_version, run_id, subject, profile, seq,
 %   timestamp_utc, event_type, stage_id, stage_index, stage_count, status,
-%   outcome, message, source, job_id, error_identifier, error_message.
-%   Absent optional values are written as JSON null. stage_count is 10 for
-%   every stage record.
+%   outcome, message, source, job_id, error_identifier, error_message; diagnostic
+%   records add level and kind. Absent optional values are written as JSON null.
+%   stage_count is 10 for every stage record. Diagnostic records carry no stage
+%   identity: stage_id, stage_index, status and outcome are always null, so the
+%   stage reader never presents them. Stage and run records keep their schema.
 %
 %   seq is one more than the number of line feeds already in the file, so it is
 %   strictly increasing and unique for the life of the run file. A partial
@@ -84,7 +91,7 @@ if ~isstruct(rec) || numel(rec) ~= 1
     return;
 end
 text_fields = {'event_type'; 'stage_id'; 'status'; 'outcome'; 'message'; ...
-    'source'; 'job_id'; 'error_identifier'; 'error_message'};
+    'source'; 'job_id'; 'error_identifier'; 'error_message'; 'level'; 'kind'};
 for ii = 1:length(text_fields)
     if isfield(rec, text_fields{ii}) && ~isempty(rec.(text_fields{ii})) && ...
             ~(ischar(rec.(text_fields{ii})) && size(rec.(text_fields{ii}), 1) == 1)
@@ -97,7 +104,7 @@ outcome = local_text(rec, 'outcome', '');
 stage_id = local_text(rec, 'stage_id', '');
 source = local_text(rec, 'source', '');
 job_id = local_text(rec, 'job_id', '');
-if ~any(strcmp(event_type, {'stage'; 'run'})) || ...
+if ~any(strcmp(event_type, {'stage'; 'run'; 'diagnostic'})) || ...
         ~any(strcmp(status, {''; 'STARTED'; 'COMPLETED'; 'FAILED'; 'SKIPPED'})) || ...
         ~any(strcmp(outcome, {''; 'SUCCEEDED'; 'FAILED'; 'CANCELLED'})) || ...
         ~any(strcmp(source, {'local-orchestrator'; 'payload'; 'mlsc-lifecycle'})) || ...
@@ -114,6 +121,16 @@ if strcmp(event_type, 'stage')
                 index ~= fix(index) || index < 1 || index > 10
             return;
         end
+    end
+elseif strcmp(event_type, 'diagnostic')
+    % Typed log row: no stage identity, a level and a kind from the fixed sets.
+    level = local_text(rec, 'level', '');
+    kind = local_text(rec, 'kind', '');
+    if ~any(strcmp(level, {'INFO'; 'WARN'; 'ERROR'})) || ...
+            ~any(strcmp(kind, {'warning'; 'error'; 'heartbeat'; 'lifecycle'})) || ...
+            ~isempty(status) || ~isempty(outcome) || ~isempty(stage_id) || ...
+            (isfield(rec, 'stage_index') && ~isempty(rec.stage_index))
+        return;
     end
 else
     if isempty(outcome) || ~isempty(status)
@@ -152,6 +169,12 @@ line = sprintf(['{"schema":"pseudoct.scientific_event","schema_version":1,' ...
     local_json_string(local_text(rec, 'job_id', ''), true), ...
     local_json_string(local_text(rec, 'error_identifier', ''), true), ...
     local_json_string(local_limit(local_redact(local_text(rec, 'error_message', ''))), true));
+if strcmp(local_text(rec, 'event_type', 'stage'), 'diagnostic')
+    % Diagnostic rows append their two typed fields; stage and run rows are unchanged.
+    line = [line(1:end - 1) sprintf(',"level":%s,"kind":%s}', ...
+        local_json_string(local_text(rec, 'level', ''), false), ...
+        local_json_string(local_text(rec, 'kind', ''), false))];
+end
 end
 
 function text = local_limit(text)
