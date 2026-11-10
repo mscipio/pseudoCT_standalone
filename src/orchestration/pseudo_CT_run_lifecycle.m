@@ -229,9 +229,8 @@ for ii = 1:length(jobs)
     end
 end
 
-% The jobs were validated once by pseudo_CT_orchestrate('validate') and
-% identity-checked by submit before this call; they are used as given. The
-% execution-time artifact checks remain in the MLSC and local runner paths.
+% Jobs are resolved by the orchestration API. Direct run has no separate
+% full-preflight process; dependency checks remain in the execution paths.
 
 %% === Create one persistent, owner-only run log per requested subject ===
 % Log contract: <subject-root>/MR_PET/pseudoct-run-<UTC>-<invocationUUID>.log.

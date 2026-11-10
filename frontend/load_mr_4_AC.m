@@ -270,10 +270,9 @@ end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% --- Executes on button press in ok_button: Run. Validates, then for MLSC logs in
-% (authenticate only, no submission) until the login succeeds or is cancelled, and
-% submits once with a fresh handoff. Nothing is submitted after a validation error,
-% a cancelled login or a login error other than a rejected password or account.
+% --- Executes on button press in ok_button: Run.
+% For MLSC, authenticate first, then run the normal execution workflow.
+% Submission is blocked if authentication or essential input checks fail.
 function ok_button_Callback(hObject, eventdata, handles)
 handles = guidata(hObject);
 handles = local_refresh_control_handles(handles, hObject);
@@ -290,16 +289,6 @@ try
     values = local_values(handles);
     needs_credentials = local_requires_gui_credentials(handles.validation_config);
     submit = true;
-    if needs_credentials
-        % MLSC: validate before asking for a login. A plain validate does not authenticate.
-        handles = local_set_status(handles, 'Validating the inputs...');
-        check = local_launcher(values, handles, 'validate');
-        if ~check.ok
-            local_show_result_error(check, 'Validation failed');
-            outcome = sprintf('Validation failed: %s', local_error_code(check));
-            submit = false;
-        end
-    end
     if submit && needs_credentials
         [login, outcome] = local_mlsc_login(hObject, handles, values);
         submit = login.ok;
@@ -316,9 +305,8 @@ try
             values.credential_handoff = handoff;
             values.group_account = login.group_account;
         end
-        % One launcher call. The launcher validates again inside run and refuses to
-        % submit if validation fails, so no separate validate call is needed here.
-        handles = local_set_status(handles, 'Validating and submitting...');
+        % One launcher call: resolve essential inputs and dispatch the run.
+        handles = local_set_status(handles, 'Starting processing...');
         result = local_launcher(values, handles, 'submit');
         if result.ok
             outcome = local_job_text(result);
@@ -447,9 +435,9 @@ if isfield(handles, 'status_text') && all(ishghandle(handles.status_text))
             text = 'Select a profile and an MPRAGE input.';
         end
     elseif local_requires_gui_credentials(handles.validation_config)
-        text = 'Ready. Run validates, asks for MLSC credentials, then submits.';
+        text = 'Ready. Run asks for MLSC credentials, then starts processing.';
     else
-        text = 'Ready. Run validates and submits.';
+        text = 'Ready. Run starts processing.';
     end
     set(handles.status_text, 'String', text);
 end

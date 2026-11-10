@@ -6,6 +6,8 @@ function status = pseudoct_cli_bridge(mode)
 %                         validate request MAT (PSEUDOCT_CLI_REQUEST). With a
 %                         PSEUDOCT_CLI_HANDOFF it writes the remote account check
 %                         request (chosen PSEUDOCT_CLI_GROUP_ACCOUNT, no submission).
+%     'prepare_run'       builds one submit request directly from user inputs;
+%                         there is no separate full validation invocation.
 %     'prepare_submit'    reads the input and the validation result
 %                         (PSEUDOCT_CLI_RESULT; it must have status 'ready') and
 %                         writes a submit request MAT with the resolved job and
@@ -53,6 +55,17 @@ try
         request = local_request(spec, 'authenticate');
         request.credential_handoff = handoff;
         request.group_account = local_group_account(spec);
+        request.host_key_file = spec.host_key_file;
+        local_save_request(getenv('PSEUDOCT_CLI_REQUEST'), request);
+    elseif strcmp(mode, 'prepare_run')
+        % A single submit request carries user inputs. The execution process
+        % resolves paths and performs only the checks needed for dispatch.
+        % No separate full validation result is created or consumed.
+        spec = local_read_input(getenv('PSEUDOCT_CLI_INPUT'));
+        request = local_request(spec, 'validate');
+        request.action = 'submit';
+        request.group_account = local_group_account(spec);
+        request.credential_handoff = getenv('PSEUDOCT_CLI_HANDOFF');
         request.host_key_file = spec.host_key_file;
         local_save_request(getenv('PSEUDOCT_CLI_REQUEST'), request);
     elseif strcmp(mode, 'prepare_submit')

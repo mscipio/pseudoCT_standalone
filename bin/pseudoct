@@ -6,7 +6,7 @@
 # and dispatch through the MATLAB Runtime of the selected release. An installed tree
 # never runs the MATLAB CLI, and an incomplete one fails closed.
 #
-#   pseudoct run      [--mcr LABEL] [--mcr-root DIR] <CLI options>   (validate, then submit)
+#   pseudoct run      [--mcr LABEL] [--mcr-root DIR] <CLI options>   (direct execution)
 #   pseudoct validate [--mcr LABEL] [--mcr-root DIR] <CLI options>   (validate only)
 #   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
 #   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
@@ -557,7 +557,7 @@ MATLAB
 }
 
 # op_run ACTION [options]: ACTION is run, validate or authenticate, selected by the top-level
-# command. run: validate the job and submit the validated result; validate: validate only.
+# command. run: resolve and execute within one submission operation; validate: diagnostic only.
 # Remote profiles need a terminal prompt or a --credential-handoff for the submit phase.
 op_run() {
     action=$1
@@ -1648,6 +1648,42 @@ PY
     auth_status=$?
     exit "$auth_status"
 fi
+# Authenticate interactive MLSC runs before full validation.
+prompted=0
+    if [ "$action" = run ] && [ "$backend" != local ] && [ -z "$credential_handoff" ]; then
+        if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] || \
+                ! (tty -s < /dev/tty 2>/dev/null); then
+            error_record "$EXIT_AUTH" 'Remote submission requires a terminal prompt or a single-use credential handoff.' AUTHENTICATION_REQUIRED
+        fi
+        case "$PSEUDOCT_AUTH_RETRY_LIMIT" in
+            ''|*[!0-9]*)
+                [ -z "$PSEUDOCT_AUTH_RETRY_LIMIT" ] || error_record "$EXIT_USAGE" 'PSEUDOCT_AUTH_RETRY_LIMIT must be empty or a non-negative integer.' ;;
+        esac
+        prompt_credentials
+        prompted=1
+        run_authentication_loop
+    fi
+
+if [ "$action" = run ]; then
+    # Authentication and retry already occurred above. Keep a fresh one-time
+    # handoff for the execution process; no full validation phase is launched.
+    if [ "$prompted" -eq 1 ]; then
+        stage_handoff
+        password=''
+    fi
+    if ! matlab_support prepare_run "$submit_request" '' '' '' submit; then
+        error_record "$EXIT_RUNTIME" 'MATLAB could not prepare the direct run request.'
+    fi
+    operation_phase=submit_called
+    run_headless submit "$submit_request" "$submit_result"
+    submit_launcher_status=$?
+    if [ ! -s "$submit_result" ]; then
+        error_record "$EXIT_RUNTIME" "Submit launcher returned no result MAT (status $submit_launcher_status)."
+    fi
+    if ! matlab_support verify_result '' "$submit_result" "$summary_file" submit; then
+        error_record "$EXIT_RUNTIME" 'Submit result MAT failed schema/binding verification.'
+    fi
+else
 if ! matlab_support prepare_validate "$validate_request" '' '' '' ; then
     error_record "$EXIT_RUNTIME" 'MATLAB could not serialize the v2 request MAT.'
 fi
@@ -1661,7 +1697,7 @@ if ! matlab_support verify_result '' "$validate_result" "$summary_file" validate
 fi
 operation_phase=validate_done
 
-if [ "$action" = run ] || [ "$check_account" -eq 1 ]; then
+if [ "$check_account" -eq 1 ]; then
     python3 - "$summary_file" <<'PY' >/dev/null 2>&1
 import sys
 v = open(sys.argv[1], encoding="utf-8").read().splitlines()
@@ -1740,10 +1776,8 @@ PY
         exit "$EXIT_VALIDATION"
     fi
 
-    # Remote credentials: one interactive entry per run, held in memory until the submit
-    # handoff is staged. A supplied --credential-handoff skips prompting entirely.
-    prompted=0
-    if [ "$backend" != local ] && [ -z "$credential_handoff" ]; then
+    # Explicit account checks retain validation-first authentication.
+    if [ "$check_account" -eq 1 ] && [ "$backend" != local ] && [ -z "$credential_handoff" ]; then
         if [ ! -r /dev/tty ] || [ ! -w /dev/tty ] || \
                 ! (tty -s < /dev/tty 2>/dev/null); then
             error_record "$EXIT_AUTH" 'Remote submission requires a terminal prompt or a single-use credential handoff.' AUTHENTICATION_REQUIRED
@@ -1777,27 +1811,7 @@ PY
         fi
         operation_phase=account_check_done
     fi
-    if [ "$action" = run ]; then
-    if [ "$prompted" -eq 1 ]; then
-        # Authenticate (consumes its own handoff), then stage a fresh submit handoff from
-        # the same in-memory credentials. Submission authenticates again in the job manager.
-        run_authentication_loop
-        stage_handoff
-        password=''
-    fi
-    if ! matlab_support prepare_submit "$submit_request" "$validate_result" '' '' submit; then
-        error_record "$EXIT_RUNTIME" 'Validated job could not be serialized for submit.'
-    fi
-    operation_phase=submit_called
-    run_headless submit "$submit_request" "$submit_result"
-    submit_launcher_status=$?
-    if [ ! -s "$submit_result" ]; then
-        error_record "$EXIT_RUNTIME" "Submit launcher returned no result MAT (status $submit_launcher_status)."
-    fi
-    if ! matlab_support verify_result '' "$submit_result" "$summary_file" submit; then
-        error_record "$EXIT_RUNTIME" 'Submit result MAT failed schema/binding verification.'
-    fi
-    fi
+fi
 fi
 
 python3 - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" "$run_log_index" "${result_file:-}" "$subject_temp" <<'PY'

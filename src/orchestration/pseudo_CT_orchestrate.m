@@ -2,9 +2,9 @@ function value = pseudo_CT_orchestrate(operation, request)
 %PSEUDO_CT_ORCHESTRATE Shared GUI and headless MATLAB orchestration API.
 %   VALIDATE performs local-only checks and returns a serializable resolved
 %   job. SUBMIT rechecks that job's input and artifact identities and dispatches it through the existing
-%   lifecycle; authentication occurs only in this operation. The launcher
-%   (bin/pseudoct) and the MATLAB frontend reach both through validate and
-%   submit; there is no single-call run operation.
+%   lifecycle; authentication occurs only in this operation. RUN resolves
+%   inputs and dispatches in one process, deferring runtime checks to the
+%   lifecycle; explicit VALIDATE retains full preflight checks.
 %   Minimum supported MATLAB: R2010b.
 
 if nargin ~= 2 || ~ischar(operation) || size(operation, 1) ~= 1 || ...
@@ -33,13 +33,41 @@ switch operation
         value = local_validate(request, root_dir);
     case 'submit'
         value = local_submit(request, root_dir);
+    case 'run'
+        value = local_run(request, root_dir);
     otherwise
         error('pseudo_CT:OrchestrationAction', ...
             'Unknown pseudoCT orchestration operation.');
 end
 end
 
-function report = local_validate(request, root_dir)
+function report = local_run(request, root_dir)
+% Resolve the small amount of state needed for dispatch in this same process.
+% Runtime resources are checked by the normal lifecycle when actually used.
+% Authentication is handled by the same submit path as before.
+resolve_request = rmfield(request, intersect(fieldnames(request), ...
+    {'credentials'; 'group_account'; 'host_key_provider'}));
+resolved = local_validate(resolve_request, root_dir, false);
+submit_request = struct('resolved_job', resolved.resolved_job);
+if isfield(request, 'credentials')
+    submit_request.credentials = request.credentials;
+end
+if isfield(request, 'group_account')
+    submit_request.group_account = request.group_account;
+end
+if isfield(request, 'host_key_provider')
+    submit_request.host_key_provider = request.host_key_provider;
+end
+report = local_submit(submit_request, root_dir, false);
+end
+
+function report = local_validate(request, root_dir, full_preflight)
+% Full validation is reserved for explicit validate. Run resolves only
+% essential input/output locations; expensive hashes and artifact checks
+% remain in validate or in the actual execution lifecycle.
+if nargin < 3
+    full_preflight = true;
+end
 forbidden = {'username'; 'password'; 'credentials'; 'credential'; ...
     'credential_file'; 'credential_handoff'; 'group_account'; ...
     'host_key_file'; 'transport'; 'token'; 'secret'};
@@ -90,18 +118,18 @@ for ii = 1:length(subjects)
         break;
     end
 end
-% Validate uses only local paths and resources; it never authenticates,
-% contacts a remote service, creates output directories, or runs science.
-setup_pseudo_CT_paths(root_dir, config, 'validate', ...
-    ~isempty(subjects), needs_dicom);
-if strcmp(config.mode, 'mlsc')
-    mlsc_current_validate('validate_for_execution', config);
-else
-    % Local profiles use the same immutable compiled artifact contract as
-    % MLSC, validated before input preparation or normalization.
-    artifact_config = struct();
-    artifact_config.current = config.current;
-    mlsc_current_validate('validate_for_execution', artifact_config);
+% Explicit validation checks local paths and resources without submitting.
+% Direct run defers runtime dependency checks to the execution lifecycle.
+if full_preflight
+    setup_pseudo_CT_paths(root_dir, config, 'validate', ...
+        ~isempty(subjects), needs_dicom);
+    if strcmp(config.mode, 'mlsc')
+        mlsc_current_validate('validate_for_execution', config);
+    else
+        artifact_config = struct();
+        artifact_config.current = config.current;
+        mlsc_current_validate('validate_for_execution', artifact_config);
+    end
 end
 
 umap_supplied = isfield(request, 'umap_files') && ...
@@ -208,34 +236,55 @@ for ii = 1:length(subjects)
     jobs(ii).processing_dir = processing_dir;
     jobs(ii).temp_dir = temp_dir;
     jobs(ii).save_dir = save_dir;
-    jobs(ii).mprage_identity = local_input_identity(input_path);
-    jobs(ii).umap_identity = local_optional_input_identity(reference_path);
+    if full_preflight
+        jobs(ii).mprage_identity = local_input_identity(input_path);
+        jobs(ii).umap_identity = local_optional_input_identity(reference_path);
+    else
+        % No repeated full-file SHA-256 in the execution path. Inputs are
+        % read by the normal pipeline; full fingerprinting remains optional.
+        jobs(ii).mprage_identity = struct('deferred', true);
+        jobs(ii).umap_identity = struct('deferred', true);
+    end
     jobs(ii).umap_resolution = resolution;
 end
 
-artifact_identity = local_artifact_identity(config, profile_name, root_dir);
+if full_preflight
+    artifact_identity = local_artifact_identity(config, profile_name, root_dir);
+    checks = {'profile'; 'inputs'; 'output_directories'; ...
+        'runtime_dependencies'; 'artifact_integrity'};
+else
+    artifact_identity = struct('deferred', true);
+    checks = {'profile'; 'input_paths'; 'output_directories'};
+end
 invocation_id = local_text_field(request, 'invocation_id', '');
 if ~isempty(invocation_id) && isempty(regexp(invocation_id, ...
         '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$', ...
         'once'))
     error('pseudo_CT:OrchestrationRequest', 'Invocation identifier is invalid.');
 end
+if full_preflight
+    evidence = struct('local_only', true, 'checks', {checks}, ...
+        'validated_at', datestr(now, 30));
+else
+    evidence = struct('local_only', true, 'checks', {checks}, ...
+        'full_preflight', false, 'validated_at', datestr(now, 30));
+end
 resolved_job = struct('schema', 'pseudoCT.resolved-job/v1', ...
     'profile', profile_name, 'invocation_id', invocation_id, ...
     'subjects', jobs, 'options', options, 'output_config', output_config, ...
     'artifact_identity', artifact_identity, ...
     'current_artifact_root', artifact_root, ...
-    'validation_evidence', struct('local_only', true, ...
-    'checks', {{'profile'; 'inputs'; 'output_directories'; ...
-    'runtime_dependencies'; 'artifact_integrity'}}, ...
-    'validated_at', datestr(now, 30)));
+    'validation_evidence', evidence);
 report = struct('schema', 'pseudoCT.validation/v2', 'ok', true, ...
     'profile', profile_name, 'subject_count', length(subjects), ...
     'authentication_status', 'not_attempted', ...
     'submission_status', 'not_attempted', 'resolved_job', resolved_job);
 end
 
-function report = local_submit(request, root_dir)
+function report = local_submit(request, root_dir, recheck_identities)
+if nargin < 3
+    recheck_identities = true;
+end
 if ~isfield(request, 'resolved_job') || ~isstruct(request.resolved_job) || ...
         numel(request.resolved_job) ~= 1 || ...
         ~isfield(request.resolved_job, 'schema') || ...
@@ -255,21 +304,23 @@ if ~isstruct(resolved.subjects) || isempty(resolved.subjects) || ...
 end
 subjects = {resolved.subjects.mprage_fn};
 umaps = {resolved.subjects.umap_fn};
-% Identity-only recheck. Validation ran once, in the validate process, and
-% persisted this job. Submit rebinds the same profile and runtime, then rehashes
-% the inputs and artifacts. It sets up no paths, creates no folders and runs no
-% artifact validation; the execution-time checks in the backends remain.
-try
-    config = local_resolved_config(resolved.profile, resolved.current_artifact_root);
-    fresh_job = local_recheck_identities(resolved, config, root_dir);
-catch ME
-    error('pseudo_CT:StaleResolvedJob', ...
-        'A resolved input, output, profile, or artifact is no longer valid; validate again (%s).', ...
-        ME.identifier);
-end
-if ~local_same_resolved_job(resolved, fresh_job)
-    error('pseudo_CT:StaleResolvedJob', ...
-        'Resolved inputs, outputs, profile, or artifacts changed; validate again before submit.');
+% Externally resolved jobs require an identity recheck; direct run already
+% resolved inputs in this process and proceeds to the normal execution checks.
+if recheck_identities
+    % Only externally supplied resolved jobs need a cross-process identity
+    % recheck. A direct run resolves and dispatches within the same process.
+    try
+        config = local_resolved_config(resolved.profile, resolved.current_artifact_root);
+        fresh_job = local_recheck_identities(resolved, config, root_dir);
+    catch ME
+        error('pseudo_CT:StaleResolvedJob', ...
+            'A resolved input, output, profile, or artifact is no longer valid; validate again (%s).', ...
+            ME.identifier);
+    end
+    if ~local_same_resolved_job(resolved, fresh_job)
+        error('pseudo_CT:StaleResolvedJob', ...
+            'Resolved inputs, outputs, profile, or artifacts changed; validate again before submit.');
+    end
 end
 
 credentials = struct();

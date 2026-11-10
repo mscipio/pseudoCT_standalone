@@ -11,7 +11,9 @@ function result = pseudo_CT_headless(request_path, result_path)
 %   one credential handoff and performs the same account check WITHOUT validating
 %   inputs or reading input files; it never submits. SUBMIT accepts a previously
 %   resolved job: remote profiles consume a secure, single-use credential handoff
-%   here, and local profiles submit without authentication.
+%   here, and local profiles submit without authentication. A direct run
+%   carries raw inputs to one submit process and resolves them there rather
+%   than requiring a preceding full validation phase.
 %   On failure, a pseudoct-headless-diagnostics.txt file is written beside
 %   RESULT_PATH, and RESULT carries status 'failed' with a fixed error_code.
 %   Side effects: reads REQUEST_PATH, writes RESULT_PATH and, on failure, the
@@ -206,19 +208,33 @@ elseif strcmp(request.action, 'validate')
     end
     local_options(request.options);
 else
-    if ~isempty(request.subjects) || ~isempty(request.umap_files) || ...
-            ~isempty(fieldnames(request.options)) || ...
-            ~isempty(fieldnames(request.output_config)) || ...
-            ~isempty(request.current_artifact_root) || ...
-            ~isstruct(request.resolved_job) || numel(request.resolved_job) ~= 1
-        error('pseudo_CT:HeadlessRequest', ...
-            'Submit requests require one previously validated resolved job.');
+    if ~isstruct(request.resolved_job) || numel(request.resolved_job) ~= 1
+        error('pseudo_CT:HeadlessRequest', 'Submit job schema is invalid.');
     end
-    local_resolved_job(request.resolved_job);
-    if ~strcmp(request.resolved_job.profile, request.profile) || ...
-            ~strcmp(request.resolved_job.invocation_id, request.invocation_id)
-        error('pseudo_CT:HeadlessRequest', ...
-            'Submit binding does not match the resolved job.');
+    if isempty(fieldnames(request.resolved_job))
+        % Direct run: carry the inputs into the same process that dispatches.
+        % Essential path/output checks happen there, not in a preflight phase.
+        if (~ischar(request.subjects) && ~iscell(request.subjects)) || ...
+                (~isempty(request.umap_files) && ...
+                ~ischar(request.umap_files) && ~iscell(request.umap_files))
+            error('pseudo_CT:HeadlessRequest', 'Run input paths are invalid.');
+        end
+        local_options(request.options);
+    else
+        % Existing resolved-job submit contract remains strict.
+        if ~isempty(request.subjects) || ~isempty(request.umap_files) || ...
+                ~isempty(fieldnames(request.options)) || ...
+                ~isempty(fieldnames(request.output_config)) || ...
+                ~isempty(request.current_artifact_root)
+            error('pseudo_CT:HeadlessRequest', ...
+                'A resolved submit job cannot also supply raw inputs.');
+        end
+        local_resolved_job(request.resolved_job);
+        if ~strcmp(request.resolved_job.profile, request.profile) || ...
+                ~strcmp(request.resolved_job.invocation_id, request.invocation_id)
+            error('pseudo_CT:HeadlessRequest', ...
+                'Submit binding does not match the resolved job.');
+        end
     end
     if local_is_local_profile(request.profile)
         if ~isempty(request.credential_handoff) || ...
@@ -350,20 +366,38 @@ end
 end
 
 function result = local_submit(request, result, credentials)
-if local_is_local_profile(request.profile)
-    api_request = struct('resolved_job', request.resolved_job);
+direct_run = isempty(fieldnames(request.resolved_job));
+if direct_run
+    % No validation-result MAT: the orchestration process resolves the job
+    % and enters the existing execution lifecycle in a single call.
+    api_request = struct('profile', request.profile, ...
+        'invocation_id', request.invocation_id, ...
+        'subjects', request.subjects, 'umap_files', request.umap_files, ...
+        'output_config', request.output_config, ...
+        'current_artifact_root', request.current_artifact_root);
+    options = fieldnames(request.options);
+    for ii = 1:numel(options)
+        api_request.(options{ii}) = request.options.(options{ii});
+    end
 else
+    api_request = struct('resolved_job', request.resolved_job);
+end
+if ~local_is_local_profile(request.profile)
     if ~isstruct(credentials) || numel(credentials) ~= 1 || ...
             ~isfield(credentials, 'username') || ~isfield(credentials, 'password')
         error('pseudo_CT:HeadlessRequest', ...
             'A single-use credential handoff is required.');
     end
     provider = local_host_key_provider(request.host_key_file);
-    api_request = struct('resolved_job', request.resolved_job, ...
-        'credentials', credentials, 'group_account', request.group_account, ...
-        'host_key_provider', provider);
+    api_request.credentials = credentials;
+    api_request.group_account = request.group_account;
+    api_request.host_key_provider = provider;
 end
-dispatch = pseudo_CT_orchestrate('submit', api_request);
+if direct_run
+    dispatch = pseudo_CT_orchestrate('run', api_request);
+else
+    dispatch = pseudo_CT_orchestrate('submit', api_request);
+end
 result.status = 'submitted';
 if isfield(dispatch, 'error_code') && ~isempty(dispatch.error_code)
     result.status = 'failed';
