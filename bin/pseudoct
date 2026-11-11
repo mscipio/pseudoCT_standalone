@@ -1674,6 +1674,8 @@ if [ "$action" = run ]; then
     if ! matlab_support prepare_run "$submit_request" '' '' '' submit; then
         error_record "$EXIT_RUNTIME" 'MATLAB could not prepare the direct run request.'
     fi
+    [ -s "$submit_request" ] ||
+        error_record "$EXIT_RUNTIME" 'Direct run preparation produced no request MAT.'
     operation_phase=submit_called
     run_headless submit "$submit_request" "$submit_result"
     submit_launcher_status=$?

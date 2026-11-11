@@ -25,8 +25,9 @@ try
         fprintf(2, 'pseudoct: job-manager dispatch requires exactly one mode.\n');
     elseif strcmp(varargin{1}, 'headless')
         status = pseudoct_headless_cli();
-    elseif any(strcmp(varargin{1}, {'prepare_validate'; 'prepare_submit'; ...
-            'verify_result'; 'store_credentials'; 'prepare_authenticate'}))
+    elseif any(strcmp(varargin{1}, {'prepare_validate'; 'prepare_run'; ...
+            'prepare_submit'; 'verify_result'; 'store_credentials'; ...
+            'prepare_authenticate'}))
         status = pseudoct_cli_bridge(varargin{1});
     else
         fprintf(2, 'pseudoct: unknown job-manager operation.\n');
