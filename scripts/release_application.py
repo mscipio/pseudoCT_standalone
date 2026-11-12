@@ -90,7 +90,13 @@ README_NAME = 'README.md'
 README_SOURCE = os.path.join(REPO_ROOT, README_NAME)
 BUNDLED_LOCK_NAME = 'dependencies.lock.json'
 BUNDLED_LOCK_SOURCE = os.path.join(REPO_ROOT, BUNDLED_LOCK_NAME)
-DOC_FILES = ('installation.md', 'headless-cli.md', 'releases.md', 'scientific-notes.md')
+DOC_FILES = (
+    'installation.md',
+    'headless-cli.md',
+    'releases.md',
+    'scientific-notes.md',
+    'THIRD_PARTY_INTEGRATION.md',
+)
 DOC_DIR = os.path.join(REPO_ROOT, 'docs')
 FRONTEND_DIR = os.path.join(REPO_ROOT, 'frontend')
 # Frontend files whose single source is frontend/ (check_sources requires the directory
