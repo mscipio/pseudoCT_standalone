@@ -512,12 +512,22 @@ op_headless() {
     runtime_dir=$(umask 077; mktemp -d "$result_parent/pseudoct-headless.XXXXXXXX") ||
         fail_op 'subject runtime directory unavailable' 70
     chmod 00700 "$runtime_dir" || fail_op 'cannot secure subject runtime directory' 70
-    trap 'rm -rf -- "$runtime_dir"' 0
+    mcr_short_dir=''
+    trap 'rm -rf -- "$runtime_dir"; if [ -n "$mcr_short_dir" ]; then rm -rf -- "$mcr_short_dir"; fi' 0
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
     export PSEUDOCT_INSTALL_ROOT="$root_dir"
-    export TMPDIR="$runtime_dir" TMP="$runtime_dir" TEMP="$runtime_dir"
-    export MATLAB_PREFDIR="$runtime_dir/matlab-prefs" MCR_CACHE_ROOT="$runtime_dir/mcr-cache"
+    if [ "$installed" -eq 1 ] && [ "${SEL_RELEASE:-}" = R2026a ]; then
+        mcr_short_dir=$(umask 077; mktemp -d /tmp/pct26.XXXXXXXX) ||
+            fail_op 'Cannot create a private MATLAB Runtime temporary directory.' 70
+        mkdir -p "$mcr_short_dir/prefs" "$mcr_short_dir/cache" ||
+            fail_op 'Cannot initialize MATLAB Runtime temporary directory.' 70
+        export TMPDIR="$mcr_short_dir" TMP="$mcr_short_dir" TEMP="$mcr_short_dir"
+        export MATLAB_PREFDIR="$mcr_short_dir/prefs" MCR_CACHE_ROOT="$mcr_short_dir/cache"
+    else
+        export TMPDIR="$runtime_dir" TMP="$runtime_dir" TEMP="$runtime_dir"
+        export MATLAB_PREFDIR="$runtime_dir/matlab-prefs" MCR_CACHE_ROOT="$runtime_dir/mcr-cache"
+    fi
     cd -P -- "$runtime_dir" || fail_op 'cannot enter subject runtime directory' 70
 
     if [ "$installed" -eq 1 ]; then
@@ -868,8 +878,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
-# MATLAB/MCR caches, crash diagnostics and Python subprocess temporaries must
-# share the resolved subject location, never the installation or system temp.
+# Keep CLI request/result files and logs in the subject scratch directory.
+# R2026a compiled processes use separate, short, private /tmp directories for
+# MATLAB/MCR startup because its runtime rejects long temporary paths.
 export TMPDIR="$tmp_dir" TMP="$tmp_dir" TEMP="$tmp_dir"
 export MATLAB_PREFDIR="$tmp_dir/matlab-prefs" MCR_CACHE_ROOT="$tmp_dir/mcr-cache"
 export PSEUDOCT_RUNTIME_DIR="$tmp_dir"
@@ -991,6 +1002,13 @@ matlab_support() {
     PSEUDOCT_CLI_ACCOUNT_CHECK="${account_check_mode:-0}"
     if [ "$installed" -eq 1 ]; then
         export LD_LIBRARY_PATH=$mcr_ld_path
+        if [ "${SEL_RELEASE:-}" = R2026a ]; then
+            mcr_short_dir=$(umask 077; mktemp -d /tmp/pct26.XXXXXXXX) || exit 69
+            trap 'rm -rf -- "$mcr_short_dir"' EXIT
+            mkdir -p "$mcr_short_dir/prefs" "$mcr_short_dir/cache" || exit 69
+            export TMPDIR="$mcr_short_dir" TMP="$mcr_short_dir" TEMP="$mcr_short_dir"
+            export MATLAB_PREFDIR="$mcr_short_dir/prefs" MCR_CACHE_ROOT="$mcr_short_dir/cache"
+        fi
         "$standalone_exe" "$support_mode" >"$tmp_dir/matlab-diagnostics-support-$support_mode.log" 2>&1
         exit $?
     fi

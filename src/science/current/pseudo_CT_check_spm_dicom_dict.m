@@ -17,14 +17,9 @@ if exist(dict_path, 'file') ~= 2
     error('pseudo_CT:SpmDicomDictMissing', ...
         'SPM DICOM dictionary not found: %s', dict_path);
 end
-if isdeployed
-    % Compiled MATLAB uses its bundled search path. Do not alter it.
-    resolved = which('spm_dicom_dict.mat');
-    if isempty(resolved)
-        error('pseudo_CT:SpmDicomDictMissing', ...
-            'SPM DICOM dictionary is unavailable in the compiled application.');
-    end
-else
+if ~isdeployed
+    % Source mode requires the installed dictionary to take precedence.
+    % Deployed mode verifies the dictionary using its absolute path below.
     addpath(resources_dir, '-begin');
     resolved = which('spm_dicom_dict.mat');
     if ~strcmp(resolved, dict_path)
