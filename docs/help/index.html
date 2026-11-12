@@ -141,7 +141,7 @@ run_pseudo_CT</code></pre>
 
         <section id="cli">
           <h2>Command line</h2>
-          <p><code>bin/pseudoct validate</code> checks a request. <code>bin/pseudoct run</code> validates the same request and then submits it.</p>
+          <p><code>bin/pseudoct validate</code> checks a request and is optional. <code>bin/pseudoct run</code> validates the same request and then submits it; it does not need a prior <code>validate</code>. Only <code>--check-account</code> logs in during validation.</p>
           <pre><code>bin/pseudoct validate --profile local \
   --mprage /subject/MR/MPRAGE/one.dcm \
   --umap /subject/MR/UMAP/one.dcm
@@ -230,9 +230,9 @@ bin/pseudoct run --profile local \
         <section id="logs">
           <h2>Progress and exit codes</h2>
           <ul class="checklist">
-            <li><strong>Text</strong> (command line default): progress is printed to the terminal, one row per stage and event. <code>[n/10]</code> is the stage number. <code>SKIPPED</code> shows a stage that does not apply to the profile, with its reason.</li>
+            <li><strong>Text</strong> (command line default): progress is printed to the terminal, one row per stage and event. <code>[n/10]</code> is the stage number. <code>SKIPPED</code> shows a stage that does not apply to the profile, with its reason. Stages 2 and 3 show <code>ACTIVE</code> only once the operation has run, and <code>SKIPPED</code> with a reason otherwise. For MPRAGE-only profiles, stages 9 and 10 are <code>SKIPPED</code> by policy, because no DICOM output is written and the output is not finalized as a full run.</li>
             <li><strong>Warnings and errors</strong> are shown as <code>WARN</code> and <code>ERROR</code> rows during the run. A <em>still running</em> line shows that a long step is in progress.</li>
-            <li><strong>JSONL</strong> (<code>--format jsonl</code>): one JSON record per line. The final record carries the outcome and the exit code. For MLSC, it also carries the job IDs and the run-log paths.</li>
+            <li><strong>JSONL</strong> (<code>--format jsonl</code>): one JSON record per line. The final record carries the outcome and the exit code, the submission and scientific-completion fields and, for MLSC, the job IDs. It does not carry run-log paths: these are printed in the text summary. Each run&#39;s files carry the same invocation ID as the result record.</li>
             <li><strong>Completion</strong> is reported when the scientific processing is complete and verified. Only then is the exit code <code>0</code>.</li>
             <li><strong>In the window</strong>, the progress text is sent to the MATLAB Command Window. Whether it appears live during the run has not yet been confirmed on the installed MATLAB. The files in <a href="#files">Files written by a run</a> are the complete record either way.</li>
           </ul>

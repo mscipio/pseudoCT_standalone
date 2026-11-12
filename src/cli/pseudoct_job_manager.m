@@ -4,8 +4,8 @@ function status = pseudoct_job_manager(varargin)
 %   (built by scripts/build_application.m into its staging standalone/ folder;
 %   installed flat as runtimes/<LABEL>/pseudoct_job_manager).
 %   It only delegates; no serialization or validation is duplicated here:
-%     prepare_validate, prepare_authenticate, prepare_submit, verify_result,
-%     store_credentials
+%     prepare_validate, prepare_run, prepare_authenticate, prepare_submit,
+%     verify_result, store_credentials
 %         -> PSEUDOCT_CLI_BRIDGE(MODE), operations read from the environment.
 %     headless
 %         -> PSEUDOCT_HEADLESS_CLI(), which reads PSEUDOCT_REQUEST_MAT and

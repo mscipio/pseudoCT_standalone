@@ -7,7 +7,8 @@
 # never runs the MATLAB CLI, and an incomplete one fails closed.
 #
 #   pseudoct run      [--mcr LABEL] [--mcr-root DIR] <CLI options>   (direct execution)
-#   pseudoct validate [--mcr LABEL] [--mcr-root DIR] <CLI options>   (validate only)
+#   pseudoct validate [--mcr LABEL] [--mcr-root DIR] <CLI options>   (optional check; no submission)
+#   pseudoct authenticate --profile MLSC_PROFILE --credential-handoff FILE [...]   (MLSC login only)
 #   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
 #   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
 #   pseudoct --list-releases | --help
@@ -44,8 +45,10 @@ Usage:
   pseudoct --help
 
 Operations:
-  run                 Validate a request, then submit it (CLI options below).
-  validate            Validate a request; nothing is submitted (CLI options below).
+  run                 Execute one request directly; no prior validate is required (CLI options below).
+  validate            Optional check of a request; nothing is submitted (CLI options below).
+  authenticate        MLSC only: authenticate and select the account without processing
+                      (used by the window; needs --credential-handoff).
   headless            Run one v2 headless request MAT into a result MAT.
   resolve             Validate one MATLAB Runtime and print sourceable PSEUDOCT_* lines.
   --list-releases     Print one line per installed release: label, MCR, default marker.
@@ -73,7 +76,7 @@ Options (run, validate):
                                   (atomic replace; written in either format; stdout unchanged)
   -h, --help                      Show this help
 
-Exit codes: 0 validated/completed, 64 usage/config, 65 invalid request,
+Exit codes: 0 validated/completed/authenticated, 64 usage/config, 65 invalid request,
 66 authentication, 67 submission failure, 68 scientific failure/unverified,
 69 launcher/runtime failure, 70 MATLAB dispatch or runtime failure.
 USAGE
@@ -571,7 +574,7 @@ op_run() {
     # The retired two-word forms are refused, with the form that replaces them.
     if [ "$action" = run ]; then
         case "$1" in
-            run) fail_op "'pseudoct run run' is retired: use 'pseudoct run [options]' to validate and submit (see --help)" "$EXIT_USAGE" ;;
+            run) fail_op "'pseudoct run run' is retired: use 'pseudoct run [options]' to execute directly; no prior validate is required (see --help)" "$EXIT_USAGE" ;;
             validate) fail_op "'pseudoct run validate' is retired: use 'pseudoct validate [options]' (see --help)" "$EXIT_USAGE" ;;
             authenticate) fail_op "'pseudoct run authenticate' is retired: use 'pseudoct authenticate [options]' (see --help)" "$EXIT_USAGE" ;;
         esac

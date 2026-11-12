@@ -3,9 +3,11 @@ function status = pseudoct_cli_bridge(mode)
 %   STATUS = PSEUDOCT_CLI_BRIDGE(MODE) is called by the job-manager dispatcher
 %   (pseudoct_job_manager) and by bin/pseudoct. MODE is one of:
 %     'prepare_validate'  reads the CLI input (PSEUDOCT_CLI_INPUT) and writes a
-%                         validate request MAT (PSEUDOCT_CLI_REQUEST). With a
-%                         PSEUDOCT_CLI_HANDOFF it writes the remote account check
-%                         request (chosen PSEUDOCT_CLI_GROUP_ACCOUNT, no submission).
+%                         validate request MAT (PSEUDOCT_CLI_REQUEST). When
+%                         PSEUDOCT_CLI_ACCOUNT_CHECK is '1' it also carries the
+%                         PSEUDOCT_CLI_HANDOFF and the chosen
+%                         PSEUDOCT_CLI_GROUP_ACCOUNT (account check, no submission).
+%     'prepare_authenticate' writes an authenticate request (handoff and account only).
 %     'prepare_run'       builds one submit request directly from user inputs;
 %                         there is no separate full validation invocation.
 %     'prepare_submit'    reads the input and the validation result

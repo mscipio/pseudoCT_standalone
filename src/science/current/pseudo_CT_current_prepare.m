@@ -198,17 +198,9 @@ elseif aliasing_requested || recentering_requested
     [path_in, name_in, ext_in] = fileparts(selected_input);
     output_path = fullfile(path_in, [name_in, '_corrected', ext_in]);
 
-    % Entry to the one correct_aliasing call that performs the requested
-    % operations (a real pre-operation point; sub-operation progress inside
-    % the package is not observable, so ACTIVE marks this call's entry).
-    if recentering_requested
-        local_stage_event(output_context, 'workflow.recenter', 2, 'STARTED', ...
-            'Recentering MPRAGE before normalization.');
-    end
-    if aliasing_requested
-        local_stage_event(output_context, 'workflow.alias_correct', 3, 'STARTED', ...
-            'Aliasing correction started.');
-    end
+    % The facade can accept a requested operation but report it as not
+    % required. Defer numbered ACTIVE records until its observed outcome is
+    % known, so an immediate SKIPPED result never has a false ACTIVE row.
     result = correct_aliasing(deblank(P(1, :)), output_path, ...
         'AliasCorrection', aliasing_requested, ...
         'Centering', recentering_requested, ...
@@ -287,6 +279,8 @@ elseif aliasing_requested || recentering_requested
             'Recentering skipped as configured.');
     elseif accepted && has_output && ~isempty(recentering_performed)
         if recentering_performed
+            local_stage_event(output_context, 'workflow.recenter', 2, 'STARTED', ...
+                'Recentering MPRAGE before normalization.');
             pseudo_CT_output('SUCCESS', stage_ctx, '[recentering] Successfully applied.');
             local_stage_event(output_context, 'workflow.recenter', 2, 'COMPLETED', ...
                 'Recentering successfully applied.');
@@ -318,6 +312,8 @@ elseif aliasing_requested || recentering_requested
             'Aliasing correction skipped as configured.');
     elseif accepted && has_output && ~isempty(aliasing_performed)
         if aliasing_performed
+            local_stage_event(output_context, 'workflow.alias_correct', 3, 'STARTED', ...
+                'Aliasing correction started.');
             pseudo_CT_output('SUCCESS', stage_ctx, '[aliasing correction] Successfully applied.');
             local_stage_event(output_context, 'workflow.alias_correct', 3, 'COMPLETED', ...
                 'Aliasing correction successfully applied.');

@@ -549,10 +549,19 @@ end
 if isfield(context, 'operation_id') && strcmp(context.operation_id, 'output.promote_nifti')
     n = 10;
 end
-% The lifecycle's full-mode policy skip is not a skip of NIfTI promotion. It is
-% shown as a presentation-only SKIPPED row: text console only, never admitted,
-% no stage transition and no event record. Matched explicitly; never guessed
-% from profile.
+% The full-mode policy skip is not a skip of NIfTI promotion (promotion still
+% runs for MPRAGE-only profiles). The branch below treats the exact plain message
+% 'Full-mode output finalization skipped by MPRAGE-only policy.' as a
+% presentation-only SKIPPED row (text console only, never admitted). Matched
+% explicitly; never guessed from profile. NOTE: the production producer,
+% pseudo_CT_finalize_subject, writes its stage-10 SKIPPED event with the message
+% '... MPRAGE-only policy (profile_policy:mprage_only).' and presents it through
+% pseudo_CT_present_native_events, so this exact match does not fire for it. That
+% event takes the normal SKIPPED path below and is admitted as a stage-10 SKIPPED
+% row in both the text table and stdout JSONL. Independently, the finalizer
+% appends the same record to the on-disk run JSONL (best effort, see
+% pseudo_CT_scientific_event). The plain message occurs only in
+% tests/test_cli_progress_output.m.
 if n == 10 && strcmp(canon, 'SKIPPED') && local_is_mprage_only(S.profile) && ...
         strcmp(row.message, 'Full-mode output finalization skipped by MPRAGE-only policy.')
     c = local_parent(S, row, 10, 'SKIPPED', ...

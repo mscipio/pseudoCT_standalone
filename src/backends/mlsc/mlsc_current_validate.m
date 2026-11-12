@@ -5,12 +5,16 @@ function varargout = mlsc_current_validate(action, varargin)
 %   The "mlsc-current" prefixes in schemas name compiled artifact contracts,
 %   not profile keys.
 %
-%   Runtime pin: the only accepted MCR_ROOT is the version-specific MATLAB 7.11
-%   installation /usr/pubsw/common/matlab/7.11 (R2010b). It must contain the
-%   MCR 7.14 runtime library. The path is compared as a string, so the current
-%   symlink is rejected. The generated launcher owns the Runtime environment;
-%   this file never sets LD_LIBRARY_PATH globally. Installed distributions take
-%   the selected release identity from config/releases.json.
+%   Runtime pin (source/repository mode): the only accepted MCR_ROOT is the
+%   version-specific MATLAB 7.11 installation /usr/pubsw/common/matlab/7.11
+%   (R2010b). It must contain the MCR 7.14 runtime library. The path is compared
+%   as a string, so the current symlink is rejected. In an installed
+%   distribution the accepted root is the MATLAB Runtime selected by
+%   pseudo_CT_runtime_select (PSEUDOCT_RUNTIME_MCR_ROOT), and its release
+%   identity (label and MCR version) comes from the installed catalog in
+%   manifest.json, checked against the runtime library and mcrversion.ver.
+%   The generated launcher owns the Runtime environment; this file never sets
+%   LD_LIBRARY_PATH globally.
 %
 %   Actions:
 %     PINNED = MLSC_CURRENT_VALIDATE('pinned_mcr_root')

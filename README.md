@@ -16,6 +16,7 @@ short overview.
 | Running the application, outputs, QC and troubleshooting | [PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/) |
 | Installation, requirements and profiles | [Installation](docs/installation.md) |
 | Command-line reference: options, output files, exit codes | [Headless API and CLI](docs/headless-cli.md) |
+| Launching pseudoCT from another application (subprocess, JSONL progress, outputs) | [Third-party integration guide](docs/THIRD_PARTY_INTEGRATION.md) |
 | Packaging, runtime identity and layout (developers) | [Release catalog and layout](docs/releases.md) |
 | Method and interpretation limits | [Scientific notes](docs/scientific-notes.md) |
 | Offline checks (developers) | [Tests](tests/README.md) |
@@ -85,8 +86,9 @@ The input window has a single action, **Run**.
 
 ## Running from the command line
 
-`bin/pseudoct` is the terminal entry point. `validate` checks a request;
-`run` validates it and then submits it.
+`bin/pseudoct` is the terminal entry point. `run` validates a request and then submits
+it in one invocation. `validate` is an optional check that submits nothing; `run` does not
+need a prior `validate`.
 
 ```sh
 bin/pseudoct validate --profile local --mprage MPRAGE.dcm --umap UMAP.dcm
@@ -111,12 +113,13 @@ bin/pseudoct validate --profile mlsc --mprage MPRAGE.dcm --umap UMAP.dcm \
 - Passwords are never accepted on the command line. For MLSC, the command line asks for
   the username and password at the terminal.
 - `bin/pseudoct --help` prints the usage text. All options and exit codes are listed in
-  the [CLI reference](docs/headless-cli.md#options-run-validaterun).
+  the [CLI reference](docs/headless-cli.md#options-validate-run).
 
 ## What happens after Run
 
 - **Validation** checks the request and reports `ready` or the first problem. It does
-  not process data and, for local profiles, does not log in.
+  not process data and, for local profiles, does not log in. On the command line, only
+  `--check-account` (MLSC) logs in during validation.
 - **Local processing** runs in the current session. Progress is shown stage by stage
   (stages 1 to 10). Stages that do not apply to the profile are shown as `SKIPPED`
   with a reason.
@@ -145,11 +148,14 @@ Passwords and login details are never written to either file.
 ## Progress, warnings, errors and completion
 
 - **Text output** shows one row per stage and per event. Stage rows carry the stage
-  number (`[n/10]`) and its status (`STARTED`, `COMPLETED`, `FAILED` or `SKIPPED`), and
+  number (`[n/10]`) and its status (`ACTIVE`, `DONE`, `SKIPPED` or `ERROR`), and
   rows for multi-subject runs carry the subject number. `WARN` and `ERROR` rows report problems during the run. A `still running`
   line shows that a long step is progressing.
-- **JSONL output** (`--format jsonl`) writes one record per line: progress, the final
-  result and, for MLSC, the job IDs and the run-log paths.
+- **JSONL output** (`--format jsonl`) writes one progress record per line, then the final
+  result record (outcome, exit code and, for MLSC, the job IDs). Run-log paths are printed in
+  the text summary, not in the JSON result. Each run's structured record is the file
+  `pseudoct-run-<UTC>-<invocation>.jsonl` in the subject's `MR_PET` folder. The
+  [third-party integration guide](docs/THIRD_PARTY_INTEGRATION.md) describes the fields.
 - The final summary states the outcome, the submission and dispatch status, the
   scientific completion status and, for MLSC, the job IDs.
 - A run is complete when the summary reports scientific completion with exit code `0`.

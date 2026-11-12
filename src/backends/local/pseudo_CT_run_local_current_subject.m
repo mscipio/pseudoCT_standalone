@@ -740,9 +740,11 @@ end
 %  ========================================================================
 % Public stages: 1 input MPRAGE, 2 MPRAGE recentering, 3 aliasing correction,
 % 4 FreeSurfer normalization, 5 alignment and masking, 6 SPM New Segment,
-% 7 DARTEL registration, 8 attenuation map and QC, 9 DICOM output (omitted
-% for NIfTI-only), then output promotion (10, or 9 for NIfTI-only). The
-% orchestrator reports 1, DICOM and promotion; this adapter reports 2-8.
+% 7 DARTEL registration, 8 attenuation map and QC, 9 DICOM output, 10 output
+% promotion. The public total is 10 for every profile: for MPRAGE-only
+% profiles, stages 9 and 10 are not omitted but recorded as SKIPPED by policy
+% (pseudo_CT_finalize_subject). The orchestrator reports 1, 9 and 10; this
+% adapter reports 2-8.
 % A canonical event is a context with stage_index, stage_count (total from
 % the resolved output policy), stage_status (START, DONE, SKIPPED, INFO,
 % WARN, ERROR or LOG) and optional stage_message. Active-computation

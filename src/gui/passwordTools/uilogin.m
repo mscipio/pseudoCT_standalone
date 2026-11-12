@@ -1,98 +1,152 @@
-function [user,pass,accepted,group_account] = uilogin(str,lbl,user,group_account)
-%Create username and password dialogue (hide password input).
-%PasswordTools by Serge, adapted for MATLAB R2019 compatibility.
+function [user, pass, accepted, group_account] = uilogin(str, lbl, user, group_account)
+%UILOGIN Modal username/password dialog with an optionally displayed account.
+%PasswordTools by Serge, adapted for pseudoCT (R2019a+ fallback path).
 %Source: https://github.com/serg3y/password-tools-matlab
-% [user,pass] = uilogin       -display dialogue
-% [user,pass] = uilogin(str)     -allowed pass characters (default:[32:126])
-% [user,pass] = uilogin(str,lbl)    -dialogue heading (default:'Login')
-% [user,pass] = uilogin(str,lbl,user)  -prefill username (default: '')
-% [user,pass,accepted] = uilogin(...) also reports whether Enter was pressed.
-%
-%Remarks:
-%-WindowStyle='modal' blocks user interaction with other UI elements.
-%-If Esc is pressed empty char is returned.
-%
-%Example:
-% [user,pass] = uilogin([],'My Program Login')
-%
-%See also: uipassword, strencrypt
-%default
-if nargin<1 || isempty(str), str  = 32:126;  end %allowed pass characters
-if nargin<2 || isempty(lbl), lbl  = 'Login'; end %dialogue heading
-if nargin<3 || isempty(user),user = '';      end %prefill username
+% Password characters are never put into an edit-control String. They are
+% collected by KeyPressFcn and the pushbutton shows masking bullets only.
+% Return accepted=false with empty credentials on Cancel, Esc or window X.
+
+if nargin < 1 || isempty(str), str = 32:126; end
+if nargin < 2 || isempty(lbl), lbl = 'Login'; end
+if nargin < 3 || isempty(user), user = ''; end
 include_group_account = nargin >= 4;
-if nargin<4 || isempty(group_account),group_account = ''; end
-%checks
-if ~usejava('awt') %matlab was started with -nojvm flag (ie no java)
+if nargin < 4 || isempty(group_account), group_account = ''; end
+
+if ~usejava('awt')
     disp(lbl)
-    user = input('Username:','s'); %revert to simple command line queries
-    pass = input('Password:','s');
+    user = input('Username:', 's');
+    pass = input('Password:', 's');
     accepted = true;
-    return
+    return;
 end
-%main
-sz = get(0,'ScreenSize');
-dialog_height = 100;
-if include_group_account
-    dialog_height = 130;
-end
-hFig  = figure('WindowStyle','modal','Position',[(sz(3:4)-[350 dialog_height])/2 350 dialog_height],'Name',lbl,'Resize','off','NumberTitle','off','Menubar','none','Color',[0.9 0.9 0.9],'CloseRequestFcn',@(~,~)uiresume);
-hUser = uicontrol(hFig,'Style','edit','Position',[80 60 250 20],'KeyPressFcn',@userKeyPress,'FontSize',10,'BackGroundColor','w','String',user);
-hPass = uicontrol(hFig,'Style','push','Position',[80 30 250 20],'KeyPressFcn',@passKeyPress,'FontSize',10,'BackGroundColor','w','String','');
-annotation(hFig,'textbox','Units','pixels','Position',[0 60 80 20],'String','Username','EdgeColor','none','VerticalAlignment','middle','HorizontalAlignment','right')
-annotation(hFig,'textbox','Units','pixels','Position',[0 30 80 20],'String','Password','EdgeColor','none','VerticalAlignment','middle','HorizontalAlignment','right')
-if include_group_account
-    hGroup = uicontrol(hFig,'Style','edit','Position',[80 90 250 20], ...
-        'KeyPressFcn',@groupKeyPress,'FontSize',10, ...
-        'BackGroundColor','w','String',group_account);
-    annotation(hFig,'textbox','Units','pixels','Position',[0 90 80 20], ...
-        'String','Group/account','EdgeColor','none', ...
-        'VerticalAlignment','middle','HorizontalAlignment','right')
-else
-    hGroup = [];
-end
-pass = ''; %init password
+
+pass = '';
 accepted = false;
-uicontrol(hUser) %give focuse to username
-uiwait %wait for uiresume command
-drawnow %required for next line
-user = hUser.String;
+width = 530;
+height = 177;
 if include_group_account
-    group_account = hGroup.String;
-else
-    group_account = '';
+    height = height + 44;
 end
-delete(hFig) %clean up
-    function userKeyPress(~,event)
-        if strcmp(event.Key,'return')
-            accepted = true;
-            uiresume, return %done
-        elseif strcmp(event.Key,'escape')
-            hUser.String = ''; pass = '';
-            uiresume, return %abort
+screen = get(0, 'ScreenSize');
+left = max(1, floor(screen(1) + (screen(3) - width) / 2));
+bottom = max(1, floor(screen(2) + (screen(4) - height) / 2));
+fig_color = get(0, 'DefaultUicontrolBackgroundColor');
+hFig = figure('WindowStyle', 'modal', 'Position', ...
+    [left bottom width height], 'Name', lbl, 'Resize', 'off', ...
+    'NumberTitle', 'off', 'MenuBar', 'none', 'ToolBar', 'none', ...
+    'Color', fig_color, 'CloseRequestFcn', @cancelLogin, ...
+    'KeyPressFcn', @windowKeyPress);
+
+label_x = 22;
+field_x = 215;
+field_width = width - field_x - 22;
+field_height = 27;
+user_y = 109;
+pass_y = 61;
+
+uicontrol('Parent', hFig, 'Style', 'text', 'Units', 'pixels', ...
+    'Position', [label_x user_y 185 25], 'String', 'Username', ...
+    'HorizontalAlignment', 'left', 'FontSize', 10, ...
+    'BackgroundColor', fig_color);
+hUser = uicontrol('Parent', hFig, 'Style', 'edit', 'Units', 'pixels', ...
+    'Position', [field_x user_y field_width field_height], ...
+    'String', user, 'FontSize', 10, 'HorizontalAlignment', 'left', ...
+    'BackgroundColor', 'white', 'KeyPressFcn', @userKeyPress);
+uicontrol('Parent', hFig, 'Style', 'text', 'Units', 'pixels', ...
+    'Position', [label_x pass_y 185 25], 'String', 'Password', ...
+    'HorizontalAlignment', 'left', 'FontSize', 10, ...
+    'BackgroundColor', fig_color);
+hPass = uicontrol('Parent', hFig, 'Style', 'pushbutton', ...
+    'Units', 'pixels', ...
+    'Position', [field_x pass_y field_width field_height], ...
+    'String', '', 'FontSize', 10, 'BackgroundColor', 'white', ...
+    'KeyPressFcn', @passKeyPress);
+
+hGroup = [];
+if include_group_account
+    group_y = 153;
+    uicontrol('Parent', hFig, 'Style', 'text', 'Units', 'pixels', ...
+        'Position', [label_x group_y 185 25], ...
+        'String', 'Group/account (optional)', ...
+        'HorizontalAlignment', 'left', 'FontSize', 10, ...
+        'BackgroundColor', fig_color);
+    hGroup = uicontrol('Parent', hFig, 'Style', 'edit', ...
+        'Units', 'pixels', ...
+        'Position', [field_x group_y field_width field_height], ...
+        'String', group_account, 'FontSize', 10, ...
+        'HorizontalAlignment', 'left', 'BackgroundColor', 'white', ...
+        'KeyPressFcn', @groupKeyPress);
+end
+
+uicontrol('Parent', hFig, 'Style', 'pushbutton', 'Units', 'pixels', ...
+    'Position', [width-135 14 113 30], 'String', 'Sign in', ...
+    'FontSize', 10, 'Callback', @submitLogin);
+uicontrol('Parent', hFig, 'Style', 'pushbutton', 'Units', 'pixels', ...
+    'Position', [width-257 14 113 30], 'String', 'Cancel', ...
+    'FontSize', 10, 'Callback', @cancelLogin);
+uicontrol(hUser);
+uiwait(hFig);
+
+if ~ishghandle(hFig)
+    user = ''; pass = ''; group_account = ''; accepted = false;
+    return;
+end
+if accepted
+    user = get(hUser, 'String');
+    if include_group_account
+        group_account = get(hGroup, 'String');
+    else
+        group_account = '';
+    end
+else
+    user = ''; pass = ''; group_account = '';
+end
+delete(hFig);
+
+    function submitLogin(~, ~)
+        accepted = true;
+        if ishghandle(hFig), uiresume(hFig); end
+    end
+
+    function cancelLogin(~, ~)
+        accepted = false;
+        pass = '';
+        if ishghandle(hFig), uiresume(hFig); end
+    end
+
+    function windowKeyPress(~, event)
+        if strcmp(event.Key, 'escape'), cancelLogin([], []); end
+    end
+
+    function userKeyPress(~, event)
+        if strcmp(event.Key, 'return')
+            uicontrol(hPass);
+        elseif strcmp(event.Key, 'escape')
+            cancelLogin([], []);
         end
     end
-    function passKeyPress(~,event)
-        if strcmp(event.Key,'backspace')
-            pass = pass(1:end-1); %shorten password
-        elseif strcmp(event.Key,'return')
-            accepted = true;
-            uiresume, return %done
-        elseif strcmp(event.Key,'escape')
-            hUser.String = ''; pass = '';
-            uiresume, return %abort
-        elseif contains(event.Character,num2cell(char(str)))
-            pass(end+1) = event.Character; %append key to password
+
+    function groupKeyPress(~, event)
+        if strcmp(event.Key, 'return')
+            uicontrol(hUser);
+        elseif strcmp(event.Key, 'escape')
+            cancelLogin([], []);
         end
-        hPass.String = repmat(char(8226),size(pass)); %display dots instead of password
     end
-    function groupKeyPress(~,event)
-        if strcmp(event.Key,'return')
-            accepted = true;
-            uiresume, return
-        elseif strcmp(event.Key,'escape')
-            hUser.String = ''; pass = ''; hGroup.String = '';
-            uiresume, return
+
+    function passKeyPress(~, event)
+        if strcmp(event.Key, 'return')
+            submitLogin([], []);
+        elseif strcmp(event.Key, 'escape')
+            cancelLogin([], []);
+        elseif strcmp(event.Key, 'backspace')
+            if ~isempty(pass), pass = pass(1:end-1); end
+        elseif ischar(event.Character) && numel(event.Character) == 1 && ...
+                any(double(event.Character) == str)
+            pass(end+1) = event.Character;
+        end
+        if ishghandle(hPass)
+            set(hPass, 'String', repmat(char(8226), size(pass)));
         end
     end
 end

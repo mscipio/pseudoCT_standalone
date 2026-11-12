@@ -306,7 +306,8 @@ try
             values.group_account = login.group_account;
         end
         % One launcher call: resolve essential inputs and dispatch the run.
-        handles = local_set_status(handles, 'Starting processing...');
+        handles = local_set_status(handles, ...
+            'Processing - see MATLAB Command Window for progress.');
         result = local_launcher(values, handles, 'submit');
         if result.ok
             outcome = local_job_text(result);

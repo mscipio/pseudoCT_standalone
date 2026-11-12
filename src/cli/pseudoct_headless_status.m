@@ -2,8 +2,9 @@ function status = pseudoct_headless_status(result)
 %PSEUDOCT_HEADLESS_STATUS Process exit status of one validated headless result.
 %   STATUS = PSEUDOCT_HEADLESS_STATUS(RESULT) maps a validated result struct
 %   to the raw headless exit code used by pseudoct_headless_cli:
-%     0   validation ready, or a submission whose scientific completion is
-%         verified as 'completed' (local or remote);
+%     0   validation ready, authentication succeeded, or a submission whose
+%         scientific completion is verified as 'completed' (local or remote);
+%     66  authentication or group-account rejection (authenticate action);
 %     2   rejected request or profile;
 %     3   failed result, or a submitted result whose scientific completion is
 %         not verified (dispatch or scheduler acknowledgement is not

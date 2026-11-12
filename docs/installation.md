@@ -1,7 +1,7 @@
 # Installation
 
 This page covers installing and starting pseudoCT, its requirements and the supported
-profiles. The command-line reference is [Headless API and CLI](headless-cli.md). The
+profiles. The command-line reference is [Headless API and CLI](headless-cli.md), and launching pseudoCT from another application is in the [Third-party integration guide](THIRD_PARTY_INTEGRATION.md). The
 step-by-step workflow, outputs and QC are in the
 [PseudoCT User Guide](https://mscipio.github.io/pseudoCT_standalone/help/). The build,
 packaging and dependency details for developers are at the end of this page.

@@ -130,7 +130,7 @@ pseudoct --help
 - There is no GUI operation in the launcher. The MATLAB window is `run_pseudo_CT`
   (see below). `gui` and `run --orchestrate` were removed; both are refused as unknown
   operations with exit `64`.
-- `validate` (validate only) and `run` (validate, then submit) are the CLI with the same
+- `validate` (validate only) and `run` (validates, then submits in the same invocation) are the CLI with the same
   options, text/JSONL output and exit codes as in [Headless API and CLI](headless-cli.md).
 - `headless` keeps the two-positional contract and runs `runtimes/<LABEL>/pseudoct_job_manager
   headless` with `PSEUDOCT_REQUEST_MAT` and `PSEUDOCT_RESULT_MAT`.

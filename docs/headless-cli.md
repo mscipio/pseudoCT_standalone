@@ -21,7 +21,7 @@ bin/pseudoct run --profile local \
   --umap /subject/MR/UMAP/one.dcm --format jsonl
 ```
 
-`validate` checks a request. `run` validates the same request and then submits it;
+`validate` checks a request and is optional. `run` validates the same request and then submits it, and does not need a prior `validate`;
 see [Validation and submission](#validation-and-submission).
 
 The window (`run_pseudo_CT`) and the launcher share the same rules. The window runs
@@ -79,9 +79,11 @@ in [Releases](releases.md#release-and-matlab-runtime-root-selection).
   directory must exist and be writable.
 - `--current-artifact-root PATH`: **developer only.** Accepted only by the MLSC profiles; the local
   profiles reject it with exit `64`. Installed distributions do not need it.
-- `--credential-handoff FILE`: **internal.** An existing single-use credential file created by the
-  window for the submit step. Do not create or reuse it by hand. Secrets are never accepted on the
-  command line.
+- `--credential-handoff FILE` (MLSC, `run` and `authenticate`): an existing single-use credential file,
+  consumed on use and never reusable. It is created in MATLAB with `pseudo_CT_credentials('store', ...)`
+  on the same host, as the user that runs the launcher. The window creates its own handoffs; do not
+  reuse those. It replaces the terminal prompts, so `run` needs no terminal. Secrets are never accepted
+  on the command line. See the [integration guide](THIRD_PARTY_INTEGRATION.md#a5-authentication-and-credentials).
 
 Credentials are never accepted as command-line options or environment variables. For MLSC, the
 launcher asks for the username and password at the terminal (with echo off), and then for the
@@ -161,7 +163,9 @@ Each requested subject gets a set of files in its `MR_PET` folder. Their names s
     appears as `not reported`.
 - `--format jsonl`: one JSON record per line on standard output, for progress and for the final result. The
   final result record carries `outcome`, `exit_code`, the submission and scientific completion fields and, for
-  MLSC, the job IDs and run-log paths.
+  MLSC, the job IDs. It does not carry run-log paths; those are printed only in the text summary. Anything that
+  is not a progress or result record goes to stderr. The field-by-field contract for external applications is in the
+  [third-party integration guide](THIRD_PARTY_INTEGRATION.md).
 - `--result-file PATH` writes the final result record as JSON to `PATH` in either format.
 
 ## Exit codes
@@ -287,6 +291,7 @@ requires an installed distribution.
 ### Related
 
 - [README](../README.md): overview, profiles and the window and command-line steps.
+- [Third-party integration guide](THIRD_PARTY_INTEGRATION.md): launching from another application and reading progress.
 - [Installation](installation.md): installation, requirements and profiles.
 - [Releases](releases.md): packaging, runtime identity and layout.
 - [Scientific notes](scientific-notes.md): method and evidence limits.

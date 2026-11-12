@@ -1,7 +1,10 @@
 function report = pseudo_CT_run_lifecycle(varargin)
 %PSEUDO_CT_RUN_LIFECYCLE Internal run lifecycle behind pseudo_CT_orchestrate.
 %   REPORT = PSEUDO_CT_RUN_LIFECYCLE(NAME, VALUE, ...) runs the subjects of one
-%   profile. pseudo_CT_orchestrate calls it on submit, after validation. It is
+%   profile. pseudo_CT_orchestrate calls it for a submit, which is the single
+%   direct-run invocation (bin/pseudoct run): the orchestrator resolves the
+%   essential inputs and outputs in the same process, so no separate validate
+%   step is required. An explicit validate is an optional, separate check. It is
 %   not a public entry point: users call run_pseudo_CT (MATLAB frontend) or
 %   bin/pseudoct, which go through pseudo_CT_orchestrate. Calling it with no
 %   arguments, or without a profile, stops with run_pseudo_CT:ProfileRequired.
@@ -207,10 +210,13 @@ if ~isempty(config.required_matlab_release) && ...
 end
 setup_pseudo_CT_paths(pathp, config);
 
-%% === Resolved jobs: the only run input (produced by validation) ===
+%% === Resolved jobs: prepared by the orchestration layer ===
+% The orchestrator resolves the jobs in the same direct-run process. The error
+% text below predates direct run: it still says "validate, then submit", but a
+% separate validate is not a prerequisite. Only the identifier is relied upon.
 if isempty(resolved_jobs)
     error('pseudo_CT:ResolvedJobRequired', ...
-        'Run execution requires jobs resolved by validation (validate, then submit).');
+        'Run execution requires resolved jobs. Use the run action to validate and submit in one step.');
 end
 % A source checkout runs no application profile without an explicit development
 % artifact root; the refusal precedes any subject processing.
@@ -234,7 +240,7 @@ end
 
 %% === Create one persistent, owner-only run log per requested subject ===
 % Log contract: <subject-root>/MR_PET/pseudoct-run-<UTC>-<invocationUUID>.log.
-% Never deleted by this code, never pruned; created only after validation and
+% Never deleted by this code, never pruned; created only after input and
 % destination resolution, so a failure before this point leaves no log.
 [log_utc, log_uuid] = local_run_log_identity();
 all_log_files = {};
@@ -388,8 +394,12 @@ switch config.mode
             USERNAME = gui_credentials.username;
             clear gui_credentials
         else
-            [PASSWORD, USERNAME] = pseudo_CT_password_entry_dialog('enterUserName', true, ...
-                'ValidatePassword', true, 'PasswordLengthMax', 50, ...
+            [PASSWORD, USERNAME, group_account] = pseudo_CT_password_entry_dialog( ...
+                'enterUserName', true, ...
+                'enterGroupAccount', true, ...
+                'ValidatePassword', false, ...
+                'PasswordLengthMin', 1, ...
+                'PasswordLengthMax', 50, ...
                 'WindowName', sprintf('Login for: %s', config.mlsc.host));
         end
         if isequal(PASSWORD, -1) || isempty(USERNAME)

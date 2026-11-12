@@ -7,7 +7,9 @@ function [stage_map, public_stage, public_total, stage_title, public_span] = ...
 %   [STAGE_MAP, NUMBER, TOTAL, TITLE, SPAN] = PSEUDO_CT_STAGE_MAP(STAGE_MAP, N, M)
 %   translates one producer stage into its public number and total, or returns
 %   a declared multi-stage public span when one producer operation covers a
-%   composite workflow range. A policy
+%   composite workflow range. MPRAGE-only maps declare only the stages they
+%   produce; stages 9 and 10 are written as SKIPPED by pseudo_CT_finalize_subject
+%   and the public total stays 10. A policy
 %   that does not match a shipped profile raises pseudo_CT:StageMap:UnknownPolicy
 %   (fail closed; no producer numbering is inferred). An empty policy returns an
 %   empty map. An undeclared producer stage returns NUMBER=0.
