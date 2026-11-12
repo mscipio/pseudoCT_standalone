@@ -68,9 +68,11 @@ function report = pseudo_CT_run_lifecycle(varargin)
 
 %% === 0. Resolve repo root and add config/ui to path (before any calls) ===
 pathp = fileparts(fileparts(fileparts(mfilename('fullpath'))));
-addpath(fullfile(pathp, 'src', 'config'), '-begin');
-addpath(fullfile(pathp, 'src', 'gui'), '-begin');
-addpath(fullfile(pathp, 'src', 'io'), '-begin');
+if ~isdeployed
+    addpath(fullfile(pathp, 'src', 'config'), '-begin');
+    addpath(fullfile(pathp, 'src', 'gui'), '-begin');
+    addpath(fullfile(pathp, 'src', 'io'), '-begin');
+end
 run_started = tic;
 run_start_time = datestr(now, 'yyyy-mm-dd HH:MM:SS');
 run_id = datestr(now, 'yyyymmdd_HHMMSS');

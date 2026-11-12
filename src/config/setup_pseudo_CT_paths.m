@@ -159,7 +159,9 @@ if strcmp(config.mode, 'mlsc') && ...
         error('pseudo_CT:SSH2RootMissing', ...
             'Bundled SSH2 client source is missing: %s', ssh2_root);
     end
-    addpath(genpath(ssh2_root), '-begin');
+    if ~isdeployed
+        addpath(genpath(ssh2_root), '-begin');
+    end
 end
 if ~installed
     if needs_spm

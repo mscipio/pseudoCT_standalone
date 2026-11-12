@@ -33,10 +33,12 @@ api_dir = fileparts(mfilename('fullpath'));
 root_dir = fileparts(fileparts(api_dir));
 runtime_dirs = {'api'; 'cli'; 'gui'; 'orchestration'; 'backends'; ...
     'config'; 'io'; 'qc'};
-for ii = 1:length(runtime_dirs)
-    path_here = fullfile(root_dir, 'src', runtime_dirs{ii});
-    if exist(path_here, 'dir') == 7
-        addpath(genpath(path_here), '-begin');
+if ~isdeployed
+    for ii = 1:length(runtime_dirs)
+        path_here = fullfile(root_dir, 'src', runtime_dirs{ii});
+        if exist(path_here, 'dir') == 7
+            addpath(genpath(path_here), '-begin');
+        end
     end
 end
 try

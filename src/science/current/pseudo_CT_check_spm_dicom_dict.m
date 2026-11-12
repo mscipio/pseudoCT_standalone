@@ -17,12 +17,21 @@ if exist(dict_path, 'file') ~= 2
     error('pseudo_CT:SpmDicomDictMissing', ...
         'SPM DICOM dictionary not found: %s', dict_path);
 end
-addpath(resources_dir, '-begin');
-resolved = which('spm_dicom_dict.mat');
-if ~strcmp(resolved, dict_path)
-    error('pseudo_CT:SpmDicomDictMissing', ...
-        'SPM DICOM dictionary does not resolve by bare name to %s (resolves to: %s)', ...
-        dict_path, resolved);
+if isdeployed
+    % Compiled MATLAB uses its bundled search path. Do not alter it.
+    resolved = which('spm_dicom_dict.mat');
+    if isempty(resolved)
+        error('pseudo_CT:SpmDicomDictMissing', ...
+            'SPM DICOM dictionary is unavailable in the compiled application.');
+    end
+else
+    addpath(resources_dir, '-begin');
+    resolved = which('spm_dicom_dict.mat');
+    if ~strcmp(resolved, dict_path)
+        error('pseudo_CT:SpmDicomDictMissing', ...
+            'SPM DICOM dictionary does not resolve by bare name to %s (resolves to: %s)', ...
+            dict_path, resolved);
+    end
 end
 try
     dict = load(dict_path);
