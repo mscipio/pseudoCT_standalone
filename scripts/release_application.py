@@ -26,6 +26,13 @@ files copied from src/ (FRONTEND_FROM_SRC) and the SSH2 JAR and licence notices 
 --verify refuses any file outside this allowlist.
 Publication is non-overwriting and takes an exclusive lock file in the output directory.
 
+Failure handling: every selected release is attempted, even after an earlier release fails.
+Each release's complete MATLAB output and the mcc logs are kept under
+<output>/build-logs/<version>/<release>/, with a result.txt. If any release fails, nothing is
+published as pseudoct-<version>/; the staging tree (successful builds, partial packages and the
+failed builds' logs) is renamed to <output>/build-workspace-<version>-INCOMPLETE/, which is marked
+as incomplete. The exit status is nonzero whenever a requested release fails.
+
 Environment (set before running; passed through to MATLAB):
   TMPDIR, MATLAB_PREFDIR, MCR_CACHE_ROOT    keep these short (see docs/releases.md).
 
@@ -65,6 +72,8 @@ LOCK_NAME = '.pseudoct-release.lock'
 # A staged executable path longer than this is refused before MATLAB runs: earlier
 # long staging paths broke the compiled CTF extraction.
 MAX_STAGE_PATH = 240
+# Per-version log folders: <output>/build-logs/<version>/<release>/ (kept after success and failure).
+BUILD_LOG_DIR = 'build-logs'
 
 # The two compiled executables of every release. The first element is the build-private
 # staging path that build_application.m writes under its output (payload/ and standalone/
@@ -415,52 +424,219 @@ def acquire_lock(output_dir):
     return path
 
 
+def move_aside(path):
+    """Rename an existing path to the first free <path>.prev-N, so earlier diagnostics are never lost."""
+    if not os.path.lexists(path):
+        return None
+    number = 1
+    while os.path.lexists('%s.prev-%d' % (path, number)):
+        number += 1
+    target = '%s.prev-%d' % (path, number)
+    os.rename(path, target)
+    return target
+
+
+def build_log_dir(output_dir, version, label):
+    """<output>/build-logs/<version>/<label>/: complete MATLAB output and mcc logs of one release."""
+    return os.path.join(output_dir, BUILD_LOG_DIR, version, label)
+
+
+def write_text(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8', errors='replace') as handle:
+        handle.write(text)
+
+
+def copy_compiler_logs(out_root, log_dir):
+    """Copy every *.log below one release's build output (the mcc diaries) into log_dir/mcc/."""
+    copied = []
+    for dirpath, _dirnames, filenames in os.walk(out_root):
+        for name in sorted(filenames):
+            if name.endswith('.log'):
+                src = os.path.join(dirpath, name)
+                dst = os.path.join(log_dir, 'mcc', os.path.relpath(src, out_root))
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copyfile(src, dst)
+                copied.append(dst)
+    return copied
+
+
+def render_result(rec):
+    lines = ['release=%s' % rec['label'], 'status=%s' % rec['status'],
+             'exit=%s' % ('-' if rec['exit'] is None else rec['exit']),
+             'reason=%s' % (rec['reason'] or '-'),
+             'matlab_log=%s' % rec['matlab_log']]
+    lines += ['compiler_log=%s' % path for path in rec['mcc_logs']] or ['compiler_log=-']
+    return '\n'.join(lines) + '\n'
+
+
+def staged_executable_paths(build_root, label):
+    """Build-staging paths of the compiled executables of one release, exactly as
+    build_application.m writes them: <OutputRoot>/<label>/<label>.partial/<payload|standalone>/<exe>
+    with OutputRoot = <build_root>/<label>. The path is resolved the way build_application.m
+    canonicalises OutputRoot."""
+    stage = os.path.join(os.path.realpath(build_root), label, label + '.partial')
+    return [os.path.join(stage, *staged.split('/')) for staged, _installed in BUILDER_TARGETS]
+
+
+def build_release(entry, root, stage_dir, build_root, log_dir, ref):
+    """Build one release and return its record. A failure is recorded, never raised, so the
+    other releases still run. ref holds the provenance and resource references of the first
+    release that passed; every later release is only compared against them."""
+    label = entry['label']
+    out_root = os.path.join(build_root, label)
+    rec = {'label': label, 'entry': entry, 'status': 'FAIL', 'exit': None, 'reason': '',
+           'tail': '', 'matlab_log': os.path.join(log_dir, 'matlab-output.txt'),
+           'mcc_logs': [], 'built': None, 'fields': None, 'digests': None}
+    try:
+        move_aside(log_dir)
+        os.makedirs(log_dir)
+        for stage_exe in staged_executable_paths(build_root, label):
+            if len(stage_exe) > MAX_STAGE_PATH:
+                raise ReleaseError('staged executable path is %d characters (limit %d): %s; '
+                                   'choose a shorter --output'
+                                   % (len(stage_exe), MAX_STAGE_PATH, stage_exe))
+        os.makedirs(out_root)
+        print('BUILD %s via %s' % (label, root), flush=True)
+        rc, text = run_matlab(root, build_stdin(build_call(label, out_root, root)), stage_dir)
+        rec['exit'] = rc
+        write_text(rec['matlab_log'], text)
+        rec['mcc_logs'] = copy_compiler_logs(out_root, log_dir)
+        if rc != 0:
+            rec['tail'] = tail(text)
+            raise ReleaseError('MATLAB build failed (exit %d)' % rc)
+        built = os.path.join(out_root, label)
+        fields = read_builder_fields(entry, built)
+        prov = (fields['source_commit'], fields['source_set_sha256'], fields['lock_sha256'])
+        if ref['source'] is not None and prov != ref['source']:
+            raise ReleaseError('source provenance differs from an earlier release build')
+        for staged, _installed in BUILDER_TARGETS:
+            if not os.path.isfile(os.path.join(built, *staged.split('/'))):
+                raise ReleaseError('required executable missing: %s' % staged)
+        digests = collect_resources(label, built)
+        if ref['digests'] is not None and digests != ref['digests']:
+            raise ReleaseError('builder resources differ from the first release')
+        if ref['source'] is None:
+            ref['source'] = prov
+        if ref['digests'] is None:
+            ref['digests'], ref['resource_src'] = digests, built
+        rec.update(status='PASS', built=built, fields=fields, digests=digests)
+    except ReleaseError as exc:
+        rec['reason'] = str(exc)
+    except OSError as exc:
+        rec['reason'] = 'I/O error: %s' % exc
+    if rec['status'] == 'PASS':
+        print('PASS %s' % label, flush=True)
+    else:
+        print('FAIL %s: %s' % (label, rec['reason']), flush=True)
+        if rec['tail']:
+            print('  last MATLAB output (full log: %s):\n%s' % (rec['matlab_log'], rec['tail']),
+                  flush=True)
+    try:
+        write_text(os.path.join(log_dir, 'result.txt'), render_result(rec))
+    except OSError as exc:
+        print('WARNING: could not write %s: %s' % (log_dir, exc), file=sys.stderr)
+    return rec
+
+
+def preserve_workspace(stage_dir, output_dir, version):
+    """Keep the staging tree (successful builds, failed-build logs and any partial package) as a
+    clearly marked build workspace. Nothing in it is published. Returns the kept path."""
+    if not os.path.isdir(stage_dir):
+        return None
+    base = os.path.join(output_dir, 'build-workspace-%s-INCOMPLETE' % version)
+    target, number = base, 1
+    while os.path.lexists(target):
+        number += 1
+        target = '%s-%d' % (base, number)
+    try:
+        os.rename(stage_dir, target)
+    except OSError as exc:
+        print('WARNING: the build workspace could not be renamed and remains at %s: %s'
+              % (stage_dir, exc), file=sys.stderr)
+        return stage_dir
+    try:
+        write_text(os.path.join(target, 'BUILD_INCOMPLETE.txt'),
+                   'pseudoCT %s: build incomplete. No distribution was published from this '
+                   'workspace; it is kept for diagnosis only.\n' % version)
+    except OSError as exc:
+        print('WARNING: could not write the incomplete marker: %s' % exc, file=sys.stderr)
+    return target
+
+
+def summary_text(version, selected, results, published, workspace):
+    lines = ['RELEASE_SUMMARY version=%s' % version]
+    attempted = {rec['label'] for rec in results}
+    failed = []
+    for rec in results:
+        exit_text = '-' if rec['exit'] is None else str(rec['exit'])
+        lines.append('  %-8s %-4s exit=%s' % (rec['label'], rec['status'], exit_text))
+        if rec['status'] != 'PASS':
+            failed.append(rec['label'])
+            lines.append('           reason: %s' % rec['reason'])
+        lines.append('           matlab log: %s' % rec['matlab_log'])
+        for path in rec['mcc_logs']:
+            lines.append('           compiler log: %s' % path)
+    for entry in selected:
+        if entry['label'] not in attempted:
+            failed.append(entry['label'])
+            lines.append('  %-8s NOT-ATTEMPTED (assembly stopped before this release)'
+                         % entry['label'])
+    if published:
+        lines.append('RELEASE_PASS version=%s releases=%s'
+                     % (version, ','.join(entry['label'] for entry in selected)))
+    else:
+        if failed:
+            lines.append('RELEASE_FAIL version=%s failed=%s' % (version, ','.join(failed)))
+        else:
+            lines.append('RELEASE_ABORTED version=%s (every release passed; assembly or '
+                         'verification stopped before publication; see the error above)'
+                         % version)
+        lines.append('  no distribution was published; build workspace: %s'
+                     % (workspace or 'not kept (see the warning above)'))
+    return '\n'.join(lines) + '\n'
+
+
+def report_summary(version, selected, results, published, workspace, output_dir):
+    text = summary_text(version, selected, results, published, workspace)
+    print(text, end='', flush=True)
+    path = os.path.join(output_dir, BUILD_LOG_DIR, version, 'SUMMARY.txt')
+    try:
+        move_aside(path)
+        write_text(path, text)
+    except OSError as exc:
+        print('WARNING: could not write %s: %s' % (path, exc), file=sys.stderr)
+
+
 def assemble(version, selected, roots, default, catalog_entries, output_dir):
-    """Build each selected release, assemble and verify pseudoct-<version>/, then publish it."""
+    """Build every selected release, then assemble, verify and publish pseudoct-<version>/ only
+    when all of them passed. A failing release does not stop the others. On any failure, or on
+    an error before publication, the staging tree is kept as a marked build workspace and
+    nothing is published. Returns 0 when published, 1 when any release failed."""
     dest = os.path.join(output_dir, 'pseudoct-' + version)
     os.makedirs(output_dir, exist_ok=True)
-    # Short staging directory inside the output directory; removed on exit.
+    # Short staging directory inside the output directory (see MAX_STAGE_PATH). Removed after a
+    # successful publication; otherwise it becomes the marked build workspace.
     stage_dir = tempfile.mkdtemp(prefix='.s', dir=output_dir)
+    results = []
+    published = False
+    workspace = None
     try:
         pkg = os.path.join(stage_dir, 'p')
         build_root = os.path.join(stage_dir, 'b')
         os.makedirs(pkg)
         os.makedirs(build_root)
-        releases_meta = []
-        source = None
-        resource_src = None
-        resource_digests = None
+        ref = {'source': None, 'digests': None, 'resource_src': None}
         for entry in selected:
             label = entry['label']
-            root = roots[label]
-            out_root = os.path.join(build_root, label)
-            stage_exe = os.path.join(out_root + '.partial', 'standalone', 'pseudoct_job_manager')
-            if len(stage_exe) > MAX_STAGE_PATH:
-                raise ReleaseError('%s: staged executable path is %d characters (limit %d); '
-                                   'choose a shorter --output' % (label, len(stage_exe),
-                                                                  MAX_STAGE_PATH))
-            os.makedirs(out_root)
-            print('BUILD %s via %s' % (label, root), flush=True)
-            rc, text = run_matlab(root, build_stdin(build_call(label, out_root, root)), stage_dir)
-            if rc != 0:
-                raise ReleaseError('%s: MATLAB build failed (exit %d); last output:\n%s'
-                                   % (label, rc, tail(text)))
-            built = os.path.join(out_root, label)
-            fields = read_builder_fields(entry, built)
-            prov = (fields['source_commit'], fields['source_set_sha256'], fields['lock_sha256'])
-            if source is None:
-                source = prov
-            elif prov != source:
-                raise ReleaseError('%s: source provenance differs from an earlier release build'
-                                   % label)
-            for staged, _installed in BUILDER_TARGETS:
-                if not os.path.isfile(os.path.join(built, *staged.split('/'))):
-                    raise ReleaseError('%s: required executable missing: %s' % (label, staged))
-            digests = collect_resources(label, built)
-            if resource_digests is None:
-                resource_digests, resource_src = digests, built
-            elif digests != resource_digests:
-                raise ReleaseError('%s: builder resources differ from the first release' % label)
+            results.append(build_release(entry, roots[label], stage_dir, build_root,
+                                         build_log_dir(output_dir, version, label), ref))
+        if any(rec['status'] != 'PASS' for rec in results):
+            return 1
+        releases_meta = []
+        for rec in results:
+            entry, built, fields = rec['entry'], rec['built'], rec['fields']
+            label = entry['label']
             for staged, installed in BUILDER_TARGETS:
                 copy_file(os.path.join(built, *staged.split('/')),
                           os.path.join(pkg, 'runtimes', label, installed), 0o755)
@@ -473,6 +649,9 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
                 'runtime_library': entry['runtime_identity']['library'],
                 'compiler': fields['compiler'],
             })
+        resource_digests = ref['digests']
+        resource_src = ref['resource_src']
+        source = ref['source']
         for name in sorted(resource_digests):
             copy_file(os.path.join(resource_src, 'resources', name),
                       os.path.join(pkg, 'resources', name), 0o644)
@@ -524,11 +703,15 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
             os.rename(pkg, dest)
         finally:
             os.unlink(lock)
+        published = True
         print('PUBLISHED %s' % dest)
-        print('RELEASE_PASS version=%s releases=%s'
-              % (version, ','.join(meta['label'] for meta in releases_meta)))
     finally:
-        shutil.rmtree(stage_dir, ignore_errors=True)
+        if published:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+        else:
+            workspace = preserve_workspace(stage_dir, output_dir, version)
+        report_summary(version, selected, results, published, workspace, output_dir)
+    return 0
 
 
 def print_plan(version, selected, roots, output_dir):
@@ -804,8 +987,7 @@ def _main(argv):
     if args.dry_run:
         print_plan(args.version, selected, roots, output_dir)
         return 0
-    assemble(args.version, selected, roots, default, ordered, output_dir)
-    return 0
+    return assemble(args.version, selected, roots, default, ordered, output_dir)
 
 
 def main(argv=None):
