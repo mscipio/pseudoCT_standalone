@@ -54,6 +54,10 @@ Each `--mcr` value must be one of these exact labels.
 - Each release is built by `scripts/build_application.m`, which refuses a dirty git
   tree. Commit or otherwise clean the tree before a real build; this guard is
   intentional and must not be bypassed.
+- The intended RC7 release matrix is **R2010b, R2019b, R2022a and R2026a**; select it
+  explicitly with `--releases R2010b,R2019b,R2022a,R2026a`. R2014b and R2022b are
+  excluded from this release matrix, not removed from the supported catalog. The
+  default selection remains R2010b.
 
 ## Distribution layout
 
@@ -281,10 +285,24 @@ evidence is in [Scientific notes](scientific-notes.md#bounded-comparison-evidenc
 ### Staging path and temporary directories
 
 The driver stages in a short `.s<random>` directory inside `--output`. Before MATLAB
-runs, it refuses a build whose staged executable path would exceed 240 characters. Set
-these before running, to short directories outside the output tree if needed; the driver
-and MATLAB inherit them:
+runs, it refuses a build whose staged executable path would exceed 240 characters.
+Choose a short `--output` when needed; the staging layout is unchanged.
 
-- `TMPDIR` (driver temporary files and MATLAB temporary files),
-- `MATLAB_PREFDIR` (MATLAB preferences),
-- `MCR_CACHE_ROOT` (compiled-executable CTF extraction; long values broke extraction).
+For each selected release, the driver creates a private `/tmp/pct-<LABEL>-<random>/`
+directory and overrides the child MATLAB environment with short subdirectories:
+
+- `TMPDIR`: `t/` (MATLAB temporary files),
+- `MATLAB_PREFDIR`: `p/` (isolated MATLAB preferences),
+- `MCR_CACHE_ROOT`: `c/` (compiled-executable CTF extraction).
+
+For releases after R2010b, `p/javaclasspath.txt` contains the absolute path to the
+existing bundled Ganymed SSH2 JAR. It is present before MATLAB starts and supplements,
+not replaces, the existing `mcc -a` JAR inclusion. R2010b retains its existing Java
+loading procedure, without this static classpath file.
+
+Each invocation gets fresh directories, even for repeated builds of the same release.
+Only the driver-created private environment directory is removed on exit (success or
+failure); inherited environment paths, user preferences and shared MATLAB installations
+are never modified. MATLAB output and compiler logs remain in their existing locations.
+An abrupt process kill can leave a private temporary directory behind. `--dry-run`
+prints the environment preparation without creating directories or starting MATLAB.

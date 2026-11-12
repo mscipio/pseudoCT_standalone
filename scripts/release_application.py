@@ -33,8 +33,8 @@ published as pseudoct-<version>/; the staging tree (successful builds, partial p
 failed builds' logs) is renamed to <output>/build-workspace-<version>-INCOMPLETE/, which is marked
 as incomplete. The exit status is nonzero whenever a requested release fails.
 
-Environment (set before running; passed through to MATLAB):
-  TMPDIR, MATLAB_PREFDIR, MCR_CACHE_ROOT    keep these short (see docs/releases.md).
+Environment (prepared privately for each MATLAB invocation):
+  TMPDIR, MATLAB_PREFDIR, MCR_CACHE_ROOT    short, isolated paths (see docs/releases.md).
 
 Usage:
   release_application.py --version V [--releases R2010b,R2014b,...]
@@ -74,6 +74,8 @@ LOCK_NAME = '.pseudoct-release.lock'
 MAX_STAGE_PATH = 240
 # Per-version log folders: <output>/build-logs/<version>/<release>/ (kept after success and failure).
 BUILD_LOG_DIR = 'build-logs'
+# Do not inherit TMPDIR here: build hosts may point it into a deeply nested checkout.
+MATLAB_TEMP_ROOT = '/tmp'
 
 # The two compiled executables of every release. The first element is the build-private
 # staging path that build_application.m writes under its output (payload/ and standalone/
@@ -158,6 +160,7 @@ SSH2_FILES = (
     'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1.jar',
     'ssh2_v2_m1_r5/ganymed-ssh2-m1/ganymed-ssh2-m1-source/LICENSE.txt',
 )
+SSH2_JAR = os.path.join(SSH2_SOURCE_ROOT, *SSH2_FILES[1].split('/'))
 # Atlas and template files build_application.m copies from the atlas directory, and
 # SPM's DICOM dictionary copied unchanged from the SPM root.
 RESOURCE_REQUIRED = (
@@ -347,11 +350,12 @@ def build_stdin(call):
             % (matlab_text(scripts, 'repository scripts directory'), call))
 
 
-def run_matlab(root, stdin_text, cwd):
+def run_matlab(root, stdin_text, cwd, env=None):
     argv = [os.path.join(root, 'bin', 'matlab')] + MATLAB_FLAGS
     try:
         proc = subprocess.run(argv, input=stdin_text.encode('utf-8'),
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=cwd)
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=cwd,
+                              env=env)
     except OSError as exc:
         raise ReleaseError('cannot start %s: %s' % (argv[0], exc))
     return proc.returncode, proc.stdout.decode('utf-8', 'replace')
@@ -498,10 +502,27 @@ def build_release(entry, root, stage_dir, build_root, log_dir, ref):
                                    % (len(stage_exe), MAX_STAGE_PATH, stage_exe))
         os.makedirs(out_root)
         print('BUILD %s via %s' % (label, root), flush=True)
-        rc, text = run_matlab(root, build_stdin(build_call(label, out_root, root)), stage_dir)
-        rec['exit'] = rc
-        write_text(rec['matlab_log'], text)
-        rec['mcc_logs'] = copy_compiler_logs(out_root, log_dir)
+        # TemporaryDirectory owns only this freshly created, private directory. Never
+        # clean up inherited environment paths or reuse preferences between builds.
+        with tempfile.TemporaryDirectory(prefix='pct-%s-' % label,
+                                         dir=MATLAB_TEMP_ROOT) as temp_root:
+            env = os.environ.copy()
+            for key, name in (('TMPDIR', 't'), ('MATLAB_PREFDIR', 'p'),
+                              ('MCR_CACHE_ROOT', 'c')):
+                env[key] = os.path.join(temp_root, name)
+                os.mkdir(env[key])
+            # R2010b keeps its existing Java loading procedure; newer compilers
+            # need Ganymed on the static classpath before MATLAB starts. This is
+            # independent of (and does not replace) the builder's mcc -a input.
+            if label != 'R2010b':
+                with open(os.path.join(env['MATLAB_PREFDIR'], 'javaclasspath.txt'),
+                          'w', encoding='utf-8') as handle:
+                    handle.write(SSH2_JAR + '\n')
+            rc, text = run_matlab(root, build_stdin(build_call(label, out_root, root)),
+                                  stage_dir, env=env)
+            rec['exit'] = rc
+            write_text(rec['matlab_log'], text)
+            rec['mcc_logs'] = copy_compiler_logs(out_root, log_dir)
         if rc != 0:
             rec['tail'] = tail(text)
             raise ReleaseError('MATLAB build failed (exit %d)' % rc)
@@ -724,6 +745,13 @@ def print_plan(version, selected, roots, output_dir):
                                   ' '.join(MATLAB_FLAGS)))
         print('PLAN %s build: build_application(%s, Mode build, OutputRoot <staging>/b)'
               % (label, label))
+        temp_root = os.path.join(MATLAB_TEMP_ROOT, 'pct-%s-<random>' % label)
+        print('PLAN %s environment: TMPDIR=%s/t MATLAB_PREFDIR=%s/p MCR_CACHE_ROOT=%s/c'
+              % (label, temp_root, temp_root, temp_root))
+        if label != 'R2010b':
+            print('PLAN %s static Java classpath: %s/p/javaclasspath.txt -> %s'
+                  % (label, temp_root, SSH2_JAR))
+        print('PLAN %s cleanup: remove only its private environment directory on exit' % label)
     print('PLAN ship: %s, %s, %s, %s, docs/ (%d files), frontend/ (%d files), help/ (%d files), %s/ (%d files), resources/, '
           'manifest.json, SHA256SUMS'
           % (LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, BUNDLED_LOCK_NAME,
