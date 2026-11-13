@@ -1465,6 +1465,15 @@ stage_handoff() {
         PSEUDOCT_CLI_HANDOFF_OUTPUT="$handoff_output"
         if [ "$installed" -eq 1 ]; then
             export LD_LIBRARY_PATH=$mcr_ld_path
+            # R2026a rejects the deep subject tmp path at MATLAB Runtime startup.
+            # Keep credential staging in /dev/shm and diagnostics in MR_PET/tmp.
+            if [ "${SEL_RELEASE:-}" = R2026a ]; then
+                mcr_short_dir=$(umask 077; mktemp -d /tmp/pct26.XXXXXXXX) || exit 69
+                trap 'rm -rf -- "$mcr_short_dir"' EXIT
+                mkdir -p "$mcr_short_dir/prefs" "$mcr_short_dir/cache" || exit 69
+                export TMPDIR="$mcr_short_dir" TMP="$mcr_short_dir" TEMP="$mcr_short_dir"
+                export MATLAB_PREFDIR="$mcr_short_dir/prefs" MCR_CACHE_ROOT="$mcr_short_dir/cache"
+            fi
             "$standalone_exe" store_credentials >"$tmp_dir/matlab-diagnostics-store-credentials.log" 2>&1
             exit $?
         fi

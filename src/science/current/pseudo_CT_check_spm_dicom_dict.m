@@ -17,9 +17,12 @@ if exist(dict_path, 'file') ~= 2
     error('pseudo_CT:SpmDicomDictMissing', ...
         'SPM DICOM dictionary not found: %s', dict_path);
 end
-if ~isdeployed
-    % Source mode requires the installed dictionary to take precedence.
-    % Deployed mode verifies the dictionary using its absolute path below.
+% Restore the working RC7 lookup for deployed R2010b only. SPM8's
+% spm_dicom_headers uses load('spm_dicom_dict.mat') without an absolute path.
+% Newer deployed runtimes keep the existing no-addpath behavior.
+legacy_r2010b = isdeployed && ...
+    strcmp(getenv('PSEUDOCT_RUNTIME_RELEASE'), 'R2010b');
+if ~isdeployed || legacy_r2010b
     addpath(resources_dir, '-begin');
     resolved = which('spm_dicom_dict.mat');
     if ~strcmp(resolved, dict_path)

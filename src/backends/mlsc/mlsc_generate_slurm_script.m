@@ -451,6 +451,28 @@ if isempty(expected_runner_sha256) || ...
         'Current identity hashing is unavailable; failing closed before PREPARE.');
 end
 expected_mcr = mlsc_current_validate('actual_identity', pinned);
+% Installed catalog identity is major.minor (e.g., 9.7), whereas
+% VersionInfo.xml reports the full MATLAB Runtime build (e.g., 9.7.0.1190202).
+% Pin the full version observed at submission for the exact TOCTOU check.
+expected_mcr_full_version = '';
+mcr_version_xml = fullfile(pinned, 'VersionInfo.xml');
+if installed_mode && exist(mcr_version_xml, 'file') == 2
+    mcr_version_text = fileread(mcr_version_xml);
+    full_version_match = regexp(mcr_version_text, ...
+        '<[Vv][Ee][Rr][Ss][Ii][Oo][Nn]>\s*([0-9]+(\.[0-9]+){2,})\s*</[Vv][Ee][Rr][Ss][Ii][Oo][Nn]>', ...
+        'tokens', 'once');
+    if isempty(full_version_match)
+        error('pseudo_CT:MLSCPreflight', ...
+            'The selected MCR VersionInfo.xml has no valid full version.');
+    end
+    expected_mcr_full_version = full_version_match{1};
+    catalog_generation = regexp(expected_mcr_full_version, ...
+        '^[0-9]+\.[0-9]+', 'match', 'once');
+    if ~strcmp(catalog_generation, expected_mcr.generation)
+        error('pseudo_CT:MLSCPreflight', ...
+            'The selected MCR full version does not match its catalog generation.');
+    end
+end
 % Expected update for the VersionInfo branch. Source mode (pinned 7.14) keeps
 % the exact compare. Installed releases take the minimum update from their own
 % build manifest and compare as a lower bound.
@@ -539,6 +561,7 @@ if ~direct_mode
 end
 lines{end + 1} = ['expected_mcr_release=' local_shell_quote(expected_mcr.release)];
 lines{end + 1} = ['expected_mcr_version=' local_shell_quote(expected_mcr.version)];
+lines{end + 1} = ['expected_mcr_full_version=' local_shell_quote(expected_mcr_full_version)];
 lines{end + 1} = ['expected_mcr_update=' num2str(expected_update_value, '%.0f')];
 lines{end + 1} = ['expected_mcr_arch=' local_shell_quote(expected_mcr.arch)];
 lines{end + 1} = ['expected_mcr_generation=' local_shell_quote(expected_mcr.generation)];
@@ -588,6 +611,10 @@ lines{end + 1} = '    printf ''Current MCR_ROOT structure is malformed.\n'' >&2'
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
 lines{end + 1} = 'if [ -f "$current_mcr_root/VersionInfo.xml" ]; then';
+lines{end + 1} = 'if [ -z "$expected_mcr_full_version" ]; then';
+lines{end + 1} = '    printf ''MCR VersionInfo.xml appeared after preflight.\n'' >&2';
+lines{end + 1} = '    exit 72';
+lines{end + 1} = 'fi';
 lines{end + 1} = '# B4A exact MCR identity (same rules as mlsc_current_validate):';
 lines{end + 1} = '# extract ACTUAL fields from VersionInfo.xml, then exact compare.';
 lines{end + 1} = '# No substring matching: Update 2 vs Update 20 cannot confuse';
@@ -607,7 +634,7 @@ lines{end + 1} = 'if [ -z "$actual_mcr_version" ]; then';
 lines{end + 1} = '    printf ''Current MCR_ROOT version identity is unknown.\n'' >&2';
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
-lines{end + 1} = 'if [ "$actual_mcr_version" != "$expected_mcr_version" ]; then';
+lines{end + 1} = 'if [ "$actual_mcr_version" != "$expected_mcr_full_version" ]; then';
 lines{end + 1} = '    printf ''Current MCR_ROOT version changed after preflight (TOCTOU).\n'' >&2';
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
@@ -673,6 +700,10 @@ lines{end + 1} = '    printf ''Current MCR_ROOT architecture changed after prefl
 lines{end + 1} = '    exit 72';
 lines{end + 1} = 'fi';
 lines{end + 1} = 'else';
+lines{end + 1} = 'if [ -n "$expected_mcr_full_version" ]; then';
+lines{end + 1} = '    printf ''MCR VersionInfo.xml disappeared after preflight.\n'' >&2';
+lines{end + 1} = '    exit 72';
+lines{end + 1} = 'fi';
 if installed_mode
     % Installed release (no VersionInfo.xml): the selected runtime library and
     % the catalog version file are the fail-closed identity evidence.
