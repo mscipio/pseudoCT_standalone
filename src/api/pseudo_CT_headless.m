@@ -372,11 +372,16 @@ direct_run = isempty(fieldnames(request.resolved_job));
 if direct_run
     % No validation-result MAT: the orchestration process resolves the job
     % and enters the existing execution lifecycle in a single call.
-    api_request = struct('profile', request.profile, ...
-        'invocation_id', request.invocation_id, ...
-        'subjects', request.subjects, 'umap_files', request.umap_files, ...
-        'output_config', request.output_config, ...
-        'current_artifact_root', request.current_artifact_root);
+    % Use one scalar request. Passing cell-array subject lists to struct(...)
+    % expands them into a struct array (one element per subject), which breaks
+    % subsequent scalar option assignments and multi-subject submission.
+    api_request = struct();
+    api_request.profile = request.profile;
+    api_request.invocation_id = request.invocation_id;
+    api_request.subjects = request.subjects;
+    api_request.umap_files = request.umap_files;
+    api_request.output_config = request.output_config;
+    api_request.current_artifact_root = request.current_artifact_root;
     options = fieldnames(request.options);
     for ii = 1:numel(options)
         api_request.(options{ii}) = request.options.(options{ii});
