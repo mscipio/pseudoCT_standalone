@@ -115,6 +115,7 @@ mkdir(fullfile(actual_mcr_root, 'toolbox', 'compiler'));
 local_write(fullfile(actual_package_root, 'bin', 'pseudoct'), ...
     local_synthetic_launcher(root_dir, catalog_base));
 local_chmod(fullfile(actual_package_root, 'bin', 'pseudoct'));
+local_bundled_python(actual_package_root);
 local_write(fullfile(actual_package_root, 'manifest.json'), { ...
     '{'; ...
     '  "catalog": {'; ...
@@ -257,6 +258,7 @@ mkdir(fullfile(all_root, 'bin'));
 local_write(fullfile(all_root, 'bin', 'pseudoct'), ...
     local_synthetic_launcher(root_dir, catalog_base));
 local_chmod(fullfile(all_root, 'bin', 'pseudoct'));
+local_bundled_python(all_root);
 catalog_text = local_read(fullfile(root_dir, 'config', 'releases.json'));
 local_write(fullfile(all_root, 'manifest.json'), ...
     {['{"catalog": ' strtrim(catalog_text) '}']});
@@ -364,6 +366,23 @@ cleanup_fid = onCleanup(@() fclose(fid)); %#ok<NASGU>
 for ii = 1:length(lines)
     fprintf(fid, '%s\n', lines{ii});
 end
+end
+
+function local_bundled_python(package_root)
+%LOCAL_BUNDLED_PYTHON Stand-in for the installed package's private python/bin/python3,
+%   required by the real launcher: a wrapper around the development interpreter
+%   (PSEUDOCT_PYTHON, else python3), resolved once here, as in test_standalone_release.py.
+%   The real bundled runtime is checked by the release driver's --verify.
+host = strtrim(getenv('PSEUDOCT_PYTHON'));
+if isempty(host)
+    [status, host] = system('command -v python3');
+    assert(status == 0, 'A development python3 is needed for the synthetic bundled runtime.');
+    host = strtrim(host);
+end
+mkdir(fullfile(package_root, 'python', 'bin'));
+interpreter = fullfile(package_root, 'python', 'bin', 'python3');
+local_write(interpreter, {'#!/bin/sh'; ['exec ' local_shell_quote(host) ' "$@"']});
+local_chmod(interpreter);
 end
 
 function local_chmod(path_text)

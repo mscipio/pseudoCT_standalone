@@ -58,6 +58,24 @@ Each `--mcr` value must be one of these exact labels.
   explicitly with `--releases R2010b,R2019b,R2022a,R2026a`. R2014b and R2022b are
   excluded from this release matrix, not removed from the supported catalog. The
   default selection remains R2010b.
+- **Bundled Python.** `config/python-runtime.json` pins the private Python runtime: CPython
+  3.13.18 from python-build-standalone release `20261026`, the
+  `x86_64-unknown-linux-gnu` `install_only_stripped` archive, with its URL and sha256. The
+  driver never downloads it. Fetch it once on the build host into the local, git-ignored
+  cache and check it:
+
+  ```sh
+  mkdir -p external/python-build-standalone && cd external/python-build-standalone
+  curl -fLO 'https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.13.18%2B20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz'
+  echo 'df15fe60d3ff55bf9dcf25824b5572756bb8816ff93865a273d3301d7066a8b7  cpython-3.13.18+20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz' | sha256sum -c
+  ```
+
+  `--python-archive FILE` names another location. A missing archive or a sha256 that differs
+  from the pin stops the build before MATLAB starts. The licence texts of CPython and its
+  bundled third-party libraries are kept in `config/python-runtime-licenses/`; they were
+  copied from `python/licenses/` of the matching `pgo+lto-full` archive, whose name and sha256
+  are recorded in the pin. To change the Python version, update the pin and those texts
+  together.
 
 ## Distribution layout
 
@@ -72,9 +90,24 @@ pseudoct-<version>/
   runtimes/<LABEL>/pseudoct_job_manager               compiled job manager (dispatcher)
   external/ssh2_v2_m1_r5/                            Ganymed JAR and two licence notices (no loose SSH2 .m files)
   resources/                                         atlas and template files, and SPM's DICOM dictionary (spm_dicom_dict.mat, copied unchanged)
+  python/bin/python3                                 private CPython interpreter, shared by all releases
+  python/lib/python3.13/                             its standard library
+  python/licenses/                                   CPython and third-party licence texts
   manifest.json                                      catalog manifest read by bin/pseudoct (embeds the release catalog)
   SHA256SUMS                                         sorted checksums, includes manifest.json
 ```
+
+- `python/` is the only Python the distribution uses. `bin/pseudoct` and the frontend's
+  result reader run `python/bin/python3 -I -B`, isolated from `PYTHONPATH`, `PYTHONHOME`,
+  user site packages and the working directory. A missing `python/bin/python3` is an
+  incomplete installation: the launcher and the frontend stop with a reinstall message and
+  never fall back to a system or Conda Python. A repository checkout is development-only and
+  uses `PSEUDOCT_PYTHON`, else `python3`. Only the interpreter and its standard library are
+  shipped: no Tcl/Tk or `tkinter`, IDLE, `pip`, `ensurepip`, `venv`, headers, `libpython`
+  for embedding, or bytecode caches (the launcher writes none). It adds about 44 MB (about
+  15 MB compressed) and needs Linux x86_64 with glibc 2.17 or newer. `manifest.json`
+  records it under `python`, and `--verify` runs it once to check its version, the
+  launcher's standard-library modules and that its prefix is the package's own `python/`.
 
 - `frontend/` holds the window, its profile selector, the request bridge and the
   profile table. The credential store and the password dialog (with its tools) are

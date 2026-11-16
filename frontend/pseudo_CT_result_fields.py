@@ -14,6 +14,11 @@ FIELDS = ("outcome", "exit_code", "submission_status", "authentication_status",
           "error_code", "error_message", "invocation_id", "profile", "action")
 
 
+# Joins the lines of a multi-line error_message on its single output line; the frontend
+# turns it back into line breaks. Control characters never reach the output otherwise.
+LINE_SEPARATOR = "\x1f"
+
+
 def clean(value):
     """Return VALUE as one line: None becomes "", lists are space-joined, whitespace collapses."""
     if value is None:
@@ -21,6 +26,19 @@ def clean(value):
     if isinstance(value, list):
         return " ".join(str(item) for item in value)
     return " ".join(str(value).split())
+
+
+def clean_lines(value):
+    """Return VALUE's non-blank lines joined by LINE_SEPARATOR, each line kept as written
+    (leading indentation included) with control characters replaced by spaces."""
+    if value is None:
+        return ""
+    lines = []
+    for line in str(value).splitlines():
+        line = "".join(" " if ch < " " or ch == "\x7f" else ch for ch in line).rstrip()
+        if line.strip():
+            lines.append(line)
+    return LINE_SEPARATOR.join(lines)
 
 
 def main():
@@ -40,7 +58,10 @@ def main():
     if record is None:
         sys.exit(3)
     for name in FIELDS:
-        print("%s=%s" % (name, clean(record.get(name))))
+        if name == "error_message":
+            print("%s=%s" % (name, clean_lines(record.get(name))))
+        else:
+            print("%s=%s" % (name, clean(record.get(name))))
     print("job_ids=%s" % clean(record.get("job_ids", [])))
 
 

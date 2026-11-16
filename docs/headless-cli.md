@@ -24,6 +24,18 @@ bin/pseudoct run --profile local \
 `validate` checks a request and is optional. `run` validates the same request and then submits it, and does not need a prior `validate`;
 see [Validation and submission](#validation-and-submission).
 
+One or more subjects can be given as a [subjects file](#subjects-file), with the same syntax
+for one subject or many:
+
+```sh
+bin/pseudoct check-subjects --profile mlsc --subjects subjects.txt
+bin/pseudoct run --profile mlsc --subjects subjects.txt --mcr R2019b
+```
+
+`check-subjects` is read-only: it checks the file, its paths and its DICOM series, and starts no
+MATLAB Runtime, authentication or processing. `validate` additionally checks output folders and
+runtime dependencies.
+
 The window (`run_pseudo_CT`) and the launcher share the same rules. The window runs
 `bin/pseudoct run` with a text result and reads the final result record from a file.
 
@@ -52,6 +64,10 @@ in [Releases](releases.md#release-and-matlab-runtime-root-selection).
 
 - `--profile NAME` (required): one of the four canonical profiles (`local`, `mlsc`,
   `local-mprage-only`, `mlsc-mprage-only`); see [Installation](installation.md#supported-profiles).
+- `--subjects FILE`: one or more subjects from a [subjects file](#subjects-file). The whole file
+  is checked before runtime selection, MATLAB, authentication or any file creation; every error
+  is reported together and the launcher exits `64`. Use one input form: `--subjects`,
+  `--mprage`/`--umap` or `--config`.
 - `--mprage FILE [--umap FILE]`: one subject. On standard profiles the UMAP may be omitted;
   the launcher then discovers it from the subject layout. MPRAGE-only profiles reject `--umap`.
 - `--config job.json`: several subjects. The JSON object has a non-empty `mprage` string
@@ -84,6 +100,68 @@ in [Releases](releases.md#release-and-matlab-runtime-root-selection).
   on the same host, as the user that runs the launcher. The window creates its own handoffs; do not
   reuse those. It replaces the terminal prompts, so `run` needs no terminal. Secrets are never accepted
   on the command line. See the [integration guide](THIRD_PARTY_INTEGRATION.md#a5-authentication-and-credentials).
+
+## Subjects file
+
+A subjects file lists each subject's MPRAGE and UMAP together:
+
+```ini
+# pseudoCT subjects v1
+
+[Subject_001]
+MPRAGE = /data/subject01/T1.nii.gz
+UMAP = /data/subject01/MR/UMAP/image.dcm
+
+[Subject_002]
+MPRAGE = "/data/subject 02/MR/MPRAGE"
+UMAP = "/data/subject 02/MR/UMAP"
+```
+
+Grammar:
+
+- The file is UTF-8 text (a byte-order mark and Windows line endings are accepted).
+- Blank lines are ignored. A line whose first non-blank character is `#` is a comment; there
+  are no inline comments, so `#` later in a line is part of the value.
+- `[SubjectID]` starts a subject. An identifier has 1 to 64 letters, digits, `.`, `_` or `-`,
+  starts with a letter or digit, and is unique (compared without regard to case).
+- `KEY = value` sets a field of the current subject. Spaces or tabs around `=` are optional,
+  and the line is split at its first `=`, so a value may contain `=`. Keys are `MPRAGE` and
+  `UMAP`, in any letter case; each may appear once per subject.
+- A value may be enclosed in matching `"` or `'` quotes. The text between them is taken
+  literally, including spaces, the other quote character and `\` (no escape sequences), so
+  Windows-style backslashes are kept. Without quotes, the value is the text after `=` with
+  surrounding spaces and tabs removed. A value that starts with a quote must end with the
+  same quote.
+- A relative path is resolved against the folder that contains the subjects file. `~` is not
+  expanded.
+- Every subject needs `MPRAGE`. `UMAP` is required by the `local` and `mlsc` profiles and is
+  refused by the MPRAGE-only profiles. Execution settings (profile, release, processing
+  options) are command-line options and are refused in the file.
+
+Inputs:
+
+- MPRAGE: a NIfTI file (`.nii`, `.nii.gz`), a representative DICOM file of the series, or a
+  DICOM series directory. UMAP: a DICOM file or a DICOM series directory.
+- A directory must hold exactly one DICOM image series (one SeriesInstanceUID among its
+  image files) directly inside it; subdirectories are not searched. Non-DICOM files, and
+  DICOM objects without image dimensions (Rows and Columns), such as reports or raw data,
+  are ignored and reported. The series' first image file, by name, is passed to the
+  pipeline as the representative file, and the existing DICOM conversion
+  collects the rest of the series from the same folder. A directory with several series, or
+  with none, is refused with the series it found; pseudoCT never chooses between series.
+- Two subjects may not use the same MPRAGE input.
+
+Errors list the file, line, subject and reason, for example:
+
+```text
+pseudoct: the subjects file subjects.txt is invalid (2 errors); nothing was started:
+  subjects.txt:7: subject Subject_002: unmatched double quote in the MPRAGE value
+  subjects.txt:12: subject Subject_003: MPRAGE directory /data/s3/MR: the directory contains 2 DICOM series (...)
+```
+
+Subjects run one after another, as with `--config`. In MATLAB, `run_pseudo_CT('Profile', P,
+'Subject', 'subjects.txt')` passes the file to the launcher, and `'Subject', {{MPRAGE, UMAP},
+...}` writes the pairs to a temporary subjects file first.
 
 Credentials are never accepted as command-line options or environment variables. For MLSC, the
 launcher asks for the username and password at the terminal (with echo off), and then for the

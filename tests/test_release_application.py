@@ -46,11 +46,23 @@ def write(path, text):
 FIXTURE_VERSION = '0.0.0-test'
 
 
-def make_package(root, labels=('R2010b',), *, version):
+# Synthetic bundled interpreter: answers the --verify module check as a correctly
+# relocated runtime does (pinned version, prefix = the package's own python/ folder).
+PYTHON_PIN = ra.load_python_pin()
+PYTHON_STUB = ('#!/bin/sh\n'
+               'prefix=$(cd "$(dirname "$0")/.." && pwd -P)\n'
+               'printf \'{"version": "%s", "prefix": "%%s"}\\n\' "$prefix"\n'
+               % PYTHON_PIN['version'])
+
+
+def make_package(root, labels=('R2010b',), *, version, python_stub=PYTHON_STUB):
     """A synthetic package with every required path and a consistent manifest and sums."""
     pkg = os.path.join(root, 'pseudoct-' + version)
     for rel in ra.required_paths(labels):
         write(os.path.join(pkg, *rel.split('/')), 'synthetic ' + rel + '\n')
+    interpreter = os.path.join(pkg, *ra.PYTHON_EXE_REL.split('/'))
+    write(interpreter, python_stub)
+    os.chmod(interpreter, 0o755)
     files = []
     for dirpath, _dirs, names in os.walk(pkg):
         for name in names:
@@ -65,6 +77,7 @@ def make_package(root, labels=('R2010b',), *, version):
         'releases': [{'label': label} for label in labels],
         'catalog': {'schema': 1, 'default': labels[0], 'releases': catalog_entries},
         'source': {'commit': 'x', 'set_sha256': 'x', 'lock_sha256': 'x'},
+        'python': ra.python_record(PYTHON_PIN),
         'files': sorted(files, key=lambda record: record['path']),
     }
     manifest_bytes = ra.render_manifest(manifest)
@@ -264,6 +277,16 @@ class VerifyTest(unittest.TestCase):
         pkg2 = make_package(self.base, version='1.0.1')
         write(os.path.join(pkg2, ra.SUMS_NAME), 'bad\n')
         self.assertTrue(any('SHA256SUMS' in p for p in ra.verify_package(pkg2)))
+        # The bundled interpreter is required and must pass its module check.
+        pkg3 = make_package(self.base, version='1.0.2')
+        os.remove(os.path.join(pkg3, *ra.PYTHON_EXE_REL.split('/')))
+        problems = ra.verify_package(pkg3)
+        self.assertTrue(any('missing file: python/bin/python3' in p for p in problems), problems)
+        pkg4 = make_package(self.base, version='1.0.3',
+                            python_stub='#!/bin/sh\necho "No module named json" >&2\nexit 1\n')
+        problems = ra.verify_package(pkg4)
+        self.assertTrue(any('bundled Python interpreter failed its module check' in p
+                            and 'No module named json' in p for p in problems), problems)
 
     def test_verify_entry_point_exit_status(self):
         pkg = make_package(self.base, version='2.0.0')

@@ -20,7 +20,12 @@ function out = pseudo_CT_launch_request(action, varargin)
 %
 %   ARGV = PSEUDO_CT_LAUNCH_REQUEST('argv', REQUEST, CONFIG_PATH) returns the
 %   launcher argument cell (without the launcher path). CONFIG_PATH is used
-%   only for multi-subject requests.
+%   only for multi-subject requests: the --subjects file written for Subject
+%   pairs, or the --config JSON for a cell of MPRAGE paths.
+%
+%   Subject inputs: 'Subject', FILE passes a subjects file (--subjects FILE);
+%   'Subject', {{MPRAGE, UMAP}, ...} is written to a temporary subjects file by
+%   'invoke'. The launcher parses and checks subjects files; MATLAB does not.
 %   JSON = PSEUDO_CT_LAUNCH_REQUEST('config', REQUEST) returns the multi-subject
 %   --config text (mprage and umap arrays).
 %   KEY = PSEUDO_CT_LAUNCH_REQUEST('fingerprint', REQUEST) returns the text that
@@ -68,7 +73,8 @@ function req = local_parse(args, root_dir)
 if ~iscell(args) || mod(numel(args), 2) ~= 0
     error('pseudo_CT:FrontendUsage', 'Arguments must be Name, Value pairs.');
 end
-req = struct('profile', '', 'mprage', {{}}, 'umap', {{}}, 'action', 'validate', ...
+req = struct('profile', '', 'mprage', {{}}, 'umap', {{}}, 'subjects_file', '', ...
+    'subjects', {{}}, 'action', 'validate', ...
     'cli_action', 'validate', 'runtime', '', 'mcr_root', '', 'launcher', '', ...
     'correct_aliasing', '', 'recenter', '', 'cleanup', '', 'artifact_root', '', ...
     'group_account', '', 'host_key_file', '', 'credential_handoff', '');
@@ -91,6 +97,8 @@ for kk = 1:2:numel(args)
             req.mprage = local_path_list(value, 'MPRAGE');
         case 'umap'
             req.umap = local_path_list(value, 'UMAP');
+        case 'subject'
+            [req.subjects_file, req.subjects] = local_subject_value(value);
         case 'action'
             req.action = lower(local_text(value, 'Action'));
             if ~any(strcmp(req.action, {'validate'; 'submit'; 'authenticate'}))
@@ -123,8 +131,15 @@ for kk = 1:2:numel(args)
             error('pseudo_CT:FrontendUsage', 'Unknown parameter: %s', name);
     end
 end
-if isempty(req.profile) || isempty(req.mprage)
-    error('pseudo_CT:FrontendUsage', 'Profile and MPRAGE are required.');
+has_subject = ~isempty(req.subjects_file) || ~isempty(req.subjects);
+if isempty(req.profile) || (isempty(req.mprage) && ~has_subject)
+    error('pseudo_CT:FrontendUsage', 'Profile and Subject (or MPRAGE) are required.');
+end
+if has_subject && (~isempty(req.mprage) || ~isempty(req.umap))
+    error('pseudo_CT:FrontendUsage', 'Use either Subject or MPRAGE/UMAP, not both.');
+end
+if ~isempty(req.subjects_file)
+    local_require_file(req.subjects_file, 'Subject file');
 end
 if ~any(strcmp(req.profile, {'local'; 'local-mprage-only'; 'mlsc'; 'mlsc-mprage-only'}))
     error('pseudo_CT:InvalidProfile', 'Unknown profile: %s', req.profile);
@@ -222,7 +237,11 @@ if ~isempty(req.mcr_root)
     argv = [argv, {'--mcr-root', req.mcr_root}];
 end
 argv = [argv, {'--profile', req.profile}];
-if numel(req.mprage) > 1
+if ~isempty(req.subjects_file)
+    argv = [argv, {'--subjects', req.subjects_file}];
+elseif ~isempty(req.subjects)
+    argv = [argv, {'--subjects', config_path}];
+elseif numel(req.mprage) > 1
     argv = [argv, {'--config', config_path}];
 else
     argv = [argv, {'--mprage', req.mprage{1}}];
@@ -294,6 +313,54 @@ else
 end
 end
 
+function text = local_subjects_text(pairs)
+%LOCAL_SUBJECTS_TEXT Subjects-file text for SUBJECT pairs {MPRAGE, UMAP} ('' UMAP: none).
+%   Values are double-quoted; the format reads the text between the quotes literally,
+%   and the paths are absolute single lines (local_subject_value).
+lines = {'# pseudoCT subjects v1'; '# Written by run_pseudo_CT from its Subject argument.'};
+for kk = 1:numel(pairs)
+    lines{end + 1, 1} = ''; %#ok<AGROW>
+    lines{end + 1, 1} = sprintf('[Subject_%03d]', kk); %#ok<AGROW>
+    lines{end + 1, 1} = ['MPRAGE = "' pairs{kk}{1} '"']; %#ok<AGROW>
+    if ~isempty(pairs{kk}{2})
+        lines{end + 1, 1} = ['UMAP = "' pairs{kk}{2} '"']; %#ok<AGROW>
+    end
+end
+text = [local_join(lines, char(10)) char(10)];
+end
+
+function [file, pairs] = local_subject_value(value)
+%LOCAL_SUBJECT_VALUE 'Subject': a subjects-file path, or a cell of {MPRAGE} or
+%   {MPRAGE, UMAP} cells (one per subject; a single subject is {{MPRAGE, UMAP}}).
+%   Relative paths are made absolute against the current folder. Existence, file
+%   type and DICOM series are checked by the launcher, for all subjects together.
+file = '';
+pairs = {};
+if ischar(value)
+    file = local_abs(local_text(value, 'Subject'));
+    return;
+end
+if ~iscell(value) || isempty(value)
+    error('pseudo_CT:FrontendUsage', ['Subject must be a subjects-file path or a cell ' ...
+        'of {MPRAGE, UMAP} cells.']);
+end
+pairs = cell(1, numel(value));
+for kk = 1:numel(value)
+    item = value{kk};
+    if ~iscell(item) || numel(item) < 1 || numel(item) > 2
+        error('pseudo_CT:FrontendUsage', ['Subject %d must be a cell {MPRAGE, UMAP} ' ...
+            '(or {MPRAGE} for an MPRAGE-only profile); one subject is written ' ...
+            '{{MPRAGE, UMAP}}.'], kk);
+    end
+    mprage = local_abs(local_text(item{1}, sprintf('Subject %d MPRAGE', kk)));
+    umap = '';
+    if numel(item) == 2
+        umap = local_abs(local_text(item{2}, sprintf('Subject %d UMAP', kk)));
+    end
+    pairs{kk} = {mprage, umap};
+end
+end
+
 function text = local_json_list(values)
 text = '';
 for kk = 1:numel(values)
@@ -310,7 +377,13 @@ if exist(req.launcher, 'file') ~= 2
     error('pseudo_CT:FrontendLauncher', 'The launcher is unavailable: %s', req.launcher);
 end
 config_path = '';
-if numel(req.mprage) > 1 && ~strcmp(req.cli_action, 'authenticate')
+if ~isempty(req.subjects) && ~strcmp(req.cli_action, 'authenticate')
+    % Subject pairs travel to the launcher as a subjects file, the same input as
+    % 'Subject', FILE; the launcher parses and checks it.
+    config_path = [tempname '.txt'];
+    local_write_text(config_path, local_subjects_text(req.subjects));
+    cleanup_config = onCleanup(@() local_delete(config_path)); %#ok<NASGU>
+elseif numel(req.mprage) > 1 && ~strcmp(req.cli_action, 'authenticate')
     config_path = [tempname '.json'];
     local_write_text(config_path, local_config_text(req));
     cleanup_config = onCleanup(@() local_delete(config_path)); %#ok<NASGU>
@@ -329,7 +402,7 @@ status = system(command);
 stderr_text = local_read(err_file);
 script = fullfile(fileparts(mfilename('fullpath')), 'pseudo_CT_result_fields.py');
 [parse_status, parse_text] = system([local_clean_prefix() ...
-    'python3 -I -B ' local_sh(script) ' ' local_sh(result_file)]);
+    local_sh(local_python()) ' -I -B ' local_sh(script) ' ' local_sh(result_file)]);
 fields = struct();
 if parse_status == 0
     fields = local_key_values(parse_text);
@@ -348,13 +421,35 @@ if out.record_found
     out.scientific_completion_status = local_field(fields, 'scientific_completion_status');
     out.backend = local_field(fields, 'backend');
     out.error_code = local_field(fields, 'error_code');
-    out.error_message = local_field(fields, 'error_message');
+    % Lines of a multi-line message arrive joined by the unit separator (char 31).
+    out.error_message = strrep(local_field(fields, 'error_message'), char(31), char(10));
     out.job_ids = local_split_words(local_field(fields, 'job_ids'));
 end
 out.ok = (status == 0) && out.record_found;
 if status ~= 0 && isempty(out.error_message)
     out.error_message = sprintf('launcher exit status %d: %s', status, ...
         local_tail(stderr_text, 300));
+end
+end
+
+function python = local_python()
+%LOCAL_PYTHON Interpreter for frontend helper scripts, chosen like bin/pseudoct does. An
+%   installed distribution (no src/ beside run_pseudo_CT.m) always uses its own private
+%   runtime python/bin/python3, never a system Python; a missing runtime is an error. A
+%   source checkout is development-only: PSEUDOCT_PYTHON, else python3.
+root_dir = fileparts(fileparts(mfilename('fullpath')));
+if ~local_is_installed(root_dir)
+    python = strtrim(getenv('PSEUDOCT_PYTHON'));
+    if isempty(python)
+        python = 'python3';
+    end
+    return;
+end
+python = fullfile(root_dir, 'python', 'bin', 'python3');
+if exist(python, 'file') ~= 2
+    error('pseudo_CT:FrontendLauncher', ['This pseudoCT installation is incomplete: ' ...
+        'python/bin/python3 is missing beside run_pseudo_CT.m. Reinstall the pseudoCT ' ...
+        'distribution.']);
 end
 end
 
@@ -405,10 +500,23 @@ end
 for kk = 1:numel(req.umap)
     parts{end + 1, 1} = ['umap=' req.umap{kk} local_file_stamp(req.umap{kk})]; %#ok<AGROW>
 end
+if ~isempty(req.subjects_file)
+    parts{end + 1, 1} = ['subjects_file=' req.subjects_file ...
+        local_file_stamp(req.subjects_file)];
+end
+for kk = 1:numel(req.subjects)
+    parts{end + 1, 1} = sprintf('subject%d=%s%s|%s%s', kk, ...
+        req.subjects{kk}{1}, local_file_stamp(req.subjects{kk}{1}), ...
+        req.subjects{kk}{2}, local_file_stamp(req.subjects{kk}{2})); %#ok<AGROW>
+end
 text = local_join(parts, char(10));
 end
 
 function stamp = local_file_stamp(path_text)
+if isempty(path_text)
+    stamp = '';
+    return;
+end
 info = dir(path_text);
 if isempty(info)
     stamp = '|missing';

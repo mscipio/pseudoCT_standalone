@@ -37,8 +37,9 @@ auth_code=''
 usage() {
     cat <<'USAGE'
 Usage:
-  pseudoct run      --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
-  pseudoct validate --profile PROFILE (--mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
+  pseudoct run      --profile PROFILE (--subjects FILE | --mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
+  pseudoct validate --profile PROFILE (--subjects FILE | --mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
+  pseudoct check-subjects --profile PROFILE --subjects FILE
   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
   pseudoct --list-releases
@@ -47,7 +48,9 @@ Usage:
 Operations:
   run                 Execute one request directly; no prior validate is required (CLI options below).
   validate            Optional check of a request; nothing is submitted (CLI options below).
-  authenticate        MLSC only: authenticate and select the account without processing
+  check-subjects      Check a subjects file for PROFILE: syntax, paths and DICOM series.
+                      Read-only: no MATLAB Runtime, authentication or processing.
+  authenticate       MLSC only: authenticate and select the account without processing
                       (used by the window; needs --credential-handoff).
   headless            Run one v2 headless request MAT into a result MAT.
   resolve             Validate one MATLAB Runtime and print sourceable PSEUDOCT_* lines.
@@ -61,6 +64,10 @@ installation. The runtime identity is always validated against the catalog.
 
 Options (run, validate):
   --profile NAME                  Canonical supported profile (required)
+  --subjects FILE                 One or more subjects: [SubjectID] sections with MPRAGE and
+                                  UMAP (UMAP only for profiles that need it); MPRAGE/UMAP may
+                                  be NIfTI, a DICOM file or a one-series DICOM directory.
+                                  The whole file is checked before anything starts.
   --mprage FILE --umap FILE       One subject; UMAP may be omitted for discovery
   --config job.json               Multi-subject JSON with mprage[] and optional umap[]
   --correct-aliasing yes|no       Override profile default
@@ -99,7 +106,7 @@ error_record() {
         esac
     fi
     if [ "${format:-text}" = jsonl ] || [ -n "${result_file:-}" ]; then
-        python3 - "${invocation_id:-}" "${action:-unknown}" \
+        pyrun - "${invocation_id:-}" "${action:-unknown}" \
             "${profile:-}" "$error_class" "$message" "$code" \
             "$operation_phase" "${format:-text}" "${result_file:-}" <<'PY'
 import json, os, sys, tempfile
@@ -189,6 +196,25 @@ else
     catalog_mode=catalog
 fi
 
+# Python interpreter for every launcher helper (catalog, subjects file, requests, results).
+# An installed distribution always runs its private bundled runtime python/bin/python3,
+# shared by all its releases; it never uses a system or Conda Python, and a missing runtime
+# fails closed. A repository checkout is development-only: PSEUDOCT_PYTHON, else python3.
+if [ "$installed" -eq 1 ]; then
+    python_bin=$root_dir/python/bin/python3
+    [ -f "$python_bin" ] && [ -x "$python_bin" ] ||
+        fail_op 'this pseudoCT installation is incomplete (python/bin/python3 is missing); reinstall the pseudoCT distribution' "$EXIT_RUNTIME"
+else
+    python_bin=${PSEUDOCT_PYTHON:-python3}
+fi
+
+# pyrun ARGS...: the selected interpreter, isolated from the caller's Python setup. -I ignores
+# PYTHON* variables (PYTHONPATH, PYTHONHOME, ...) and the user site directory and never imports
+# from the working directory; -B writes no bytecode.
+pyrun() {
+    "$python_bin" -I -B "$@"
+}
+
 # Parent of the catalog MATLAB Runtime locations <base>/<D>, where D is the first two dotted
 # components of a release's matlab_version (9.6.0.1072779 -> 9.6, 7.11 -> 7.11). Fixed.
 catalog_mcr_base=/usr/pubsw/common/matlab
@@ -257,7 +283,517 @@ else:
 '
 
 catalog_query() {
-    python3 -I -B -c "$CATALOG_PY" "$catalog" "$catalog_key" "$1" "${2-}" "$root_dir" "$catalog_mode"
+    pyrun -c "$CATALOG_PY" "$catalog" "$catalog_key" "$1" "${2-}" "$root_dir" "$catalog_mode"
+}
+
+# Subject-file reader: subjects_tool resolve|report PROFILE SUBJECTS_FILE.
+# Parses the INI-like subjects file (grammar in docs/headless-cli.md), checks every
+# subject against PROFILE, and resolves each DICOM series directory to one
+# representative file of its single series. Nothing is written and no MATLAB runs.
+# Exit 0: resolve prints "COUNT", then ID, MPRAGE, UMAP ("" when absent) per subject,
+# then "end"; report prints a readable summary. Exit 1: stdout holds every error found,
+# each with file, line and subject. Exit 2: the file could not be checked at all.
+subjects_tool() {
+    pyrun - "$@" <<'PY'
+import os, re, struct, sys
+
+MAX_FILE_BYTES = 1 << 20
+MAX_DIR_ENTRIES = 20000
+MAX_MESSAGE_CHARS = 60000
+FIELDS = ("MPRAGE", "UMAP")
+ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+BLANKS = " \t\f\v"
+# Execution settings are command-line options, never subject fields.
+SETTINGS = {"profile", "action", "mcr", "mcrroot", "runtime", "correctaliasing",
+            "recenterbeforenormalization", "cleanuponsuccess", "currentartifactroot",
+            "groupaccount", "hostkeyfile", "credentialhandoff", "maxconcurrent",
+            "format", "resultfile", "launcher"}
+
+# --- DICOM header reading: series identity and image dimensions of one file -----------
+# Reads only the elements up to (0028,0011); values are never interpreted beyond these
+# tags. Unreadable or non-DICOM files return None and are ignored. A file is an image
+# when it has nonzero Rows and Columns; other DICOM objects are auxiliary.
+LONG_VRS = {b"OB", b"OD", b"OF", b"OL", b"OV", b"OW", b"SQ", b"SV", b"UC", b"UN",
+            b"UR", b"UT", b"UV"}
+WANTED = {0x00080060: "modality", 0x0008103E: "description",
+          0x0020000E: "uid", 0x00200011: "number"}
+DIMENSIONS = {0x00280010: "rows", 0x00280011: "columns"}
+LAST_WANTED = 0x00280011
+UNDEFINED = 0xFFFFFFFF
+IMPLICIT_LE = "1.2.840.10008.1.2"
+EXPLICIT_BE = "1.2.840.10008.1.2.2"
+DEFLATED = "1.2.840.10008.1.2.1.99"
+
+
+def exact(handle, count):
+    data = handle.read(count)
+    if len(data) != count:
+        raise ValueError("truncated DICOM element")
+    return data
+
+
+def element_header(handle, explicit, big):
+    head = handle.read(4)
+    if not head:
+        return None
+    if len(head) != 4:
+        raise ValueError("truncated DICOM tag")
+    order = ">" if big else "<"
+    group, element = struct.unpack(order + "HH", head)
+    tag = (group << 16) | element
+    if group == 0xFFFE:
+        return tag, None, struct.unpack(order + "I", exact(handle, 4))[0]
+    if not explicit:
+        return tag, None, struct.unpack(order + "I", exact(handle, 4))[0]
+    vr = exact(handle, 2)
+    if not (65 <= vr[0] <= 90 and 65 <= vr[1] <= 90):
+        raise ValueError("invalid DICOM value representation")
+    if vr in LONG_VRS:
+        exact(handle, 2)
+        return tag, vr, struct.unpack(order + "I", exact(handle, 4))[0]
+    return tag, vr, struct.unpack(order + "H", exact(handle, 2))[0]
+
+
+def skip_sequence(handle, explicit, big, depth):
+    # An undefined-length sequence: items until the sequence delimitation item.
+    if depth > 32:
+        raise ValueError("DICOM sequences nested too deeply")
+    while True:
+        header = element_header(handle, explicit, big)
+        if header is None:
+            raise ValueError("unterminated DICOM sequence")
+        tag, _, length = header
+        if tag == 0xFFFEE0DD:
+            return
+        if tag != 0xFFFEE000:
+            raise ValueError("unexpected element in DICOM sequence")
+        if length != UNDEFINED:
+            handle.seek(length, 1)
+            continue
+        while True:
+            header = element_header(handle, explicit, big)
+            if header is None:
+                raise ValueError("unterminated DICOM item")
+            tag, vr, length = header
+            if tag == 0xFFFEE00D:
+                break
+            if length == UNDEFINED:
+                skip_sequence(handle, explicit and vr != b"UN", big, depth + 1)
+            else:
+                handle.seek(length, 1)
+
+
+def series_of(path):
+    try:
+        with open(path, "rb") as handle:
+            return read_series(handle)
+    except (OSError, ValueError, struct.error):
+        return None
+
+
+def read_series(handle):
+    preamble = handle.read(132)
+    if len(preamble) == 132 and preamble[128:] == b"DICM":
+        syntax = None
+        while True:
+            position = handle.tell()
+            head = handle.read(6)
+            if len(head) != 6:
+                return None
+            group, element = struct.unpack("<HH", head[:4])
+            if group != 0x0002:
+                handle.seek(position)
+                break
+            vr = head[4:]
+            if vr in LONG_VRS:
+                exact(handle, 2)
+                length = struct.unpack("<I", exact(handle, 4))[0]
+            else:
+                length = struct.unpack("<H", exact(handle, 2))[0]
+            if length == UNDEFINED or length > 65536:
+                return None
+            value = exact(handle, length)
+            if element == 0x0010:
+                syntax = value.rstrip(b"\0 ").decode("ascii", "replace").strip()
+        if not syntax or syntax == DEFLATED:
+            return None
+        explicit = syntax != IMPLICIT_LE
+        big = syntax == EXPLICIT_BE
+    else:
+        # No Part 10 preamble: accept only an implicit little-endian dataset whose
+        # first element is in the identifying group 0008.
+        handle.seek(0)
+        head = handle.read(2)
+        if len(head) != 2 or struct.unpack("<H", head)[0] != 0x0008:
+            return None
+        handle.seek(0)
+        explicit, big = False, False
+    found = {}
+    while True:
+        header = element_header(handle, explicit, big)
+        if header is None:
+            break
+        tag, vr, length = header
+        if tag > LAST_WANTED:
+            break
+        if length == UNDEFINED:
+            skip_sequence(handle, explicit and vr != b"UN", big, 1)
+            continue
+        if tag in WANTED:
+            if length > 1024:
+                return None
+            text = exact(handle, length).decode("ascii", "replace")
+            found[WANTED[tag]] = text.strip("\0 ").strip()
+        elif tag in DIMENSIONS:
+            if length != 2:
+                return None
+            found[DIMENSIONS[tag]] = struct.unpack((">" if big else "<") + "H",
+                                                   exact(handle, 2))[0]
+        else:
+            handle.seek(length, 1)
+    if not found.get("uid"):
+        return None
+    found["image"] = bool(found.get("rows")) and bool(found.get("columns"))
+    return found
+
+
+def resolve_series_directory(directory):
+    """(representative file, detail) or (None, error) for one DICOM series directory."""
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError as error:
+        return None, "cannot list the directory (%s)" % (error.strerror or "error")
+    if len(names) > MAX_DIR_ENTRIES:
+        return None, ("the directory has more than %d entries; name a single series "
+                      "directory or a representative DICOM file" % MAX_DIR_ENTRIES)
+    series = {}
+    order = []
+    subdirectories = 0
+    nifti = 0
+    auxiliary = 0
+    for name in names:
+        if name.startswith("."):
+            continue
+        candidate = os.path.join(directory, name)
+        if os.path.isdir(candidate):
+            subdirectories += 1
+            continue
+        if not os.path.isfile(candidate):
+            continue
+        lowered = name.lower()
+        if lowered.endswith(".nii") or lowered.endswith(".nii.gz"):
+            nifti += 1
+            continue
+        info = series_of(candidate)
+        if info is None:
+            continue
+        if not info["image"]:
+            # Reports, raw data, spectroscopy or other non-image objects: never the
+            # representative file and never a competing series.
+            auxiliary += 1
+            continue
+        uid = info["uid"]
+        if uid not in series:
+            series[uid] = {"files": [], "info": info}
+            order.append(uid)
+        series[uid]["files"].append(candidate)
+    if not series:
+        reason = "the directory contains no readable DICOM image file"
+        if auxiliary:
+            reason += " (%d non-image DICOM file%s ignored)" % (
+                auxiliary, "" if auxiliary == 1 else "s")
+        if nifti:
+            reason += "; name the NIfTI file itself"
+        if subdirectories:
+            reason += "; subdirectories are not searched"
+        return None, reason
+    if len(series) > 1:
+        labels = []
+        for uid in order:
+            info = series[uid]["info"]
+            label = "series %s" % (info.get("number") or "?")
+            if info.get("description"):
+                label += " '%s'" % info["description"]
+            labels.append("%s (%d files)" % (label, len(series[uid]["files"])))
+        return None, ("the directory contains %d DICOM image series (%s); name a directory "
+                      "that holds one series, or a representative DICOM file"
+                      % (len(series), "; ".join(labels)))
+    entry = series[order[0]]
+    info = entry["info"]
+    detail = "DICOM series directory: %d image files, series %s" % (
+        len(entry["files"]), info.get("number") or "?")
+    if info.get("description"):
+        detail += " '%s'" % info["description"]
+    if auxiliary:
+        detail += "; %d non-image DICOM file%s ignored" % (
+            auxiliary, "" if auxiliary == 1 else "s")
+    return entry["files"][0], detail
+
+
+# --- Subjects file ----------------------------------------------------------------
+class Subject(object):
+    def __init__(self, ident, line):
+        self.ident = ident
+        self.line = line
+        self.fields = {}
+        self.unusable = set()
+        self.resolved = {}
+        self.details = {}
+
+
+def describe_file(path):
+    lowered = path.lower()
+    if lowered.endswith(".nii") or lowered.endswith(".nii.gz"):
+        return "NIfTI file"
+    return "DICOM file"
+
+
+def check(profile, path):
+    errors = []
+    display = path
+
+    def add(line, subject, message):
+        errors.append((line, subject, message))
+
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_FILE_BYTES + 1)
+    except OSError as error:
+        add(None, None, "cannot read the subjects file (%s)" % (error.strerror or "error"))
+        return None, errors, display
+    if len(data) > MAX_FILE_BYTES:
+        add(None, None, "the subjects file is larger than %d bytes" % MAX_FILE_BYTES)
+        return None, errors, display
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        add(data[:error.start].count(b"\n") + 1, None, "the line is not valid UTF-8 text")
+        return None, errors, display
+    if text.startswith("﻿"):
+        text = text[1:]
+    base = os.path.dirname(os.path.abspath(path))
+    mprage_only = "mprage-only" in profile
+
+    subjects = []
+    by_id = {}
+    current = None
+    for number, raw in enumerate(re.split(r"\r\n|\r|\n", text), 1):
+        line = raw.strip(BLANKS)
+        subject_id = current.ident if current is not None else None
+        if not line or line.startswith("#"):
+            continue
+        if "\0" in line:
+            add(number, subject_id, "the line contains a NUL character")
+            continue
+        if line.startswith("["):
+            if not line.endswith("]"):
+                add(number, None, "malformed section header; expected [SubjectID]")
+                current = Subject("?", number)
+                current.unusable.update(FIELDS)
+                continue
+            ident = line[1:-1].strip(BLANKS)
+            current = Subject(ident or "?", number)
+            if not ID_PATTERN.match(ident):
+                add(number, ident or None, "invalid subject identifier '%s'; use 1-64 "
+                    "letters, digits, '.', '_' or '-', starting with a letter or digit"
+                    % ident)
+                current.unusable.update(FIELDS)
+                continue
+            first = by_id.get(ident.lower())
+            if first is not None:
+                add(number, ident, "duplicate subject identifier (first defined as [%s] "
+                    "on line %d)" % (first.ident, first.line))
+                current.unusable.update(FIELDS)
+                continue
+            by_id[ident.lower()] = current
+            subjects.append(current)
+            continue
+        if "=" not in line:
+            add(number, subject_id, "malformed line; expected [SubjectID], "
+                "'MPRAGE = path', 'UMAP = path', a # comment or a blank line")
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip(BLANKS)
+        value = value.strip(BLANKS)
+        if not key:
+            add(number, subject_id, "missing field name before '='")
+            continue
+        if current is None:
+            add(number, None, "field '%s' appears before the first [SubjectID] header" % key)
+            continue
+        name = key.upper()
+        if name not in FIELDS:
+            if re.sub(r"[-_ ]", "", key.lower()) in SETTINGS:
+                add(number, subject_id, "'%s' is an execution setting; pass it as a "
+                    "command-line option, not in the subjects file" % key)
+            else:
+                add(number, subject_id, "unknown field '%s'; only MPRAGE and UMAP are "
+                    "accepted" % key)
+            continue
+        if name in current.fields:
+            add(number, subject_id, "duplicate %s field (first given on line %d)"
+                % (name, current.fields[name][1]))
+            continue
+        if value[:1] in ("'", '"'):
+            quote = value[0]
+            if len(value) < 2 or value[-1] != quote:
+                add(number, subject_id, "unmatched %s quote in the %s value"
+                    % ("double" if quote == '"' else "single", name))
+                current.fields[name] = (None, number)
+                continue
+            value = value[1:-1]
+        if not value:
+            add(number, subject_id, "%s path is empty" % name)
+            current.fields[name] = (None, number)
+            continue
+        current.fields[name] = (value, number)
+
+    if not subjects and not errors:
+        add(None, None, "the subjects file defines no [SubjectID] section")
+
+    used_mprage = {}
+    for subject in subjects:
+        if "MPRAGE" not in subject.fields:
+            add(subject.line, subject.ident, "missing required MPRAGE field")
+        if mprage_only and "UMAP" in subject.fields:
+            add(subject.fields["UMAP"][1], subject.ident,
+                "UMAP is not accepted by the MPRAGE-only profile %s" % profile)
+        elif not mprage_only and "UMAP" not in subject.fields:
+            add(subject.line, subject.ident,
+                "missing required UMAP field (profile %s requires a UMAP)" % profile)
+        for name in FIELDS:
+            if name not in subject.fields or name in subject.unusable:
+                continue
+            value, number = subject.fields[name]
+            if value is None or (name == "UMAP" and mprage_only):
+                continue
+            target = value if os.path.isabs(value) else os.path.join(base, value)
+            target = os.path.abspath(target)
+            if any(c in target for c in "\r\n"):
+                add(number, subject.ident, "%s path contains a line break" % name)
+                continue
+            if not os.path.exists(target):
+                add(number, subject.ident, "%s path does not exist: %s" % (name, target))
+                continue
+            if os.path.isdir(target):
+                resolved, detail = resolve_series_directory(target)
+                if resolved is None:
+                    add(number, subject.ident, "%s directory %s: %s" % (name, target, detail))
+                    continue
+            elif os.path.isfile(target):
+                resolved, detail = target, describe_file(target)
+            else:
+                add(number, subject.ident, "%s path is neither a file nor a directory: %s"
+                    % (name, target))
+                continue
+            if not os.access(resolved, os.R_OK):
+                add(number, subject.ident, "%s file is not readable: %s" % (name, resolved))
+                continue
+            subject.resolved[name] = resolved
+            subject.details[name] = detail
+            if name == "MPRAGE":
+                key = os.path.realpath(resolved)
+                other = used_mprage.get(key)
+                if other is not None:
+                    add(number, subject.ident, "MPRAGE input is also used by subject %s "
+                        "(line %d)" % (other.ident, other.fields["MPRAGE"][1]))
+                else:
+                    used_mprage[key] = subject
+    return subjects, errors, display
+
+
+def error_text(errors, display):
+    ordered = sorted(errors, key=lambda item: (item[0] or 0))
+    lines = ["the subjects file %s is invalid (%d error%s); nothing was started:"
+             % (display, len(errors), "" if len(errors) == 1 else "s")]
+    used = len(lines[0])
+    for index, (number, subject, message) in enumerate(ordered):
+        where = display if number is None else "%s:%d" % (display, number)
+        text = "  %s: %s%s" % (where, "subject %s: " % subject if subject else "", message)
+        if used + len(text) > MAX_MESSAGE_CHARS:
+            lines.append("  ... %d more error(s) not shown" % (len(ordered) - index))
+            break
+        lines.append(text)
+        used += len(text) + 1
+    return "\n".join(lines)
+
+
+def main():
+    if len(sys.argv) != 4 or sys.argv[1] not in ("resolve", "report"):
+        print("internal subjects_tool usage error")
+        return 2
+    mode, profile, path = sys.argv[1:]
+    subjects, errors, display = check(profile, path)
+    if errors:
+        print(error_text(errors, display))
+        return 1
+    if mode == "resolve":
+        out = [str(len(subjects))]
+        for subject in subjects:
+            out.extend([subject.ident, subject.resolved["MPRAGE"],
+                        subject.resolved.get("UMAP", "")])
+        out.append("end")
+        sys.stdout.write("\n".join(out) + "\n")
+        return 0
+    print("Subjects file %s: %d subject%s valid for profile %s." % (
+        display, len(subjects), "" if len(subjects) == 1 else "s", profile))
+    for subject in subjects:
+        print("  [%s]" % subject.ident)
+        for name in FIELDS:
+            if name in subject.resolved:
+                print("    %-8s%s" % (name + ":", subject.resolved[name]))
+                print("            (%s)" % subject.details[name])
+    print("Paths and DICOM series were checked; output folders, runtime dependencies and "
+          "MLSC access are checked by 'pseudoct validate'.")
+    return 0
+
+
+try:
+    sys.exit(main())
+except (KeyboardInterrupt, SystemExit):
+    raise
+except Exception as error:
+    print("the subjects file could not be checked (%s)" % type(error).__name__)
+    sys.exit(2)
+PY
+}
+
+# check-subjects --profile PROFILE --subjects FILE: read-only subjects-file check. No
+# MATLAB Runtime, authentication, temporary folder or result record is involved.
+op_check_subjects() {
+    profile=''
+    subjects=''
+    seen_subjects=0
+    while [ "$#" -gt 0 ]; do
+        option=$1
+        shift
+        case "$option" in
+            --profile|--subjects)
+                [ "$#" -ge 1 ] || fail_op "$option is missing its value" "$EXIT_USAGE"
+                value=$1
+                shift
+                ;;
+            --profile=*) value=${option#*=}; option=--profile ;;
+            --subjects=*) value=${option#*=}; option=--subjects ;;
+            -h|--help) usage; exit 0 ;;
+            *) fail_op "check-subjects does not accept $option (see --help)" "$EXIT_USAGE" ;;
+        esac
+        case "$option" in
+            --profile) [ -z "$profile" ] || fail_op 'specify --profile only once' "$EXIT_USAGE"; profile=$value ;;
+            --subjects) [ "$seen_subjects" -eq 0 ] || fail_op 'specify --subjects only once' "$EXIT_USAGE"; subjects=$value; seen_subjects=1 ;;
+        esac
+    done
+    case " $profiles " in *" $profile "*) ;; *) fail_op 'check-subjects requires a supported --profile' "$EXIT_USAGE" ;; esac
+    [ "$seen_subjects" -eq 1 ] && [ -n "$subjects" ] || fail_op 'check-subjects requires --subjects FILE' "$EXIT_USAGE"
+    rc=0
+    report=$(subjects_tool report "$profile" "$subjects") || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        printf '%s\n' "$report"
+        exit 0
+    elif [ "$rc" -eq 1 ]; then
+        fail_op "$report" "$EXIT_USAGE"
+    fi
+    fail_op "${report:-the subjects file could not be checked}" "$EXIT_RUNTIME"
 }
 
 # Single-quote a value for sourcing: embedded quotes become '\''.
@@ -594,6 +1130,8 @@ op_run() {
     mprage=''
     umap=''
     config=''
+    subjects=''
+    subjects_resolved=''
     correct_aliasing=''
     recenter=''
     cleanup_success=''
@@ -607,6 +1145,7 @@ op_run() {
     seen_mprage=0
     seen_umap=0
     seen_config=0
+    seen_subjects=0
     seen_group_account=0
     check_account=0
 
@@ -615,7 +1154,7 @@ op_run() {
         shift
         case "$option" in
             --check-account) check_account=1; continue ;;
-            --profile|--mprage|--umap|--config|--correct-aliasing|\
+            --profile|--mprage|--umap|--config|--subjects|--correct-aliasing|\
             --recenter-before-normalization|--cleanup-on-success|\
             --current-artifact-root|--group-account|--host-key-file|\
             --credential-handoff|--format|--result-file)
@@ -627,6 +1166,7 @@ op_run() {
             --mprage=*) value=${option#*=}; option=--mprage ;;
             --umap=*) value=${option#*=}; option=--umap ;;
             --config=*) value=${option#*=}; option=--config ;;
+            --subjects=*) value=${option#*=}; option=--subjects ;;
             --correct-aliasing=*) value=${option#*=}; option=--correct-aliasing ;;
             --recenter-before-normalization=*) value=${option#*=}; option=--recenter-before-normalization ;;
             --cleanup-on-success=*) value=${option#*=}; option=--cleanup-on-success ;;
@@ -644,6 +1184,7 @@ op_run() {
             --mprage) [ "$seen_mprage" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --mprage only once.'; mprage=$value; seen_mprage=1 ;;
             --umap) [ "$seen_umap" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --umap only once.'; umap=$value; seen_umap=1 ;;
             --config) [ "$seen_config" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --config only once.'; config=$value; seen_config=1 ;;
+            --subjects) [ "$seen_subjects" -eq 0 ] || error_record "$EXIT_USAGE" 'Specify --subjects only once.'; subjects=$value; seen_subjects=1 ;;
             --correct-aliasing) correct_aliasing=$value ;;
             --recenter-before-normalization) recenter=$value ;;
             --cleanup-on-success) cleanup_success=$value ;;
@@ -677,19 +1218,24 @@ op_run() {
     if [ "$action" = authenticate ]; then
         # authenticate takes no inputs or processing options: refused before any work.
         [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] && [ "$seen_config" -eq 0 ] &&
+            [ "$seen_subjects" -eq 0 ] &&
             [ -z "$correct_aliasing$recenter$cleanup_success$artifact_root" ] ||
             error_record "$EXIT_USAGE" 'authenticate takes only --profile, --credential-handoff, --group-account, --host-key-file, --mcr/--mcr-root, --result-file and --format.'
         case "$profile" in mlsc|mlsc-mprage-only) ;; *) error_record "$EXIT_USAGE" 'authenticate requires a remote MLSC profile.' ;; esac
         [ -n "$credential_handoff" ] || error_record "$EXIT_USAGE" 'authenticate requires --credential-handoff.'
         [ -f "$credential_handoff" ] && [ -r "$credential_handoff" ] ||
             error_record "$EXIT_USAGE" 'The credential handoff is unavailable or unreadable.'
+    elif [ "$seen_subjects" -eq 1 ]; then
+        [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] && [ "$seen_config" -eq 0 ] || \
+            error_record "$EXIT_USAGE" 'Use only one input form: --subjects, --config, or --mprage/--umap.'
+        [ -n "$subjects" ] || error_record "$EXIT_USAGE" '--subjects requires a file path.'
     elif [ "$seen_config" -eq 1 ]; then
         [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] || \
             error_record "$EXIT_USAGE" 'Use either --config or single-subject --mprage/--umap flags.'
         [ -f "$config" ] && [ -r "$config" ] || \
             error_record "$EXIT_USAGE" 'The job configuration file is unavailable.'
     else
-        [ "$seen_mprage" -eq 1 ] || error_record "$EXIT_USAGE" 'Specify --mprage or --config.'
+        [ "$seen_mprage" -eq 1 ] || error_record "$EXIT_USAGE" 'Specify --subjects, --mprage or --config.'
     fi
     for flag_value in "$correct_aliasing" "$recenter" "$cleanup_success"; do
         case "$flag_value" in ''|yes|no) ;; *) error_record "$EXIT_USAGE" 'Processing options accept only yes or no.' ;; esac
@@ -719,8 +1265,21 @@ op_run() {
     fi
     case "$group_account$artifact_root$host_key_file$credential_handoff" in *$'\n'*|*$'\r'*) error_record "$EXIT_USAGE" 'CLI text values cannot contain line breaks.' ;; esac
     if [ -n "$credential_handoff" ]; then
-        credential_handoff=$(python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$credential_handoff") || \
+        credential_handoff=$(pyrun -c 'import os,sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$credential_handoff") || \
             error_record "$EXIT_USAGE" 'Credential handoff path is invalid.'
+    fi
+    # The whole subjects file is checked here, before any runtime selection, MATLAB start,
+    # authentication or file creation; every error is reported in one message.
+    if [ "$seen_subjects" -eq 1 ]; then
+        rc=0
+        subjects_resolved=$(subjects_tool resolve "$profile" "$subjects") || rc=$?
+        if [ "$rc" -eq 1 ]; then
+            error_record "$EXIT_USAGE" "$subjects_resolved"
+        elif [ "$rc" -ne 0 ]; then
+            error_record "$EXIT_RUNTIME" "${subjects_resolved:-The subjects file could not be checked.}"
+        fi
+        # As for --config, the first subject's MPRAGE owns the CLI transport directory.
+        mprage=$(printf '%s\n' "$subjects_resolved" | sed -n 3p)
     fi
 
     # Release selection. A repository checkout has no release selection and is refused
@@ -759,7 +1318,7 @@ if [ "$action" = authenticate ]; then
     # authenticate has no subject: no MR_PET directory is resolved or created.
     subject_temp=''
 else
-subject_temp=$(python3 - "$config" "$mprage" "$seen_config" <<'PY'
+subject_temp=$(pyrun - "$config" "$mprage" "$seen_config" <<'PY'
 import json, os, sys
 try:
     if sys.argv[3] == '1':
@@ -823,7 +1382,7 @@ cleanup() {
         stty "$tty_state" < /dev/tty 2>/dev/null || true
     fi
     if [ -n "$secret_dir" ] && [ -d "$secret_dir" ]; then
-        python3 - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
+        pyrun - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
 import os, sys
 path = sys.argv[1]
 try:
@@ -840,7 +1399,7 @@ except OSError:
 PY
     fi
     if [ -n "$handoff_registry" ] && [ -f "$handoff_registry" ]; then
-        python3 - "$handoff_registry" <<'PY' >/dev/null 2>&1 || true
+        pyrun - "$handoff_registry" <<'PY' >/dev/null 2>&1 || true
 import os, re, stat, sys
 try:
     with open(sys.argv[1], "r", encoding="utf-8") as registry:
@@ -902,7 +1461,7 @@ summary_file=$tmp_dir/result-summary.txt
 if [ "$action" = authenticate ]; then
     # authenticate input: zero subject lines, then the group account and host-key values
     # that prepare_authenticate reads. No path is validated here.
-    python3 - "$input_file" "$profile" "$invocation_id" "$group_account" "$host_key_file" <<'PY' || error_record "$EXIT_USAGE" 'Authentication input is invalid.'
+    pyrun - "$input_file" "$profile" "$invocation_id" "$group_account" "$host_key_file" <<'PY' || error_record "$EXIT_USAGE" 'Authentication input is invalid.'
 import os, sys
 output, profile, invocation, account, host_key = sys.argv[1:]
 for value in (account, host_key):
@@ -914,12 +1473,12 @@ with open(output, "x", encoding="utf-8", newline="\n") as f:
 os.chmod(output, 0o600)
 PY
 fi
-if [ "$action" != authenticate ] && ! python3 - "$input_file" "$profile" "$invocation_id" "$config" \
+if [ "$action" != authenticate ] && ! pyrun - "$input_file" "$profile" "$invocation_id" "$config" \
     "$mprage" "$umap" "$seen_config" "$seen_umap" "$correct_aliasing" \
     "$recenter" "$cleanup_success" "$artifact_root" "$group_account" \
-    "$host_key_file" <<'PY'
+    "$host_key_file" "$seen_subjects" 3<<<"$subjects_resolved" <<'PY'
 import json, os, sys
-output, profile, invocation, config_path, mprage, umap, has_config, has_umap, aliasing, recenter, cleanup, artifact_root, account, host_key = sys.argv[1:]
+output, profile, invocation, config_path, mprage, umap, has_config, has_umap, aliasing, recenter, cleanup, artifact_root, account, host_key, has_subjects = sys.argv[1:]
 
 def fail(message):
     print("pseudoct: " + message, file=sys.stderr)
@@ -930,7 +1489,26 @@ def one_line(value, label):
         fail(label + " must be non-empty text without line breaks.")
     return os.path.abspath(os.path.expanduser(value))
 
-if has_config == "1":
+if has_subjects == "1":
+    # Subjects already checked and resolved by subjects_tool, one record per subject
+    # (ID, MPRAGE, UMAP), on descriptor 3. Each MPRAGE stays paired with its UMAP.
+    with os.fdopen(3, "r", encoding="utf-8", newline="\n") as f:
+        records = f.read().split("\n")
+    try:
+        count = int(records[0])
+    except (IndexError, ValueError):
+        fail("resolved subject list is invalid.")
+    if count < 1 or len(records) < 3 * count + 2 or records[3 * count + 1] != "end":
+        fail("resolved subject list is invalid.")
+    pairs = [(records[3 * i + 2], records[3 * i + 3]) for i in range(count)]
+    mprages = [one_line(m, "MPRAGE path") for m, _ in pairs]
+    if all(u for _, u in pairs):
+        umaps = [one_line(u, "UMAP path") for _, u in pairs]
+    elif not any(u for _, u in pairs):
+        umaps = None
+    else:
+        fail("every subject must have a UMAP, or none may.")
+elif has_config == "1":
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             job = json.load(f)
@@ -1047,7 +1625,7 @@ run_headless() {
     request_path=$2
     result_path=$3
     set +e
-    python3 - "$self" "$request_path" \
+    pyrun - "$self" "$request_path" \
         "$result_path" "$format" "$tmp_dir/matlab-diagnostics-${4:-$phase}.log" \
         "$invocation_id" "$run_log_index" "$profile" \
         ${headless_args[@]+"${headless_args[@]}"} <<'PY'
@@ -1497,7 +2075,7 @@ MATLAB
     fi
     credential_handoff=$(cat "$handoff_output")
     [ -n "$credential_handoff" ] || error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.'
-    python3 - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
+    pyrun - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
 import os, sys
 try:
     p=sys.argv[1]
@@ -1527,7 +2105,7 @@ run_authenticate() {
     if ! matlab_support verify_result '' "$auth_result" "$summary_file" authenticate; then
         error_record "$EXIT_RUNTIME" 'Authentication result MAT failed schema/binding verification.'
     fi
-    auth_code=$(python3 - "$summary_file" <<'PY'
+    auth_code=$(pyrun - "$summary_file" <<'PY'
 import sys
 v = open(sys.argv[1], encoding="utf-8").read().splitlines()
 status = v[0] if len(v) > 0 else ""
@@ -1603,7 +2181,7 @@ if [ "$action" = authenticate ]; then
     if ! matlab_support verify_result '' "$auth_result" "$summary_file" authenticate; then
         error_record "$EXIT_RUNTIME" 'Authentication result MAT failed schema/binding verification.'
     fi
-    python3 - "$summary_file" "$invocation_id" "$profile" "$format" "${result_file:-}" <<'PY'
+    pyrun - "$summary_file" "$invocation_id" "$profile" "$format" "${result_file:-}" <<'PY'
 import json, os, sys, tempfile
 
 summary, invocation, profile, output_format, result_path = sys.argv[1:]
@@ -1730,14 +2308,14 @@ fi
 operation_phase=validate_done
 
 if [ "$check_account" -eq 1 ]; then
-    python3 - "$summary_file" <<'PY' >/dev/null 2>&1
+    pyrun - "$summary_file" <<'PY' >/dev/null 2>&1
 import sys
 v = open(sys.argv[1], encoding="utf-8").read().splitlines()
 raise SystemExit(0 if v and v[0] == "ready" and v[8] == "validate" else 1)
 PY
     validation_ready=$?
     if [ "$validation_ready" -ne 0 ]; then
-        python3 - "$summary_file" "$invocation_id" "$profile" "$format" "${result_file:-}" "$subject_temp" "$action" <<'PY'
+        pyrun - "$summary_file" "$invocation_id" "$profile" "$format" "${result_file:-}" "$subject_temp" "$action" <<'PY'
 import datetime, json, os, sys, tempfile
 
 def write_validation_file(mr_pet, invocation, text):
@@ -1846,7 +2424,7 @@ PY
 fi
 fi
 
-python3 - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" "$run_log_index" "${result_file:-}" "$subject_temp" <<'PY'
+pyrun - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" "$run_log_index" "${result_file:-}" "$subject_temp" <<'PY'
 import datetime, json, os, re, sys, tempfile
 summary, invocation, profile, action, output_format, backend, log_index, result_path, subject_temp = sys.argv[1:]
 
@@ -2024,6 +2602,7 @@ case "$operation" in
         list_releases ;;
     run) op_run run "$@" ;;
     validate) op_run validate "$@" ;;
+    check-subjects) op_check_subjects "$@" ;;
     authenticate) op_run authenticate "$@" ;;
     headless) op_headless "$@" ;;
     resolve) op_resolve "$@" ;;

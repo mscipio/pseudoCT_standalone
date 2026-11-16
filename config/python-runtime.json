@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "implementation": "CPython",
+  "version": "3.13.18",
+  "distribution": "python-build-standalone",
+  "release": "20261026",
+  "target": "x86_64-unknown-linux-gnu",
+  "flavor": "install_only_stripped",
+  "glibc_minimum": "2.17",
+  "archive": "cpython-3.13.18+20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+  "archive_sha256": "df15fe60d3ff55bf9dcf25824b5572756bb8816ff93865a273d3301d7066a8b7",
+  "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.13.18%2B20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+  "license_source": {
+    "archive": "cpython-3.13.18+20261026-x86_64-unknown-linux-gnu-pgo+lto-full.tar.zst",
+    "archive_sha256": "f003449a05408c2e4b184f2a7abd1ea277081ff1a9100289075243ab5ed81207",
+    "member": "python/licenses/",
+    "copy": "config/python-runtime-licenses/"
+  },
+  "licenses": [
+    "LICENSE.bdb.txt",
+    "LICENSE.bzip2.txt",
+    "LICENSE.cpython.txt",
+    "LICENSE.expat.txt",
+    "LICENSE.libX11.txt",
+    "LICENSE.libXau.txt",
+    "LICENSE.libedit.txt",
+    "LICENSE.libffi.txt",
+    "LICENSE.liblzma.txt",
+    "LICENSE.libuuid.txt",
+    "LICENSE.libxcb.txt",
+    "LICENSE.mpdecimal.txt",
+    "LICENSE.ncurses.txt",
+    "LICENSE.openssl-3.txt",
+    "LICENSE.sqlite.txt",
+    "LICENSE.tcl.txt",
+    "LICENSE.tix.txt",
+    "LICENSE.zlib-ng.txt",
+    "LICENSE.zlib.txt",
+    "LICENSE.zstd.txt"
+  ]
+}

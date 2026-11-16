@@ -14,7 +14,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAUNCHER = os.path.join(ROOT, "bin", "pseudoct")
-MARKER = ('python3 - "$summary_file" "$invocation_id" "$profile" "$action" '
+MARKER = ('pyrun - "$summary_file" "$invocation_id" "$profile" "$action" '
           '"$format" "$backend" "$run_log_index" "${result_file:-}" "$subject_temp" <<\'PY\'')
 INVOCATION = "6f1f5f0e-2b7a-4c1d-9e3a-0123456789ab"
 

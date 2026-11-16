@@ -1,6 +1,7 @@
 function report = run_pseudo_CT(varargin)
 %RUN_PSEUDO_CT Public pseudoCT MATLAB frontend; delegates to the compiled launcher.
-%   REPORT = RUN_PSEUDO_CT('Profile', P, 'MPRAGE', FILE_OR_CELL, ...) validates
+%   REPORT = RUN_PSEUDO_CT('Profile', P, 'Subject', SUBJECTS, ...) or
+%   RUN_PSEUDO_CT('Profile', P, 'MPRAGE', FILE_OR_CELL, ...) validates
 %   (default) or submits one request through bin/pseudoct validate|run.
 %   MATLAB only parses the parameters, writes the launcher arguments, invokes
 %   the launcher and displays its result. The scientific pipeline and the
@@ -8,8 +9,14 @@ function report = run_pseudo_CT(varargin)
 %
 %   Name-value parameters (case-insensitive):
 %     Profile (required)       local, local-mprage-only, mlsc, mlsc-mprage-only
-%     MPRAGE (required)        path, or cell of paths for a multi-subject request
-%                              (not used by Action 'authenticate')
+%     Subject                  one or more subjects: a subjects-file path (bin/pseudoct
+%                              --subjects; see docs/headless-cli.md), or a cell of
+%                              {MPRAGE, UMAP} cells, e.g. {{'/d/S01/T1.nii', '/d/S01/UMAP'}}
+%                              ({MPRAGE} alone for MPRAGE-only profiles). Paths may be
+%                              NIfTI, a DICOM file or a one-series DICOM directory. All
+%                              subjects are checked by the launcher before anything starts.
+%     MPRAGE                   path, or cell of paths for a multi-subject request; use
+%                              either Subject or MPRAGE (not used by Action 'authenticate')
 %     UMAP                     path (or cell, positionally paired); omit to autodiscover
 %     Action                   'validate' (default), 'submit', or 'authenticate' (MLSC only,
 %                              needs CredentialHandoff; logs in without processing inputs)

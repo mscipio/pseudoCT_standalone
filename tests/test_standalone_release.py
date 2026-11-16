@@ -146,11 +146,16 @@ def install_release(pkg, label):
 
 
 def build_package(root, catalog_base):
-    """Installed layout: bin/pseudoct, runtimes/<LABEL>/ (flat), manifest.json."""
+    """Installed layout: bin/pseudoct, python/bin/python3, runtimes/<LABEL>/ (flat),
+    manifest.json. The bundled interpreter is stood in for by a wrapper around the
+    interpreter running these tests; the real runtime is checked by release --verify."""
     pkg = os.path.join(root, 'pseudoct-syn')
     os.makedirs(os.path.join(pkg, 'bin'), exist_ok=True)
     write(os.path.join(pkg, 'bin', 'pseudoct'), synthetic_launcher(catalog_base))
     os.chmod(os.path.join(pkg, 'bin', 'pseudoct'), 0o755)
+    interpreter = os.path.join(pkg, 'python', 'bin', 'python3')
+    write(interpreter, '#!/bin/sh\nexec %s "$@"\n' % shlex.quote(sys.executable))
+    os.chmod(interpreter, 0o755)
     manifest = {
         'schema': 'pseudo-CT.release-distribution/v1',
         'version': 'syn',
@@ -458,6 +463,20 @@ class StandaloneTestCase(unittest.TestCase):
         self.assertNotIn('MATLAB', err)
         rc, _out, err = self.pseudoct(['--list-releases'], env={})
         self.assertEqual(rc, 69, err)
+        self.assertEqual(self.invocations(), [])
+        # A missing or non-executable bundled interpreter is also an incomplete installation:
+        # no system Python is tried and nothing is dispatched.
+        pkg = build_package(os.path.join(self.base, 'install-python'), self.catalog_base)
+        interpreter = os.path.join(pkg, 'python', 'bin', 'python3')
+        launcher = os.path.join(pkg, 'bin', 'pseudoct')
+        for damage in (lambda: os.chmod(interpreter, 0o644), lambda: os.remove(interpreter)):
+            damage()
+            for args in (['validate', '--profile', 'local', '--mprage', mprage],
+                         ['--list-releases']):
+                rc, out, err = self.pseudoct(args, env={}, launcher=launcher)
+                self.assertEqual(rc, 69, out + err)
+                self.assertIn('python/bin/python3 is missing', err)
+                self.assertIn('reinstall', err)
         self.assertEqual(self.invocations(), [])
 
     def test_installed_launcher_never_runs_a_launcher_from_the_environment(self):

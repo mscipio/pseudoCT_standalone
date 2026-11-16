@@ -26,8 +26,15 @@ finalization complete. The run steps are in the README and the User Guide.
   Runtime (MCR). The default release, R2010b, runs on MATLAB Runtime **7.14**. The other
   releases (R2014a to R2026a) and their runtime versions are listed in
   [Supported exact release labels](releases.md#supported-exact-release-labels).
+- **Platform:** Linux x86_64 with glibc 2.17 or newer (for example RHEL/CentOS 7 or
+  Rocky Linux 8), `bash` and the standard GNU command-line tools.
+- **Python:** nothing to install. The distribution carries its own private Python runtime
+  under `python/`, which the launcher and the window use for their helper steps. A system
+  or Conda Python and `PYTHONPATH`/`PYTHONHOME` settings are ignored. See
+  [Distribution layout](releases.md#distribution-layout).
 - **Source checkout (developers):** R2010b-compatible MATLAB, the minimum for this source
-  (MATLAB 7.11). A source checkout is for development only.
+  (MATLAB 7.11). A source checkout is for development only. Its launcher uses
+  `PSEUDOCT_PYTHON`, else `python3` (3.6 or newer) from `PATH`.
 - **Site resources:** the application needs the resources configured for the installation.
   Do not substitute fallback resource paths. Each profile's paths come from its profile file
   under `src/config/profiles/`.

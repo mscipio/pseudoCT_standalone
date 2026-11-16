@@ -1,5 +1,15 @@
 3.2.0
 
+## 3.3.0 — Unified subject inputs (in development, unreleased)
+
+- Adds the subjects file (`[SubjectID]` sections with `MPRAGE` and `UMAP`; grammar in `docs/headless-cli.md`) for one or more subjects. `bin/pseudoct run|validate --subjects FILE` checks the whole file before runtime selection, MATLAB, authentication or file creation and reports every error with file, line and subject. `bin/pseudoct check-subjects --profile P --subjects FILE` performs the same check read-only.
+- A DICOM series directory is accepted for MPRAGE and UMAP when it holds exactly one series; it is resolved to a representative file of that series before the unchanged pipeline runs. Directories with several or no series are refused.
+- `run_pseudo_CT` accepts `'Subject'`: a subjects-file path, or `{{MPRAGE, UMAP}, ...}` pairs, which are passed to the launcher as a subjects file.
+- DICOM directories count image objects only (nonzero Rows and Columns); reports, raw data and other non-image DICOM files are ignored and never chosen as the representative file.
+- Multi-line launcher errors (such as subjects-file errors) keep their line breaks in the `run_pseudo_CT` report.
+- Bundled Python: installed distributions carry one private CPython runtime under `python/` (CPython 3.13.18, python-build-standalone `20261026`, `x86_64-unknown-linux-gnu` install-only stripped; pinned in `config/python-runtime.json`, licence texts in `config/python-runtime-licenses/`), shared by all releases. Python was already required by `bin/pseudoct` and the frontend result reader but was undocumented and taken from `PATH`; every launcher and frontend call now runs the bundled interpreter with `-I -B`, and a missing runtime fails closed. The release driver takes `--python-archive`, checks its sha256, ships only the interpreter and standard library, records it in `manifest.json`, and `--verify` runs it. About 44 MB unpacked (15 MB compressed). Requires Linux x86_64 with glibc 2.17 or newer.
+- Unchanged: the internal launcher-to-MATLAB request, compiled MATLAB code, sequential execution, processing options and their defaults, and the scientific pipeline. `--mprage/--umap`, `--config` and the `MPRAGE`/`UMAP` frontend parameters still work.
+
 ## 3.2.0 — Prerelease audit and cleanup (unpublished)
 
 - Renames the shared science worker to `pseudoct_worker` (`src/science/current/pseudoct_worker.m`, formerly `mlsc_current_payload.m`) and its launcher to `run_pseudoct_worker.sh` (`scripts/run_pseudoct_worker.sh`, formerly `run_mlsc_current_payload.sh`), with all source, build, package, profile, Slurm and test references updated. Public commands, `run_pseudo_CT.m`, the headless engine `pseudoct_standalone`, scientific output and log names, and artifact schemas and configuration keys are unchanged.

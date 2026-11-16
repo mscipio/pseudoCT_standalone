@@ -18,6 +18,9 @@ assembles one distribution directory from the verified build output only:
       runtimes/<LABEL>/run_pseudoct_pipeline.sh       (runner, copied)
       runtimes/<LABEL>/pseudoct_job_manager          (compiled job manager)
       resources/                                    (atlas and template files)
+      python/bin/python3, python/lib/python<X.Y>/   (private CPython runtime shared by all
+                                                     releases; the launcher's only Python)
+      python/licenses/                              (CPython and third-party licence texts)
       manifest.json                                 (catalog copy read by bin/pseudoct)
       SHA256SUMS                                    (inventory, includes the manifest)
 
@@ -36,9 +39,16 @@ as incomplete. The exit status is nonzero whenever a requested release fails.
 Environment (prepared privately for each MATLAB invocation):
   TMPDIR, MATLAB_PREFDIR, MCR_CACHE_ROOT    short, isolated paths (see docs/releases.md).
 
+Bundled Python: the pinned python-build-standalone archive named in config/python-runtime.json
+is read from --python-archive FILE (default external/python-build-standalone/<archive>); it is
+never downloaded here and its sha256 must match the pin. Only the interpreter and its standard
+library are shipped (PYTHON_STDLIB_EXCLUDED is left out), with the licence texts from
+config/python-runtime-licenses/. --verify runs the shipped interpreter once to check it.
+
 Usage:
   release_application.py --version V [--releases R2010b,R2014b,...]
       --matlab-root LABEL=PATH [--matlab-root LABEL=PATH ...] [--output DIR] [--dry-run]
+      [--python-archive FILE]
   release_application.py --list-releases
   release_application.py --verify DIR
 
@@ -56,6 +66,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -171,6 +182,26 @@ RESOURCE_REQUIRED = (
 RESOURCE_ATLAS_PATTERN = '*Atlas*.nii'
 FORBIDDEN_PARTS = frozenset(['src', 'external', 'tests', 'scripts', 'config', 'compiled',
                              'build', 'cfggen', '.git', '.partial', 'app'])
+
+# Private Python runtime (one copy for all releases). The pin names the upstream archive and
+# its sha256; the licence texts are kept in the repository beside the pin.
+PYTHON_PIN_PATH = os.path.join(REPO_ROOT, 'config', 'python-runtime.json')
+PYTHON_LICENSE_DIR = os.path.join(REPO_ROOT, 'config', 'python-runtime-licenses')
+PYTHON_CACHE_DIR = os.path.join(REPO_ROOT, 'external', 'python-build-standalone')
+PYTHON_ROOT_REL = 'python'
+PYTHON_EXE_REL = 'python/bin/python3'
+PYTHON_LICENSE_REL = 'python/licenses'
+PYTHON_TARGET = 'x86_64-unknown-linux-gnu'
+# Top-level standard-library entries the launcher never uses (GUI toolkits, installers,
+# virtual environments, build data); site-packages keeps only its README.
+PYTHON_STDLIB_EXCLUDED = frozenset(['idlelib', 'tkinter', 'turtledemo', 'turtle.py', 'ensurepip',
+                                    'venv', 'test', 'site-packages'])
+PYTHON_STDLIB_KEPT = frozenset(['site-packages/README.txt'])
+# Modules imported by bin/pseudoct and frontend/pseudo_CT_result_fields.py.
+PYTHON_PROBE = ('import datetime, hashlib, json, os, re, selectors, shlex, stat, struct, '
+                'subprocess, sys, tempfile\n'
+                'print(json.dumps({"version": "%d.%d.%d" % sys.version_info[:3], '
+                '"prefix": sys.prefix}))\n')
 
 
 class UsageError(Exception):
@@ -629,7 +660,7 @@ def report_summary(version, selected, results, published, workspace, output_dir)
         print('WARNING: could not write %s: %s' % (path, exc), file=sys.stderr)
 
 
-def assemble(version, selected, roots, default, catalog_entries, output_dir):
+def assemble(version, selected, roots, default, catalog_entries, output_dir, python_runtime):
     """Build every selected release, then assemble, verify and publish pseudoct-<version>/ only
     when all of them passed. A failing release does not stop the others. On any failure, or on
     an error before publication, the staging tree is kept as a marked build workspace and
@@ -690,6 +721,10 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
         for rel in SSH2_FILES:
             copy_file(os.path.join(SSH2_SOURCE_ROOT, *rel.split('/')),
                       os.path.join(pkg, *SSH2_ROOT_REL.split('/'), *rel.split('/')), 0o644)
+        python_pin, python_archive = python_runtime
+        shipped = stage_python(pkg, python_archive, python_pin)
+        print('PYTHON %s %s: %d files under %s/'
+              % (python_pin['implementation'], python_pin['version'], shipped, PYTHON_ROOT_REL))
 
         files, _dirs, tree_problems = walk_tree(pkg)
         if tree_problems:
@@ -705,6 +740,8 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
             # Catalog copy read by bin/pseudoct for release listing and selection.
             'catalog': {'schema': 1, 'default': default, 'releases': catalog_entries},
             'source': {'commit': source[0], 'set_sha256': source[1], 'lock_sha256': source[2]},
+            # The private Python runtime under python/ (one copy for all releases).
+            'python': python_record(python_pin),
             'files': records,
         }
         manifest_bytes = render_manifest(manifest)
@@ -735,7 +772,7 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir):
     return 0
 
 
-def print_plan(version, selected, roots, output_dir):
+def print_plan(version, selected, roots, output_dir, python_runtime):
     dest = os.path.join(output_dir, 'pseudoct-' + version)
     print('RELEASE_APPLICATION mode=dry-run version=%s releases=%s'
           % (version, ','.join(entry['label'] for entry in selected)))
@@ -757,6 +794,14 @@ def print_plan(version, selected, roots, output_dir):
           % (LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, BUNDLED_LOCK_NAME,
              len(DOC_FILES), len(FRONTEND_FILES), len(HELP_FILES),
              SSH2_ROOT_REL, len(SSH2_FILES)))
+    python_pin, python_archive = python_runtime
+    if os.path.isfile(python_archive):
+        state = 'present (sha256 checked at build)'
+    else:
+        state = 'MISSING: download %s' % python_pin['url']
+    print('PLAN python: %s %s from %s [%s] -> %s/, %s/ (%d texts)'
+          % (python_pin['implementation'], python_pin['version'], python_archive, state,
+             PYTHON_ROOT_REL, PYTHON_LICENSE_REL, len(python_pin['licenses'])))
     print('PLAN publish: %s (lock %s)' % (dest, os.path.join(output_dir, LOCK_NAME)))
     print('DRY_RUN_PASS (no MATLAB invoked, nothing written)')
 
@@ -767,6 +812,152 @@ def list_releases(default, ordered):
         print('  %s  matlab %s  mcr %s  %s%s' % (
             entry['label'], entry['matlab_version'], entry['mcr_version'],
             entry['architecture'], '  (default)' if entry['label'] == default else ''))
+
+
+# ---------------------------------------------------------------- bundled Python runtime
+
+def load_python_pin(path=PYTHON_PIN_PATH):
+    """Return the validated Python pin; its licence texts must exist in PYTHON_LICENSE_DIR."""
+    try:
+        with open(path, encoding='utf-8') as handle:
+            pin = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise ReleaseError('cannot read the Python runtime pin %s: %s' % (path, exc))
+    if not isinstance(pin, dict) or pin.get('schema') != 1:
+        raise ReleaseError('Python runtime pin must be a JSON object with "schema": 1')
+    for key in ('version', 'release', 'archive', 'archive_sha256', 'url', 'target'):
+        if not isinstance(pin.get(key), str) or not pin[key]:
+            raise ReleaseError('Python runtime pin field %s must be a non-empty string' % key)
+    if not re.fullmatch(r'3\.[0-9]+\.[0-9]+', pin['version']):
+        raise ReleaseError('Python runtime pin version must look like 3.X.Y')
+    if not SHA_RE.fullmatch(pin['archive_sha256']):
+        raise ReleaseError('Python runtime pin archive_sha256 must be 64 lowercase hex digits')
+    if '/' in pin['archive'] or pin['target'] != PYTHON_TARGET:
+        raise ReleaseError('Python runtime pin must name a %s archive file' % PYTHON_TARGET)
+    licenses = pin.get('licenses')
+    if (not isinstance(licenses, list) or 'LICENSE.cpython.txt' not in licenses
+            or not all(isinstance(n, str) and re.fullmatch(r'LICENSE\.[A-Za-z0-9._-]+\.txt', n)
+                       for n in licenses)):
+        raise ReleaseError('Python runtime pin licenses must list LICENSE.<name>.txt files, '
+                           'including LICENSE.cpython.txt')
+    missing = [n for n in licenses if not os.path.isfile(os.path.join(PYTHON_LICENSE_DIR, n))]
+    if missing:
+        raise ReleaseError('Python licence texts missing from %s: %s'
+                           % (PYTHON_LICENSE_DIR, ', '.join(missing)))
+    return pin
+
+
+def python_series(pin):
+    return '.'.join(pin['version'].split('.')[:2])
+
+
+def check_python_archive(path, pin):
+    """Fail unless PATH is the pinned archive (sha256). Nothing is downloaded."""
+    if not os.path.isfile(path):
+        raise ReleaseError('bundled Python archive is missing: %s\n  download %s\n  to that path '
+                           '(or pass --python-archive FILE); expected sha256 %s'
+                           % (path, pin['url'], pin['archive_sha256']))
+    digest = sha256_file(path)
+    if digest != pin['archive_sha256']:
+        raise ReleaseError('bundled Python archive %s has sha256 %s; the pin requires %s'
+                           % (path, digest, pin['archive_sha256']))
+
+
+def python_member_target(name, pin):
+    """Package-relative path for one archive member, or None when it is not shipped."""
+    series = python_series(pin)
+    if name == 'python/bin/python' + series:
+        return PYTHON_EXE_REL
+    prefix = 'python/lib/python%s/' % series
+    if not name.startswith(prefix):
+        return None
+    rel = name[len(prefix):]
+    first = rel.split('/')[0]
+    if '__pycache__' in rel.split('/'):
+        # Bytecode would be stale after copying (new source times) and rewritten in place by
+        # any run without -B; the launcher always runs with -B and needs none.
+        return None
+    if rel in PYTHON_STDLIB_KEPT:
+        return name
+    if first in PYTHON_STDLIB_EXCLUDED or first.startswith('config-'):
+        return None
+    if rel.startswith('lib-dynload/_tkinter'):
+        return None
+    return name
+
+
+def stage_python(pkg, archive_path, pin):
+    """Write the interpreter, its standard library and the licence texts under pkg/python/.
+    Members are copied file by file (no extraction of links or absolute paths)."""
+    shipped = 0
+    have_exe = False
+    try:
+        with tarfile.open(archive_path, 'r:gz') as tar:
+            for member in tar:
+                name = member.name[2:] if member.name.startswith('./') else member.name
+                if name.startswith('/') or '..' in name.split('/'):
+                    raise ReleaseError('unsafe path in the Python archive: %r' % member.name)
+                target = python_member_target(name, pin)
+                if target is None or member.isdir():
+                    continue
+                if not member.isfile():
+                    raise ReleaseError('Python archive member to ship is not a regular file: %s'
+                                       % name)
+                dest = os.path.join(pkg, *target.split('/'))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                source = tar.extractfile(member)
+                with open(dest, 'wb') as handle:
+                    shutil.copyfileobj(source, handle)
+                os.chmod(dest, 0o755 if (member.mode & 0o111 or target == PYTHON_EXE_REL)
+                         else 0o644)
+                shipped += 1
+                have_exe = have_exe or target == PYTHON_EXE_REL
+    except (tarfile.TarError, OSError, EOFError) as exc:
+        raise ReleaseError('cannot read the Python archive %s: %s' % (archive_path, exc))
+    if not have_exe:
+        raise ReleaseError('the Python archive has no python/bin/python%s' % python_series(pin))
+    for name in pin['licenses']:
+        copy_file(os.path.join(PYTHON_LICENSE_DIR, name),
+                  os.path.join(pkg, *PYTHON_LICENSE_REL.split('/'), name), 0o644)
+    return shipped
+
+
+def python_record(pin):
+    """The manifest description of the shipped runtime."""
+    return {key: pin.get(key) for key in ('implementation', 'version', 'distribution', 'release',
+                                          'target', 'flavor', 'glibc_minimum', 'archive',
+                                          'archive_sha256')}
+
+
+def python_problems(pkg, record):
+    """Run the shipped interpreter once, isolated and without the caller's environment: the
+    launcher's modules must import, the version must match the manifest, and the prefix must
+    be the package's own python/ folder (relocatable, no system Python involved)."""
+    exe = os.path.join(pkg, *PYTHON_EXE_REL.split('/'))
+    if not os.access(exe, os.X_OK):
+        return ['bundled Python interpreter is not executable: %s' % PYTHON_EXE_REL]
+    try:
+        proc = subprocess.run([exe, '-I', '-B', '-c', PYTHON_PROBE], cwd='/',
+                              env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'},
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ['bundled Python interpreter cannot run: %s' % exc]
+    if proc.returncode != 0:
+        return ['bundled Python interpreter failed its module check: %s'
+                % tail(proc.stderr.decode('utf-8', 'replace'), 5)]
+    try:
+        found = json.loads(proc.stdout.decode('utf-8'))
+    except ValueError:
+        return ['bundled Python interpreter printed an unexpected module-check result']
+    problems = []
+    if found.get('version') != record.get('version'):
+        problems.append('bundled Python is %s; the manifest records %s'
+                        % (found.get('version'), record.get('version')))
+    if os.path.realpath(found.get('prefix') or '') != os.path.realpath(
+            os.path.join(pkg, PYTHON_ROOT_REL)):
+        problems.append('bundled Python prefix %s is not the package python/ folder'
+                        % found.get('prefix'))
+    return problems
 
 
 # ---------------------------------------------------------------- hashing and canonical text
@@ -833,6 +1024,9 @@ def path_allowed(rel, labels):
         return True
     if rel.startswith(SSH2_ROOT_REL + '/') and rel[len(SSH2_ROOT_REL) + 1:] in SSH2_FILES:
         return True
+    if rel.startswith(PYTHON_ROOT_REL + '/'):
+        # The runtime tree is checked by its manifest hashes and by python_problems.
+        return True
     parts = rel.split('/')
     if len(parts) == 2 and parts[0] == 'resources':
         return parts[1] in RESOURCE_REQUIRED or fnmatch.fnmatchcase(parts[1], RESOURCE_ATLAS_PATTERN)
@@ -850,6 +1044,7 @@ def required_paths(labels):
     for label in sorted(labels):
         paths += ['runtimes/%s/%s' % (label, rel) for rel in RUNTIME_FILES]
     paths += ['resources/' + name for name in RESOURCE_REQUIRED]
+    paths += [PYTHON_EXE_REL, PYTHON_LICENSE_REL + '/LICENSE.cpython.txt']
     return paths
 
 
@@ -878,6 +1073,10 @@ def manifest_shape_problems(manifest):
         problems.append('default_release must be null or a built release')
     if not isinstance(manifest.get('catalog'), dict):
         problems.append('manifest catalog is missing')
+    python = manifest.get('python')
+    if (not isinstance(python, dict) or not isinstance(python.get('version'), str)
+            or not isinstance(python.get('archive_sha256'), str)):
+        problems.append('manifest python runtime record is missing or invalid')
     files = manifest.get('files')
     if not isinstance(files, list):
         problems.append('manifest files must be a list')
@@ -955,6 +1154,8 @@ def verify_package(pkg):
         with open(sums_path, 'rb') as handle:
             if handle.read() != render_sums(pairs):
                 problems.append('%s does not match the tree (checksum or inventory)' % SUMS_NAME)
+    if PYTHON_EXE_REL in files:
+        problems.extend(python_problems(pkg, manifest['python']))
     return problems
 
 
@@ -972,13 +1173,18 @@ def build_parser():
                         help='print the planned steps; never start MATLAB or write output')
     parser.add_argument('--list-releases', action='store_true', help='print the catalog and exit')
     parser.add_argument('--verify', metavar='DIR', help='check an assembled distribution and exit')
+    parser.add_argument('--python-archive', metavar='FILE',
+                        help='pinned python-build-standalone archive (default: '
+                             'external/python-build-standalone/<archive named in '
+                             'config/python-runtime.json>)')
     return parser
 
 
 def _main(argv):
     args = build_parser().parse_args(argv)
     build_options = (args.version is not None or args.releases is not None
-                     or bool(args.matlab_root) or args.output is not None or args.dry_run)
+                     or bool(args.matlab_root) or args.output is not None or args.dry_run
+                     or args.python_archive is not None)
     if args.list_releases and (args.verify is not None or build_options):
         raise UsageError('--list-releases takes no other options')
     if args.verify is not None and build_options:
@@ -1009,13 +1215,19 @@ def _main(argv):
         matlab_text(roots[entry['label']], '%s MATLAB root' % entry['label'])
         check_matlab_root(entry, roots[entry['label']])
     check_sources()
+    python_pin = load_python_pin()
+    python_archive = os.path.abspath(args.python_archive if args.python_archive is not None
+                                     else os.path.join(PYTHON_CACHE_DIR, python_pin['archive']))
     dest = os.path.join(output_dir, 'pseudoct-' + args.version)
     if os.path.lexists(dest):
         raise ReleaseError('destination exists and will not be overwritten: %s' % dest)
     if args.dry_run:
-        print_plan(args.version, selected, roots, output_dir)
+        print_plan(args.version, selected, roots, output_dir, (python_pin, python_archive))
         return 0
-    return assemble(args.version, selected, roots, default, ordered, output_dir)
+    # Checked before any MATLAB build, so a missing or wrong archive fails immediately.
+    check_python_archive(python_archive, python_pin)
+    return assemble(args.version, selected, roots, default, ordered, output_dir,
+                    (python_pin, python_archive))
 
 
 def main(argv=None):
