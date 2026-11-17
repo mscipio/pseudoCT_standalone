@@ -1,5 +1,4 @@
-function Pf = pseudo_CT_run_local_current_subject(input_path, work_dir, ...
-        config, check_aliasing, recenter_before_normalization, output_context)
+function varargout = pseudo_CT_run_local_current_subject(varargin)
 %PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT Run the local current pipeline for one subject.
 %   PF = PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT(INPUT_PATH, WORK_DIR, CONFIG,
 %   CHECK_ALIASING, RECENTER_BEFORE_NORMALIZATION, OUTPUT_CONTEXT)
@@ -13,6 +12,22 @@ function Pf = pseudo_CT_run_local_current_subject(input_path, work_dir, ...
 %   OUTPUT_CONTEXT is the logging struct for pseudo_CT_output.
 %   PF is the char matrix of outputs returned by compute, or '' when
 %   atlas outputs are missing.
+%
+%   Nonblocking use (shared batch scheduler in pseudo_CT_run_lifecycle):
+%     H = PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT('start', INPUT_PATH, WORK_DIR,
+%         CONFIG, CHECK_ALIASING, RECENTER_BEFORE_NORMALIZATION, OUTPUT_CONTEXT)
+%         launches the compiled worker in the background and returns.
+%     [H, DONE] = PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT('poll', H) drains the
+%         worker stream once; DONE is true once the worker has exited and its
+%         outputs were checked.
+%     H = PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT('cancel', H) terminates the
+%         worker's processes (TERM, then KILL after a grace period); later polls
+%         observe its nonzero exit status.
+%     PF = PSEUDO_CT_RUN_LOCAL_CURRENT_SUBJECT('finish', H) returns PF, or
+%         rethrows the error that stopped the worker.
+%   The six-argument form is the blocking wrapper (start, poll until done,
+%   finish), unchanged in behavior.
+%
 %   Side effects: validates the artifact with mlsc_current_validate, writes
 %   job.mat and the runner status files in a private runtime folder under WORK_DIR,
 %   and runs the compiled pipeline through the shell. Removes its
@@ -26,13 +41,49 @@ function Pf = pseudo_CT_run_local_current_subject(input_path, work_dir, ...
 
 % Narrow test seam for exercising the production child stream monitor without
 % invoking the compiled pipeline. Production calls always pass six arguments.
-if nargin == 2 && ischar(input_path) && ...
-        strcmp(input_path, '__current_stream_test__') && isstruct(work_dir)
-    Pf = local_current_stream_test_dispatch(work_dir);
+if nargin == 2 && ischar(varargin{1}) && ...
+        strcmp(varargin{1}, '__current_stream_test__') && isstruct(varargin{2})
+    varargout{1} = local_current_stream_test_dispatch(varargin{2});
     return;
 end
+if nargin >= 1 && ischar(varargin{1}) && ...
+        any(strcmp(varargin{1}, {'start'; 'poll'; 'cancel'; 'finish'}))
+    action = varargin{1};
+    if (strcmp(action, 'start') && nargin ~= 7) || ...
+            (~strcmp(action, 'start') && (nargin ~= 2 || ~isstruct(varargin{2})))
+        error('pseudo_CT:LocalCurrentRequest', ...
+            'A local current input, work directory, profile, and output context are required.');
+    end
+    switch action
+        case 'start'
+            varargout{1} = local_start(varargin{2:7});
+        case 'poll'
+            [varargout{1}, varargout{2}] = local_poll(varargin{2});
+        case 'cancel'
+            varargout{1} = local_cancel(varargin{2});
+        otherwise
+            varargout{1} = local_finish(varargin{2});
+    end
+    return;
+end
+if nargin ~= 6
+    error('pseudo_CT:LocalCurrentRequest', ...
+        'A local current input, work directory, profile, and output context are required.');
+end
+H = local_start(varargin{:});
+done = false;
+while ~done
+    [H, done] = local_poll(H);
+    if ~done
+        pause(0.1);
+    end
+end
+varargout{1} = local_finish(H);
+end
 
-if nargin ~= 6 || ~isstruct(config) || numel(config) ~= 1 || ...
+function H = local_start(input_path, work_dir, config, check_aliasing, ...
+        recenter_before_normalization, output_context)
+if ~isstruct(config) || numel(config) ~= 1 || ...
         ~isstruct(output_context) || numel(output_context) ~= 1
     error('pseudo_CT:LocalCurrentRequest', ...
         'A local current input, work directory, profile, and output context are required.');
@@ -103,8 +154,18 @@ event_target = pseudo_CT_scientific_event_target(output_context);
 job.event_path = event_target.path;
 job.event_subject_id = event_target.subject_id;
 job.event_profile = event_target.profile;
+
+% Owned resources are released exactly once, on completion or when the last
+% copy of H is dropped (interruption): stream drain, scratch, runtime folder.
+res = containers.Map();
+H = struct('done', false, 'error', [], 'Pf', '', 'res', res, ...
+    'guard', [], 'stream', [], 'work_dir', strtrim(work_dir), ...
+    'config', config, 'stage_context', struct(), 'output_context', output_context, ...
+    'pipeline_started', [], 'cancel_requested', false, 'kill_after', [], ...
+    'cancel_pids', [], 'exit_pending', false, 'exit_status', []);
+H.guard = onCleanup(@() local_release(res));
 runtime_dir = pseudo_CT_runtime_dir(strtrim(work_dir));
-runtime_guard = onCleanup(@() pseudo_CT_cleanup_runtime_dir(runtime_dir)); %#ok<NASGU>
+res('runtime_dir') = runtime_dir;
 job_manifest_path = fullfile(runtime_dir, 'job.mat');
 save(job_manifest_path, 'job', '-v6');
 
@@ -114,34 +175,8 @@ public('stage') = 1;
 public('open') = false;
 public('started') = tic;
 
-local_run_pipeline(config.current, job_manifest_path, ...
-    config.current.resource_manifest, output_context, public);
-
-for ii = 1:numel(config.current.required_outputs)
-    output_path = fullfile(strtrim(work_dir), ...
-        config.current.required_outputs{ii});
-    output_info = dir(output_path);
-    if isempty(output_info) || output_info(1).bytes == 0
-        error('pseudo_CT:LocalCurrentCompute', ...
-            'Compiled current compute did not produce a required output.');
-    end
-end
-verification_path = fullfile(strtrim(work_dir), ...
-    'mlsc_current_output_verification.txt');
-if exist(verification_path, 'file') ~= 2
-    error('pseudo_CT:LocalCurrentCompute', ...
-        'Compiled current compute did not produce output verification evidence.');
-end
-verification_info = dir(verification_path);
-if isempty(verification_info) || verification_info(1).bytes == 0
-    error('pseudo_CT:LocalCurrentCompute', ...
-        'Compiled current output verification evidence is empty.');
-end
-Pf = fullfile(strtrim(work_dir), 'att_map.nii');
-end
-
-function local_run_pipeline(current, job_manifest_path, ...
-        resource_manifest_path, output_context, public)
+current = config.current;
+resource_manifest_path = config.current.resource_manifest;
 runner = strtrim(current.runner);
 mcr_root = strtrim(current.mcr_root);
 % An empty resource manifest path is installed direct mode: no argument is passed.
@@ -168,7 +203,7 @@ lifecycle_context = stage_context;
 lifecycle_context.lifecycle = true;
 lifecycle_context.jsonl_boundary = true;
 pseudo_CT_output('INFO', lifecycle_context, 'Running compiled current pipeline.');
-pipeline_started = tic;
+H.pipeline_started = tic;
 stream_log = '';
 if isfield(output_context, 'log_file') && ...
         ischar(output_context.log_file) && ...
@@ -177,8 +212,117 @@ if isfield(output_context, 'log_file') && ...
     stream_log = strtrim(output_context.log_file);
 end
 stage_context.runtime_temp_dir = fileparts(fileparts(job_manifest_path));
-status = local_run_streaming(command, stream_log, stage_context, ...
-    pipeline_started, 'pipeline', public);
+H.stage_context = stage_context;
+H.stream = local_stream_start(command, stream_log, stage_context, ...
+    H.pipeline_started, 'pipeline', public, res);
+end
+
+function [H, done] = local_poll(H)
+done = H.done;
+if done
+    return;
+end
+try
+    if H.exit_pending
+        % The wrapper already exited; only cancelled descendants remain.
+        exited = true;
+        status = H.exit_status;
+    else
+        [H.stream, exited, status] = local_stream_poll(H.stream);
+    end
+    if H.cancel_requested && ~isempty(H.kill_after) && now >= H.kill_after
+        % Grace period over: KILL whatever is left of the tree and every
+        % process signalled at cancellation (also those already reparented).
+        local_signal_worker(H.stream.runner_pid, 'KILL');
+        local_kill_pids(H.cancel_pids);
+        H.kill_after = [];
+    end
+    if exited && H.cancel_requested && ~isempty(local_live_pids(H.cancel_pids))
+        % A cancelled descendant outlived the wrapper (for example one that
+        % ignores TERM): keep the subject active until it is gone or killed.
+        H.exit_pending = true;
+        H.exit_status = status;
+        if isempty(H.kill_after)
+            local_kill_pids(H.cancel_pids);
+        end
+        exited = false;
+    end
+    if exited
+        local_stream_close(H.stream, H.res);
+        H.Pf = local_after_exit(H, status);
+        local_release(H.res);
+        H.done = true;
+    end
+catch ME
+    % The worker has exited or its monitor failed: release in order, then
+    % report the error through 'finish'.
+    H.error = ME;
+    local_release(H.res);
+    H.done = true;
+end
+done = H.done;
+end
+
+function H = local_cancel(H)
+%LOCAL_CANCEL Terminate the worker's process tree; the wrapper records the status.
+if H.done || H.cancel_requested || ~isstruct(H.stream)
+    return;
+end
+H.cancel_requested = true;
+H.cancel_pids = local_signal_worker(H.stream.runner_pid, 'TERM');
+H.kill_after = now + 30 / 86400;
+end
+
+function local_kill_pids(pids)
+%LOCAL_KILL_PIDS KILL the still-running processes among PIDS.
+pids = local_live_pids(pids);
+if ~isempty(pids)
+    system(['kill -s KILL' sprintf(' %d', pids) ' 2>/dev/null; true']);
+end
+end
+
+function pids = local_live_pids(pids)
+alive = false(size(pids));
+for ii = 1:numel(pids)
+    [status, ~] = system(sprintf('kill -0 %d 2>/dev/null', pids(ii)));
+    alive(ii) = status == 0;
+end
+pids = pids(alive);
+end
+
+function Pf = local_finish(H)
+if ~H.done
+    error('pseudo_CT:LocalCurrentRunner', ...
+        'The current runner has not finished.');
+end
+if ~isempty(H.error)
+    rethrow(H.error);
+end
+Pf = H.Pf;
+end
+
+function pids = local_signal_worker(runner_pid, signal_name)
+%LOCAL_SIGNAL_WORKER Signal every descendant of the launch wrapper, leaves first.
+%   The wrapper itself survives to record the runner status and finish its
+%   own cleanup, so the monitor observes a normal nonzero exit. PIDS lists the
+%   processes signalled.
+pids = [];
+if ~isnumeric(runner_pid) || ~isscalar(runner_pid) || ~isfinite(runner_pid) || ...
+        runner_pid <= 1
+    return;
+end
+[~, text] = system(sprintf(['kill_tree() { for c in $(pgrep -P "$1" 2>/dev/null); do ' ...
+    'kill_tree "$c"; done; kill -s %s "$1" 2>/dev/null; echo "$1"; }; ' ...
+    'for c in $(pgrep -P %d 2>/dev/null); do kill_tree "$c"; done; true'], ...
+    signal_name, round(runner_pid)));
+pids = sscanf(text, '%d');
+pids = pids(:)';
+end
+
+function Pf = local_after_exit(H, status)
+%LOCAL_AFTER_EXIT Runner status and required outputs, as in the blocking path.
+stage_context = H.stage_context;
+output_context = H.output_context;
 if status ~= 0
     % Runner failure is an unnumbered diagnostic: a stage number here would
     % duplicate the persisted FAILED record of the stage that failed.
@@ -210,7 +354,54 @@ completion_context.lifecycle = true;
 completion_context.jsonl_boundary = true;
 pseudo_CT_output('SUCCESS', completion_context, ...
     'Compiled current pipeline completed (elapsed %.1f s).', ...
-    toc(pipeline_started));
+    toc(H.pipeline_started));
+
+work_dir = H.work_dir;
+for ii = 1:numel(H.config.current.required_outputs)
+    output_path = fullfile(work_dir, H.config.current.required_outputs{ii});
+    output_info = dir(output_path);
+    if isempty(output_info) || output_info(1).bytes == 0
+        error('pseudo_CT:LocalCurrentCompute', ...
+            'Compiled current compute did not produce a required output.');
+    end
+end
+verification_path = fullfile(work_dir, 'mlsc_current_output_verification.txt');
+if exist(verification_path, 'file') ~= 2
+    error('pseudo_CT:LocalCurrentCompute', ...
+        'Compiled current compute did not produce output verification evidence.');
+end
+verification_info = dir(verification_path);
+if isempty(verification_info) || verification_info(1).bytes == 0
+    error('pseudo_CT:LocalCurrentCompute', ...
+        'Compiled current output verification evidence is empty.');
+end
+Pf = fullfile(work_dir, 'att_map.nii');
+end
+
+function local_release(res)
+%LOCAL_RELEASE Drain the stream, then remove scratch and runtime folders, once.
+try
+    if isKey(res, 'stream_state') && ~isKey(res, 'stream_done')
+        res('stream_done') = true;
+        local_finish_current_stream(res('capture_path'), res('persist_path'), ...
+            res('stream_state'), res('stream_context'));
+    end
+catch %#ok<CTCH>
+end
+try
+    if isKey(res, 'scratch_dir') && ~isKey(res, 'scratch_done')
+        res('scratch_done') = true;
+        pseudo_CT_cleanup_runtime_dir(res('scratch_dir'));
+    end
+catch %#ok<CTCH>
+end
+try
+    if isKey(res, 'runtime_dir') && ~isKey(res, 'runtime_done')
+        res('runtime_done') = true;
+        pseudo_CT_cleanup_runtime_dir(res('runtime_dir'));
+    end
+catch %#ok<CTCH>
+end
 end
 
 function status = local_current_stream_test_dispatch(request)
@@ -245,11 +436,7 @@ end
 
 function status = local_run_streaming(command, log_path, output_context, ...
         phase_started, phase_label, public)
-%LOCAL_RUN_STREAMING Tail a private capture of the merged child stream.
-%   The merged compiled stdout/stderr is teed into a private retained capture
-%   under job.temp_dir. Every line is secret-filtered and appended to the run
-%   log (success, failure, or interruption); only structured lifecycle events
-%   reach the shared presenter. Startup and dependency chatter stay log-only.
+%LOCAL_RUN_STREAMING Blocking stream monitor (test seam): start, poll, close.
 if nargin < 5
     phase_label = 'test';
 end
@@ -259,11 +446,34 @@ if nargin < 6
     public('open') = false;
     public('started') = tic;
 end
+res = containers.Map();
+release_guard = onCleanup(@() local_release(res)); %#ok<NASGU>
+S = local_stream_start(command, log_path, output_context, phase_started, ...
+    phase_label, public, res);
+while true
+    [S, exited, status] = local_stream_poll(S);
+    if exited
+        break;
+    end
+    pause(0.1);
+end
+local_stream_close(S, res);
+end
+
+function S = local_stream_start(command, log_path, output_context, ...
+        phase_started, phase_label, public, res)
+%LOCAL_STREAM_START Tail a private capture of the merged child stream.
+%   The merged compiled stdout/stderr is teed into a private retained capture
+%   under job.temp_dir. Every line is secret-filtered and appended to the run
+%   log (success, failure, or interruption); only structured lifecycle events
+%   reach the shared presenter. Startup and dependency chatter stay log-only.
+%   RES (a containers.Map) records the owned scratch folder and stream for
+%   local_release, which runs on completion or interruption.
 if ~isfield(output_context, 'runtime_temp_dir')
     error('pseudo_CT:RuntimeDirectory', 'Resolved subject job.temp_dir is required.');
 end
 scratch_dir = pseudo_CT_runtime_dir(output_context.runtime_temp_dir);
-runtime_guard = onCleanup(@() pseudo_CT_cleanup_runtime_dir(scratch_dir)); %#ok<NASGU>
+res('scratch_dir') = scratch_dir;
 status_path = fullfile(scratch_dir, 'runner.exit');
 status_tmp_path = [status_path '.tmp'];
 capture_path = fullfile(scratch_dir, ...
@@ -305,8 +515,10 @@ stream_state('warn_counts') = containers.Map();
 stream_state('warn_order') = {};
 stream_state('public') = public;
 % Drain and persist on every exit path; retain the redacted capture.
-stream_guard = onCleanup(@() local_finish_current_stream( ...
-    capture_path, persist_path, stream_state, output_context)); %#ok<NASGU>
+res('capture_path') = capture_path;
+res('persist_path') = persist_path;
+res('stream_context') = output_context;
+res('stream_state') = stream_state;
 
 % Credential redaction (same pattern as local_redact_current_secrets) runs
 % between the child and tee, so no unredacted line is ever written to a file.
@@ -343,70 +555,99 @@ if launch_status ~= 0 || ~isscalar(runner_pid) || ...
     error('pseudo_CT:LocalCurrentRunner', ...
         'The current runner could not be started.');
 end
+S = struct('capture_path', capture_path, 'persist_path', persist_path, ...
+    'status_path', status_path, 'status_tmp_path', status_tmp_path, ...
+    'stream_state', stream_state, 'output_context', output_context, ...
+    'public', public, 'phase_label', phase_label, ...
+    'phase_started', phase_started, 'runner_pid', runner_pid, ...
+    'last_activity', tic);
+end
 
-last_activity = tic;
-while true
-    previous_offset = stream_state('offset');
-    local_tail_current_output(capture_path, persist_path, stream_state, ...
-        false, output_context);
-    local_present_native_events(stream_state, output_context);
-    if stream_state('offset') > previous_offset
-        last_activity = tic;
-    elseif toc(last_activity) >= 60
-        [heartbeat, heartbeat_context] = local_heartbeat_event( ...
-            output_context, public, phase_label, phase_started);
-        if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
-            [heartbeat_visible, heartbeat_line] = ...
-                pseudo_CT_output_console_visible('INFO', heartbeat, ...
-                heartbeat_context);
-            if heartbeat_visible && ~strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
-                fprintf(1, '%s\n', heartbeat_line);
-            end
+function [S, exited, status] = local_stream_poll(S)
+%LOCAL_STREAM_POLL One monitor iteration: drain output, heartbeat, exit check.
+exited = false;
+status = [];
+stream_state = S.stream_state;
+output_context = S.output_context;
+previous_offset = stream_state('offset');
+local_tail_current_output(S.capture_path, S.persist_path, stream_state, ...
+    false, output_context);
+local_present_native_events(stream_state, output_context);
+if stream_state('offset') > previous_offset
+    S.last_activity = tic;
+elseif toc(S.last_activity) >= 60
+    [heartbeat, heartbeat_context] = local_heartbeat_event( ...
+        output_context, S.public, S.phase_label, S.phase_started);
+    if strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1')
+        [heartbeat_visible, heartbeat_line] = ...
+            pseudo_CT_output_console_visible('INFO', heartbeat, ...
+            heartbeat_context);
+        if heartbeat_visible && ~strcmp(getenv('PSEUDOCT_OUTPUT_FORMAT'), 'jsonl')
+            fprintf(1, '%s\n', heartbeat_line);
         end
-        % Heartbeat goes to the run LOG only (never JSONL). Stage tags are removed so
-        % the heartbeat cannot claim a stage number; the console row above is unchanged.
-        heartbeat_record = heartbeat_context;
-        if isfield(heartbeat_record, 'stage_index')
-            heartbeat_record = rmfield(heartbeat_record, 'stage_index');
-        end
-        if isfield(heartbeat_record, 'stage_count')
-            heartbeat_record = rmfield(heartbeat_record, 'stage_count');
-        end
-        heartbeat_record.console_detail_only = true;
-        heartbeat_record.console_detail_remote = true;
-        pseudo_CT_output('INFO', heartbeat_record, '%s', heartbeat);
-        last_activity = tic;
     end
-    [found, status] = local_read_current_runner_status(status_path);
+    % Heartbeat goes to the run LOG only (never JSONL). Stage tags are removed so
+    % the heartbeat cannot claim a stage number; the console row above is unchanged.
+    heartbeat_record = heartbeat_context;
+    if isfield(heartbeat_record, 'stage_index')
+        heartbeat_record = rmfield(heartbeat_record, 'stage_index');
+    end
+    if isfield(heartbeat_record, 'stage_count')
+        heartbeat_record = rmfield(heartbeat_record, 'stage_count');
+    end
+    heartbeat_record.console_detail_only = true;
+    heartbeat_record.console_detail_remote = true;
+    pseudo_CT_output('INFO', heartbeat_record, '%s', heartbeat);
+    S.last_activity = tic;
+end
+[found, status] = local_read_current_runner_status(S.status_path);
+if found
+    stream_state('runner_exited') = true;
+    local_tail_current_output(S.capture_path, S.persist_path, ...
+        stream_state, true, output_context);
+    exited = true;
+    return;
+end
+[probe_status, ~] = system(sprintf('kill -0 %d', round(S.runner_pid)));
+if probe_status ~= 0
+    [found, status] = local_read_current_runner_status(S.status_path);
     if found
         stream_state('runner_exited') = true;
-        local_tail_current_output(capture_path, persist_path, ...
+        local_tail_current_output(S.capture_path, S.persist_path, ...
             stream_state, true, output_context);
-        break;
+        exited = true;
+        return;
     end
-    [probe_status, ~] = system(sprintf('kill -0 %d', round(runner_pid)));
-    if probe_status ~= 0
-        [found, status] = local_read_current_runner_status(status_path);
-        if found
-            stream_state('runner_exited') = true;
-            local_tail_current_output(capture_path, persist_path, ...
-                stream_state, true, output_context);
-            break;
-        end
-        stream_state('runner_exited') = true;
-        local_tail_current_output(capture_path, persist_path, ...
-            stream_state, true, output_context);
-        error('pseudo_CT:LocalCurrentRunner', ...
-            'The current runner ended without reporting an exit status.');
-    end
-    pause(0.1);
+    stream_state('runner_exited') = true;
+    local_tail_current_output(S.capture_path, S.persist_path, ...
+        stream_state, true, output_context);
+    error('pseudo_CT:LocalCurrentRunner', ...
+        'The current runner ended without reporting an exit status.');
+end
 end
 
-if exist(status_path, 'file') == 2
-    delete(status_path);
+function local_stream_close(S, res)
+%LOCAL_STREAM_CLOSE Remove status files, then drain the stream and scratch once.
+if exist(S.status_path, 'file') == 2
+    delete(S.status_path);
 end
-if exist(status_tmp_path, 'file') == 2
-    delete(status_tmp_path);
+if exist(S.status_tmp_path, 'file') == 2
+    delete(S.status_tmp_path);
+end
+try
+    if ~isKey(res, 'stream_done')
+        res('stream_done') = true;
+        local_finish_current_stream(S.capture_path, S.persist_path, ...
+            S.stream_state, S.output_context);
+    end
+catch %#ok<CTCH>
+end
+try
+    if isKey(res, 'scratch_dir') && ~isKey(res, 'scratch_done')
+        res('scratch_done') = true;
+        pseudo_CT_cleanup_runtime_dir(res('scratch_dir'));
+    end
+catch %#ok<CTCH>
 end
 end
 

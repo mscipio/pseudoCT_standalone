@@ -144,6 +144,19 @@ spec.cleanup_on_success = local_read_option(fid);
 spec.current_artifact_root = local_read_line(fid);
 spec.group_account = local_read_line(fid);
 spec.host_key_file = local_read_line(fid);
+% Optional last line: max_concurrent (empty or absent keeps the default, 1).
+spec.max_concurrent = [];
+if ~feof(fid)
+    text = fgetl(fid);
+    if ischar(text) && ~isempty(text)
+        value = str2double(text);
+        if isempty(regexp(text, '^[0-9]+$', 'once')) || ~isfinite(value) || ...
+                value < 1 || value > 32
+            error('pseudo_CT:CLIInput', 'max_concurrent is invalid.');
+        end
+        spec.max_concurrent = value;
+    end
+end
 if ~feof(fid)
     extra = fgetl(fid);
     if ischar(extra)
@@ -205,6 +218,9 @@ if strcmp(action, 'validate')
     end
     if ~isempty(spec.cleanup_on_success)
         request.options.cleanup_on_success = spec.cleanup_on_success;
+    end
+    if ~isempty(spec.max_concurrent)
+        request.options.max_concurrent = spec.max_concurrent;
     end
     request.resolved_job = struct();
     request.current_artifact_root = spec.current_artifact_root;
@@ -283,6 +299,34 @@ for ii = 1:length(values)
         values{ii} = '-';
     end
     fprintf(fid, '%s\n', values{ii});
+end
+% Per-subject outcomes after the fixed lines: one tab-separated row per
+% subject (index, outcome, Slurm job ID, queue seconds, execution seconds).
+% Readers that use only the fixed lines are unaffected.
+if isfield(result, 'evidence') && isstruct(result.evidence) && ...
+        isfield(result.evidence, 'subjects') && isstruct(result.evidence.subjects)
+    subjects = result.evidence.subjects;
+    for ii = 1:numel(subjects)
+        fprintf(fid, 'subject\t%d\t%s\t%s\t%s\t%s\n', subjects(ii).index, ...
+            local_summary_text(subjects(ii).outcome), ...
+            local_summary_number(subjects(ii).job_id), ...
+            local_summary_number(subjects(ii).queue_seconds), ...
+            local_summary_number(subjects(ii).execution_seconds));
+    end
+end
+end
+
+function text = local_summary_text(value)
+text = '-';
+if ischar(value) && ~isempty(value) && ~isempty(regexp(value, '^[A-Z_]+$', 'once'))
+    text = value;
+end
+end
+
+function text = local_summary_number(value)
+text = '-';
+if isnumeric(value) && isscalar(value) && isfinite(value) && value >= 0
+    text = sprintf('%.0f', value);
 end
 end
 

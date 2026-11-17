@@ -22,6 +22,8 @@ function report = run_pseudo_CT(varargin)
 %                              needs CredentialHandoff; logs in without processing inputs)
 %     CorrectAliasing, RecenterBeforeNormalization, CleanupOnSuccess
 %                              true/false or 'yes'/'no'; omit for the profile default
+%     MaxConcurrent            subjects executing at once, 1-32 (default 1: one after
+%                              another); same as bin/pseudoct --max-concurrent
 %     CurrentArtifactRoot      development-only override; MLSC profiles only (mlsc,
 %                              mlsc-mprage-only). Local profiles reject it.
 %     GroupAccount             MLSC account selection (not a secret)

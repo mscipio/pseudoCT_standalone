@@ -432,6 +432,14 @@ result.dispatch_status = dispatch.dispatch_status;
 result.resolved_job = dispatch.resolved_job;
 result.evidence = struct('validation', dispatch.resolved_job.validation_evidence, ...
     'warnings', dispatch.warnings);
+% Per-subject outcomes in request order (index, outcome, Slurm job ID, queue
+% and execution seconds, non-secret detail) and the concurrency used.
+if isfield(dispatch, 'subjects')
+    result.evidence.subjects = dispatch.subjects;
+end
+if isfield(dispatch, 'max_concurrent')
+    result.evidence.max_concurrent = dispatch.max_concurrent;
+end
 result.diagnostics = struct('code', result.error_code, ...
     'message', result.error_message);
 clear credentials provider api_request
@@ -442,8 +450,16 @@ allowed = {'correct_aliasing'; 'recenter_before_normalization'; ...
     'cleanup_on_success'};
 names = fieldnames(options);
 for ii = 1:length(names)
-    if ~any(strcmp(names{ii}, allowed))
+    if ~any(strcmp(names{ii}, [allowed; {'max_concurrent'}]))
         error('pseudo_CT:HeadlessRequest', 'An unsupported processing option was supplied.');
+    end
+end
+% Scheduling option (not a processing flag): subjects executing at once.
+if isfield(options, 'max_concurrent') && ~isempty(options.max_concurrent)
+    value = options.max_concurrent;
+    if ~isnumeric(value) || ~isscalar(value) || ~isreal(value) || ...
+            ~isfinite(value) || value ~= fix(value) || value < 1 || value > 32
+        error('pseudo_CT:HeadlessRequest', 'max_concurrent must be an integer from 1 to 32.');
     end
 end
 for ii = 1:length(allowed)
@@ -572,6 +588,8 @@ elseif strcmp(identifier, 'pseudo_CT:InvalidProfile') || ...
     code = 'PROFILE_NOT_ALLOWED';
 elseif strcmp(identifier, 'pseudo_CT:StaleResolvedJob')
     code = 'STALE_RESOLVED_JOB';
+elseif strcmp(identifier, 'pseudo_CT:OutputCollision')
+    code = 'OUTPUT_COLLISION';
 elseif strcmp(identifier, 'pseudo_CT:MLSCTransportRejected')
     code = 'AUTHENTICATION_FAILED';
 elseif strcmp(identifier, 'pseudo_CT:MLSCNoAccounts')
@@ -597,6 +615,9 @@ switch code
         message = 'The authentication step could not be completed; no submission was attempted.';
     case 'STALE_RESOLVED_JOB'
         message = 'Inputs or artifacts changed; validate again before submit.';
+    case 'OUTPUT_COLLISION'
+        message = ['Two or more subjects resolve to the same MR_PET or ' ...
+            'pseudo_muMAP output folder; nothing was started.'];
     case 'AUTHENTICATION_FAILED'
         message = 'Remote authentication failed; no submission was attempted.';
     case 'NO_ACCOUNTS'

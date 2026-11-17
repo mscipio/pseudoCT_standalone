@@ -1,4 +1,4 @@
-function result = mlsc_lifecycle(subject, config, runtime, transport)
+function result = mlsc_lifecycle(varargin)
 %MLSC_LIFECYCLE Submit, monitor and finalize one MLSC Slurm subject.
 %   RESULT = MLSC_LIFECYCLE(SUBJECT, CONFIG, RUNTIME, TRANSPORT)
 %   Submits the subject through mlsc_backend, then polls the scheduler through
@@ -10,6 +10,25 @@ function result = mlsc_lifecycle(subject, config, runtime, transport)
 %   and now). Without caller-supplied callbacks, the function performs no
 %   scheduler operation. The callbacks return command output only, never
 %   credentials or SSH internals.
+%
+%   Nonblocking use (shared batch scheduler in pseudo_CT_run_lifecycle):
+%     STATE = MLSC_LIFECYCLE('start', SUBJECT, CONFIG, RUNTIME, TRANSPORT)
+%         submits the job and returns at once (STATE.done is true when the
+%         submission failed).
+%     STATE = MLSC_LIFECYCLE('step', STATE) performs one scheduler poll; the
+%         caller paces the calls (RUNTIME.poll_interval_seconds apart).
+%     STATE = MLSC_LIFECYCLE('cancel', STATE) requests scancel once; later steps
+%         observe the terminal accounting (bounded by accounting_timeout_seconds).
+%     STATE.result is the lifecycle RESULT once STATE.done is true. STATE holds
+%     the transport and must stay in memory: it is never saved or logged.
+%   The four-argument form is the blocking wrapper: start, then step and sleep
+%   until done. Each job's polling is unchanged by the split.
+%
+%   Timeouts: RUNTIME.queue_timeout_seconds (default 86400) bounds the time the
+%   job waits in the Slurm queue before it is first observed RUNNING;
+%   RUNTIME.timeout_seconds (default 7200, the profile Slurm wall time) bounds
+%   execution from the first RUNNING observation. Either one cancels the job.
+%   RESULT.queue_seconds and RESULT.execution_seconds report the two phases.
 %
 %   Progress: console lines come from pseudo_CT_output with
 %   RUNTIME.output_context (non-secret routing tags; the job ID is added as the
@@ -35,6 +54,30 @@ function result = mlsc_lifecycle(subject, config, runtime, transport)
 %   pseudo_CT:MLSCTransportRequired when a required callback is missing.
 %   Minimum supported MATLAB: R2010b.
 
+if nargin >= 1 && ischar(varargin{1})
+    switch varargin{1}
+        case 'start'
+            result = local_start(varargin{2:end});
+        case 'step'
+            result = local_step(varargin{2});
+        case 'cancel'
+            result = local_user_cancel(varargin{2});
+        otherwise
+            error('pseudo_CT:MLSCPreflight', 'Unknown MLSC lifecycle action.');
+    end
+    return;
+end
+state = local_start(varargin{:});
+while ~state.done
+    state = local_step(state);
+    if ~state.done
+        local_sleep(state.runtime.poll_interval_seconds, state.transport);
+    end
+end
+result = state.result;
+end
+
+function state = local_start(subject, config, runtime, transport)
 if nargin < 2 || ~isstruct(subject) || ~isstruct(config)
     error('pseudo_CT:MLSCPreflight', ...
         'An MLSC subject and selected profile config are required.');
@@ -67,7 +110,14 @@ end
 runtime = local_runtime_defaults(runtime);
 local_validate_runtime(runtime);
 
-    result = local_initial_result(subject, runtime, transport);
+state = struct('done', false, 'subject', subject, 'runtime', runtime, ...
+    'transport', transport, 'result', [], 'evidence', [], 'job_id', 0, ...
+    'poll', 0, 'output_tracker', [], 'slurm_log_paths', [], ...
+    'slurm_log_cursors', [], 'slurm_log_state', struct(), ...
+    'native_state', [], 'terminal_observed', false, ...
+    'accounting_deadline', [], 'cancel_deadline', [], ...
+    'guard_id', [], 'guard', []);
+result = local_initial_result(subject, runtime, transport);
 evidence = mlsc_evidence('init', local_evidence_values(result));
 
 try
@@ -80,26 +130,28 @@ catch ME
     result.failure_detail = local_backend_failure_detail(ME);
     result.failure = struct('present', true, 'detail', result.failure_detail);
     result.timestamps.finished_at = local_timestamp(transport);
-    result = local_finish(result, evidence, runtime, transport);
+    state.result = local_with_durations(local_finish(result, evidence, runtime, transport));
+    state.done = true;
     return;
 end
-    result = local_apply_backend_submission(result, backend);
-    if ~backend.submission_accepted
-        result.state = 'failed';
-        result.scheduler_state = 'unknown';
-        result.workflow_state = 'failed';
-        result.terminal = true;
-        result.failure_detail = ...
-            ['MLSC submission response was missing or unparseable; no matching ', ...
-             'Slurm allocation was recovered and no retry was attempted.'];
-        result.failure = struct('present', true, 'detail', result.failure_detail);
-        result.timestamps.finished_at = local_timestamp(transport);
-        result = local_finish(result, evidence, runtime, transport);
-        return;
-    end
+result = local_apply_backend_submission(result, backend);
+if ~backend.submission_accepted
+    result.state = 'failed';
+    result.scheduler_state = 'unknown';
+    result.workflow_state = 'failed';
+    result.terminal = true;
+    result.failure_detail = ...
+        ['MLSC submission response was missing or unparseable; no matching ', ...
+         'Slurm allocation was recovered and no retry was attempted.'];
+    result.failure = struct('present', true, 'detail', result.failure_detail);
+    result.timestamps.finished_at = local_timestamp(transport);
+    state.result = local_with_durations(local_finish(result, evidence, runtime, transport));
+    state.done = true;
+    return;
+end
 
-    result.job_id = backend.job_id;
-    if isfield(backend, 'log_paths') && isstruct(backend.log_paths)
+result.job_id = backend.job_id;
+if isfield(backend, 'log_paths') && isstruct(backend.log_paths)
     result.log_paths = local_apply_log_paths(result.log_paths, ...
         backend.log_paths, runtime.log_archive_dir);
 end
@@ -113,110 +165,167 @@ result.timestamps.submitted_at = local_timestamp(transport);
 result = local_append_state(result, 'pending', transport);
 result.contract = local_contract_from_artifact(backend.artifact);
 
-output_tracker = local_output_init(runtime, transport);
-[slurm_log_paths, slurm_log_cursors] = local_slurm_log_init( ...
+state.job_id = job_id;
+state.output_tracker = local_output_init(runtime, transport);
+[state.slurm_log_paths, state.slurm_log_cursors] = local_slurm_log_init( ...
     result.log_paths, job_id);
-slurm_log_state = struct();
 % Native scientific events (read-only here; the remote pipeline is the writer).
-native_state = local_native_state_init();
+state.native_state = local_native_state_init();
 local_emit_accepted(runtime, job_id);
-terminal_observed = false;
-accounting_deadline = [];
-polling_result = false;
-guard_id = local_poll_guard('register', [], struct('result', result, ...
+state.guard_id = local_poll_guard('register', [], struct('result', result, ...
     'evidence', evidence, 'runtime', runtime, 'transport', transport));
-polling_guard = onCleanup(@() local_poll_guard('cleanup', guard_id, struct()));
+% Fires when the last copy of STATE is released before completion (an
+% interruption unwinding the caller): records the job as interrupted and
+% unverified with its manual scancel command. A completed job deactivated
+% its guard entry, so the callback is then a no-op.
+guard_id = state.guard_id;
+state.guard = onCleanup(@() local_poll_guard('cleanup', guard_id, struct()));
+state.result = result;
+state.evidence = evidence;
+end
+
+function state = local_user_cancel(state)
+%LOCAL_USER_CANCEL Operator cancellation: request scancel once, keep polling.
+if state.done || state.result.cancel_requested
+    return;
+end
+state.result = local_request_cancel(state.result, state.transport);
+state.cancel_deadline = local_clock(state.transport) + ...
+    state.runtime.accounting_timeout_seconds / 86400;
+end
+
+function state = local_step(state)
+%LOCAL_STEP One scheduler poll; on terminal state, archive and finish.
+if state.done
+    return;
+end
 try
-    for poll = 1:runtime.max_polls
-        result.poll_count = poll;
-        local_poll_guard('update', guard_id, struct('result', result, ...
-            'evidence', evidence, 'runtime', runtime, 'transport', transport));
-        try
-            squeue_state = mlsc_parse_squeue_state( ...
-                feval(transport.query_squeue, job_id));
-        catch ME
-            result.squeue_query_failures = result.squeue_query_failures + 1;
-            rethrow(ME);
-        end
-        result = local_append_state(result, squeue_state, transport);
-        if strcmp(squeue_state, 'running') && isempty(result.timestamps.started_at)
-            result.timestamps.started_at = local_timestamp(transport);
-        end
-        % Drain timestamped Slurm output before the native event poll so a
-        % buffered child log line is not displayed after a later native record
-        % merely because its file was polled second.
-        try
-            [slurm_log_cursors, slurm_log_state] = local_slurm_log_poll( ...
-                slurm_log_paths, slurm_log_cursors, slurm_log_state, ...
-                runtime, job_id, false);
-        catch %#ok<CTCH>
-        end
-        native_state = local_native_events_poll(native_state, runtime, job_id);
+    [state, finished] = local_poll_once(state);
+catch %#ok<CTCH>
+    state.result = local_apply_interrupted(state.result, state.transport);
+    finished = true;
+end
+if finished
+    state = local_complete(state);
+end
+end
+
+function [state, finished] = local_poll_once(state)
+result = state.result;
+runtime = state.runtime;
+transport = state.transport;
+subject = state.subject;
+job_id = state.job_id;
+output_tracker = state.output_tracker;
+finished = false;
+
+state.poll = state.poll + 1;
+poll = state.poll;
+result.poll_count = poll;
+local_poll_guard('update', state.guard_id, struct('result', result, ...
+    'evidence', state.evidence, 'runtime', runtime, 'transport', transport));
+try
+    squeue_state = mlsc_parse_squeue_state( ...
+        feval(transport.query_squeue, job_id));
+catch ME
+    result.squeue_query_failures = result.squeue_query_failures + 1;
+    state.result = result;
+    rethrow(ME);
+end
+result = local_append_state(result, squeue_state, transport);
+if strcmp(squeue_state, 'running') && isempty(result.timestamps.started_at)
+    result.timestamps.started_at = local_timestamp(transport);
+end
+% Drain timestamped Slurm output before the native event poll so a
+% buffered child log line is not displayed after a later native record
+% merely because its file was polled second.
+try
+    [state.slurm_log_cursors, state.slurm_log_state] = local_slurm_log_poll( ...
+        state.slurm_log_paths, state.slurm_log_cursors, state.slurm_log_state, ...
+        runtime, job_id, false);
+catch %#ok<CTCH>
+end
+state.native_state = local_native_events_poll(state.native_state, runtime, job_id);
+output_tracker = local_output_note(output_tracker, runtime, ...
+    job_id, squeue_state, transport);
+
+try
+    sacct_record = mlsc_parse_sacct_terminal( ...
+        feval(transport.query_sacct, job_id), job_id);
+catch ME
+    result.sacct_query_failures = result.sacct_query_failures + 1;
+    state.result = result;
+    rethrow(ME);
+end
+if sacct_record.found
+    result.accounting_record_found = true;
+    result = local_append_state(result, sacct_record.state, transport);
+    % sacct is authoritative only for terminal states; non-terminal
+    % accounting records reflect lag and never drive pending/running
+    % display, which follows the live squeue observation.
+    if sacct_record.terminal
         output_tracker = local_output_note(output_tracker, runtime, ...
-            job_id, squeue_state, transport);
+            job_id, sacct_record.state, transport);
+        result = local_apply_accounting(result, sacct_record, subject, transport);
+        finished = true;
+    end
+end
 
-        try
-            sacct_record = mlsc_parse_sacct_terminal( ...
-                feval(transport.query_sacct, job_id), job_id);
-        catch ME
-            result.sacct_query_failures = result.sacct_query_failures + 1;
-            rethrow(ME);
-        end
-        if sacct_record.found
-            result.accounting_record_found = true;
-            result = local_append_state(result, sacct_record.state, transport);
-            % sacct is authoritative only for terminal states; non-terminal
-            % accounting records reflect lag and never drive pending/running
-            % display, which follows the live squeue observation.
-            if sacct_record.terminal
-                output_tracker = local_output_note(output_tracker, runtime, ...
-                    job_id, sacct_record.state, transport);
-                result = local_apply_accounting(result, sacct_record, subject, transport);
-                polling_result = true;
-                break;
-            end
-        end
-
-        if local_is_terminal(squeue_state)
-            terminal_observed = true;
-            if isempty(accounting_deadline)
-                accounting_deadline = local_clock(transport) + ...
-                    runtime.accounting_timeout_seconds / 86400;
-            end
-        end
-
-        elapsed = local_elapsed_seconds(result.clock_started, local_clock(transport));
-        result.elapsed_seconds = elapsed;
-        if elapsed >= runtime.timeout_seconds
-            result = local_request_cancel(result, transport);
-            [result, sacct_record, accounting_done, output_tracker] = ...
-                local_wait_for_accounting(result, runtime, transport, ...
-                output_tracker);
-            if accounting_done
-                result = local_apply_accounting(result, sacct_record, subject, transport);
-            else
-                result = local_apply_deadline(result, 'timeout', transport, ...
-                    'MLSC polling timed out before authoritative terminal accounting was available.');
-            end
-            polling_result = true;
-            break;
-        end
-        if terminal_observed && local_clock(transport) >= accounting_deadline
-            result = local_apply_deadline(result, 'unknown', transport, ...
-                'sacct terminal accounting remained unavailable after a bounded wait.');
-            polling_result = true;
-            break;
-        end
-        output_tracker = local_output_maybe_heartbeat(output_tracker, ...
-            runtime, job_id, result, transport);
-        if poll < runtime.max_polls
-            local_sleep(runtime.poll_interval_seconds, transport);
+if ~finished
+    if local_is_terminal(squeue_state)
+        state.terminal_observed = true;
+        if isempty(state.accounting_deadline)
+            state.accounting_deadline = local_clock(transport) + ...
+                runtime.accounting_timeout_seconds / 86400;
         end
     end
 
+    now_value = local_clock(transport);
+    result.elapsed_seconds = local_elapsed_seconds(result.clock_started, now_value);
+    % Queue waiting and execution are bounded separately: the execution
+    % clock starts at the first RUNNING observation.
+    timeout_detail = '';
+    if isempty(result.timestamps.started_at)
+        if local_elapsed_seconds(local_stamp_value(result.timestamps.submitted_at, ...
+                result.clock_started), now_value) >= runtime.queue_timeout_seconds
+            timeout_detail = ['MLSC job waited in the Slurm queue longer than ' ...
+                'the queue timeout and was cancelled before it started.'];
+        end
+    elseif local_elapsed_seconds(local_stamp_value(result.timestamps.started_at, ...
+            result.clock_started), now_value) >= runtime.timeout_seconds
+        timeout_detail = ['MLSC job exceeded the execution timeout after it ' ...
+            'started running and was cancelled.'];
+    end
+    if ~isempty(timeout_detail) && ~result.cancel_requested
+        result = local_request_cancel(result, transport);
+        [result, sacct_record, accounting_done, output_tracker] = ...
+            local_wait_for_accounting(result, runtime, transport, ...
+            output_tracker);
+        if accounting_done
+            result = local_apply_accounting(result, sacct_record, subject, transport);
+        else
+            result = local_apply_deadline(result, 'timeout', transport, ...
+                ['MLSC polling timed out before authoritative terminal ' ...
+                 'accounting was available. ' timeout_detail]);
+        end
+        finished = true;
+    elseif ~isempty(state.cancel_deadline) && local_clock(transport) >= state.cancel_deadline
+        result = local_apply_deadline(result, 'cancelled', transport, ...
+            ['MLSC job cancellation was requested; sacct terminal accounting ' ...
+             'remained unavailable after a bounded wait.']);
+        finished = true;
+    elseif state.terminal_observed && local_clock(transport) >= state.accounting_deadline
+        result = local_apply_deadline(result, 'unknown', transport, ...
+            'sacct terminal accounting remained unavailable after a bounded wait.');
+        finished = true;
+    end
+end
+if ~finished
+    output_tracker = local_output_maybe_heartbeat(output_tracker, ...
+        runtime, job_id, result, transport);
     % A bounded poll count protects injected clocks and failed scheduler seams.
-    if ~polling_result
-        if terminal_observed
+    if poll >= runtime.max_polls
+        if state.terminal_observed
             result = local_apply_deadline(result, 'unknown', transport, ...
                 'sacct terminal accounting remained unavailable after a bounded wait.');
         else
@@ -231,22 +340,65 @@ try
                     'MLSC polling reached its bounded poll limit before terminal accounting.');
             end
         end
+        finished = true;
     end
-catch %#ok<CTCH>
-    result = local_apply_interrupted(result, transport);
 end
+state.result = result;
+state.output_tracker = output_tracker;
+end
+
+function state = local_complete(state)
+%LOCAL_COMPLETE Final log/native drain, terminal row, evidence and cleanup.
 try
-    [slurm_log_cursors, slurm_log_state] = local_slurm_log_poll( ...
-        slurm_log_paths, slurm_log_cursors, slurm_log_state, ...
-        runtime, job_id, true);
+    [state.slurm_log_cursors, state.slurm_log_state] = local_slurm_log_poll( ...
+        state.slurm_log_paths, state.slurm_log_cursors, state.slurm_log_state, ...
+        state.runtime, state.job_id, true);
 catch %#ok<CTCH>
 end
 % Terminal order: the final native event poll precedes the terminal row.
-native_state = local_native_events_poll(native_state, runtime, job_id);
-local_emit_terminal(runtime, result, transport);
-local_poll_guard('deactivate', guard_id, struct());
-result = local_finish(result, evidence, runtime, transport);
-clear polling_guard
+try
+    state.native_state = local_native_events_poll(state.native_state, ...
+        state.runtime, state.job_id);
+catch %#ok<CTCH>
+end
+local_emit_terminal(state.runtime, state.result, state.transport);
+local_poll_guard('deactivate', state.guard_id, struct());
+state.result = local_with_durations(local_finish(state.result, ...
+    state.evidence, state.runtime, state.transport));
+state.done = true;
+state.guard = [];
+end
+
+function result = local_with_durations(result)
+%LOCAL_WITH_DURATIONS Queue wait and execution seconds from the timestamps.
+result.queue_seconds = [];
+result.execution_seconds = [];
+try
+    submitted = local_stamp_value(result.timestamps.submitted_at, []);
+    started = local_stamp_value(result.timestamps.started_at, []);
+    finished = local_stamp_value(result.timestamps.finished_at, []);
+    if ~isempty(submitted) && ~isempty(started)
+        result.queue_seconds = local_elapsed_seconds(submitted, started);
+    elseif ~isempty(submitted) && ~isempty(finished)
+        result.queue_seconds = local_elapsed_seconds(submitted, finished);
+    end
+    if ~isempty(started) && ~isempty(finished)
+        result.execution_seconds = local_elapsed_seconds(started, finished);
+    end
+catch %#ok<CTCH>
+end
+end
+
+function value = local_stamp_value(stamp, fallback)
+%LOCAL_STAMP_VALUE Datenum of a yyyy-mm-ddTHH:MM:SS lifecycle timestamp.
+value = fallback;
+if ischar(stamp) && length(stamp) == 19
+    try
+        value = datenum(strrep(stamp, 'T', ' '), 'yyyy-mm-dd HH:MM:SS');
+    catch %#ok<CTCH>
+        value = fallback;
+    end
+end
 end
 
 function guard_id = local_poll_guard(action, guard_id, state)
@@ -311,6 +463,11 @@ function runtime = local_runtime_defaults(runtime)
 if ~isfield(runtime, 'timeout_seconds')
     runtime.timeout_seconds = 7200;
 end
+if ~isfield(runtime, 'queue_timeout_seconds')
+    % Unlimited by default: waiting in the Slurm queue never cancels a job
+    % unless a finite queue timeout is configured.
+    runtime.queue_timeout_seconds = Inf;
+end
 if ~isfield(runtime, 'poll_interval_seconds')
     runtime.poll_interval_seconds = 30;
 end
@@ -318,14 +475,24 @@ if ~isfield(runtime, 'accounting_timeout_seconds')
     runtime.accounting_timeout_seconds = 120;
 end
 if ~isfield(runtime, 'max_polls')
+    % The poll bound covers the queue wait plus the execution timeout.
     if isnumeric(runtime.timeout_seconds) && isscalar(runtime.timeout_seconds) && ...
+            isnumeric(runtime.queue_timeout_seconds) && ...
+            isscalar(runtime.queue_timeout_seconds) && ...
             isnumeric(runtime.poll_interval_seconds) && ...
             isscalar(runtime.poll_interval_seconds) && ...
             isfinite(runtime.timeout_seconds) && ...
+            isfinite(runtime.queue_timeout_seconds) && ...
             isfinite(runtime.poll_interval_seconds) && ...
             runtime.poll_interval_seconds > 0
-        runtime.max_polls = max(1, ceil(runtime.timeout_seconds / ...
-            runtime.poll_interval_seconds) + 1);
+        runtime.max_polls = max(1, ceil((runtime.timeout_seconds + ...
+            runtime.queue_timeout_seconds) / runtime.poll_interval_seconds) + 1);
+    elseif isnumeric(runtime.queue_timeout_seconds) && ...
+            isscalar(runtime.queue_timeout_seconds) && ...
+            isequal(runtime.queue_timeout_seconds, Inf)
+        % An unlimited queue wait leaves the poll count unbounded; the
+        % execution timeout still bounds the job once it runs.
+        runtime.max_polls = Inf;
     else
         runtime.max_polls = 1;
     end
@@ -374,18 +541,21 @@ end
 end
 
 function local_validate_runtime(runtime)
-positive_fields = {'timeout_seconds'; 'poll_interval_seconds'; ...
+positive_fields = {'timeout_seconds'; 'queue_timeout_seconds'; 'poll_interval_seconds'; ...
     'accounting_timeout_seconds'; 'heartbeat_interval_seconds'; ...
     'max_polls'; 'max_accounting_polls'; ...
     'max_reconciliation_polls'; 'reconciliation_interval_seconds'};
 for ii = 1:length(positive_fields)
     value = runtime.(positive_fields{ii});
-    if ~isnumeric(value) || ~isscalar(value) || ~isfinite(value) || value <= 0
+    % Only the queue timeout (and the poll count it implies) may be unlimited.
+    unlimited_ok = any(strcmp(positive_fields{ii}, {'queue_timeout_seconds'; 'max_polls'})) && ...
+        isnumeric(value) && isscalar(value) && isequal(value, Inf);
+    if ~unlimited_ok && (~isnumeric(value) || ~isscalar(value) || ~isfinite(value) || value <= 0)
         error('pseudo_CT:MLSCPreflight', ...
             'MLSC lifecycle bounds must be positive finite values.');
     end
 end
-if runtime.max_polls ~= floor(runtime.max_polls) || ...
+if (isfinite(runtime.max_polls) && runtime.max_polls ~= floor(runtime.max_polls)) || ...
         runtime.max_accounting_polls ~= floor(runtime.max_accounting_polls) || ...
         runtime.max_reconciliation_polls ~= floor(runtime.max_reconciliation_polls)
     error('pseudo_CT:MLSCPreflight', ...

@@ -5,6 +5,7 @@ function args = pseudo_CT_gui_args(values, context, action)
 %   argument mode build identical launcher requests.
 %     VALUES: profile, mprage, umap ('' when none), aliasing, recenter,
 %             cleanup (logical), gui_mode ('mMR' or 'mprage-only'),
+%             optionally max_concurrent (subjects at once, 1-32; passed when > 1),
 %             group_account, credential_handoff (path, '' when none), and optionally
 %             subjects_file: a subjects-file path. When subjects_file is present and
 %             not empty it is passed as 'Subject', FILE and mprage/umap are not used
@@ -32,6 +33,10 @@ if ~isempty(context.runtime)
 end
 if ~isempty(context.mcr_root)
     args = [args, {'McrRoot', context.mcr_root}];
+end
+if isfield(values, 'max_concurrent') && ~isempty(values.max_concurrent) && ...
+        values.max_concurrent > 1
+    args = [args, {'MaxConcurrent', values.max_concurrent}];
 end
 if ~isempty(values.group_account)
     args = [args, {'GroupAccount', values.group_account}];

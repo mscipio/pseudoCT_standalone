@@ -166,6 +166,16 @@ try
         'String', 'Remove temporary files after successful processing', ...
         'Value', normalize_gui_flag(config.cleanup_on_success, true), ...
         'Tag', 'cleanup_on_success_checkbox', 'Callback', @(s, e) refresh());
+    % Execution: how many subjects run at once (bin/pseudoct --max-concurrent).
+    % 1 runs the subjects one after another, as before.
+    h.concurrency_label = uicontrol(h.options_panel, 'Style', 'text', ...
+        'HorizontalAlignment', 'right', 'String', 'Subjects at once:', ...
+        'Tag', 'max_concurrent_label');
+    h.concurrency = uicontrol(h.options_panel, 'Style', 'popupmenu', ...
+        'String', arrayfun(@(v) sprintf('%d', v), 1:32, 'UniformOutput', false), ...
+        'Value', 1, 'BackgroundColor', 'white', 'Tag', 'max_concurrent_menu', ...
+        'TooltipString', ['Maximum number of subjects processed at the same time ' ...
+        '(local workers, or submitted/queued/running MLSC Slurm jobs).']);
 
     % Bottom bar.
     h.status = uicontrol(fig, 'Style', 'text', 'HorizontalAlignment', 'left', ...
@@ -286,15 +296,24 @@ end
             2 * metrics.text_h + 2]);
         y = m + max(r, 2 * metrics.text_h + 2) + g;
 
-        % Processing options band. Its full width is used by the three options today; a
-        % later execution group would take the right part of this band.
+        % Processing options band: the three options on the left, the execution
+        % group (subjects at once) on the right of the first row.
         option_h = metrics.title_h + 3 * (metrics.text_h + g) + g;
         set(h.options_panel, 'Position', [m, y, inner_w, option_h]);
+        menu_w = round(8 * metrics.char_w) + 24;
+        label_w = round(18 * metrics.char_w);
+        exec_w = label_w + g + menu_w;
         names = {'aliasing', 'recenter', 'cleanup'};
         for kk = 1:3
             set(h.(names{kk}), 'Position', [m, option_h - metrics.title_h - ...
-                kk * (metrics.text_h + g), inner_w - 3 * m, metrics.text_h + 4]);
+                kk * (metrics.text_h + g), max(50, inner_w - 4 * m - exec_w), ...
+                metrics.text_h + 4]);
         end
+        row_y = option_h - metrics.title_h - (metrics.text_h + g);
+        set(h.concurrency_label, 'Position', [inner_w - 2 * m - exec_w, row_y, ...
+            label_w, metrics.text_h + 2]);
+        set(h.concurrency, 'Position', [inner_w - 2 * m - menu_w, row_y - 2, ...
+            menu_w, metrics.text_h + 6]);
         y = y + option_h + g;
 
         % Header.
@@ -1019,6 +1038,7 @@ end
         values.aliasing = logical(get(h.aliasing, 'Value'));
         values.recenter = logical(get(h.recenter, 'Value'));
         values.cleanup = logical(get(h.cleanup, 'Value'));
+        values.max_concurrent = get(h.concurrency, 'Value');
         values.gui_mode = gui_mode;
         values.group_account = '';
         values.credential_handoff = '';
@@ -1113,7 +1133,7 @@ end
             h.remove_button h.export_button h.id_edit h.mprage_edit h.mprage_file ...
             h.mprage_dir h.umap_edit h.umap_file h.umap_dir h.file_browse ...
             h.file_recheck h.file_table h.file_details h.aliasing h.recenter h.cleanup ...
-            h.check_button h.close_button];
+            h.concurrency h.check_button h.close_button];
         if running
             set(controls, 'Enable', 'off');
             set(h.run_button, 'Enable', 'off');

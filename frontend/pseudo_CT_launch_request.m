@@ -92,7 +92,8 @@ req = struct('profile', '', 'mprage', {{}}, 'umap', {{}}, 'subjects_file', '', .
     'subjects', {{}}, 'action', 'validate', ...
     'cli_action', 'validate', 'runtime', '', 'mcr_root', '', 'launcher', '', ...
     'correct_aliasing', '', 'recenter', '', 'cleanup', '', 'artifact_root', '', ...
-    'group_account', '', 'host_key_file', '', 'credential_handoff', '');
+    'group_account', '', 'host_key_file', '', 'credential_handoff', '', ...
+    'max_concurrent', '');
 for kk = 1:2:numel(args)
     name = args{kk};
     if ~ischar(name) || size(name, 1) ~= 1
@@ -134,6 +135,8 @@ for kk = 1:2:numel(args)
             req.recenter = local_yes_no(value, 'RecenterBeforeNormalization');
         case 'cleanuponsuccess'
             req.cleanup = local_yes_no(value, 'CleanupOnSuccess');
+        case 'maxconcurrent'
+            req.max_concurrent = local_max_concurrent(value);
         case 'currentartifactroot'
             req.artifact_root = local_text(value, 'CurrentArtifactRoot');
         case 'groupaccount'
@@ -232,6 +235,18 @@ if exist(launcher, 'file') ~= 2
 end
 end
 
+function text = local_max_concurrent(value)
+%LOCAL_MAX_CONCURRENT MaxConcurrent as launcher text: an integer from 1 to 32.
+if ischar(value)
+    value = str2double(strtrim(value));
+end
+if ~isnumeric(value) || ~isscalar(value) || ~isreal(value) || ~isfinite(value) || ...
+        value ~= fix(value) || value < 1 || value > 32
+    error('pseudo_CT:FrontendUsage', 'MaxConcurrent must be an integer from 1 to 32.');
+end
+text = sprintf('%d', value);
+end
+
 function flag = local_is_installed(root_dir)
 %LOCAL_IS_INSTALLED True for the packaged layout: no src/ tree beside run_pseudo_CT.m.
 flag = exist(fullfile(root_dir, 'src'), 'dir') ~= 7;
@@ -272,6 +287,9 @@ if ~isempty(req.recenter)
 end
 if ~isempty(req.cleanup)
     argv = [argv, {'--cleanup-on-success', req.cleanup}];
+end
+if ~isempty(req.max_concurrent)
+    argv = [argv, {'--max-concurrent', req.max_concurrent}];
 end
 if ~isempty(req.artifact_root)
     argv = [argv, {'--current-artifact-root', req.artifact_root}];

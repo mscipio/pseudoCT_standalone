@@ -113,7 +113,7 @@ if isdeployed && ~isempty(varargin)
     [profile_name, subjects_arg, aliasing_arg, recenter_arg, headless_mode, ...
         headless_credentials, group_account, mlsc_host_key_provider, ...
         mlsc_current_artifact_root, umap_files_arg, resolved_jobs, ...
-        cleanup_on_success_arg] = ...
+        max_concurrent, cleanup_on_success_arg] = ...
         parse_deployed_arguments(varargin{:});
 else
     args = pseudo_CT_lifecycle_arguments(varargin{:});
@@ -129,6 +129,7 @@ else
     group_account = args.group_account;
     umap_files_arg = args.umap_files;
     resolved_jobs = args.resolved_jobs;
+    max_concurrent = args.max_concurrent;
 end
 selected_runtime = '';
 gui_credentials = struct();
@@ -354,7 +355,19 @@ end
 report.run_status = 'running';
 num_success = 0;
 num_failed = 0;
+num_cancelled = 0;
 num_started = length(jobs);
+% One shared batch loop runs the subjects of both backends: up to
+% max_concurrent subjects execute at once (default 1: sequential).
+report.max_concurrent = max_concurrent;
+report.subjects = local_subject_records(jobs);
+show_subject_dialog = interactive_gui;
+batch = struct('mode', config.mode, 'jobs', jobs, 'config', config, ...
+    'profile_name', profile_name, 'run_id', run_id, 'report', report, ...
+    'run_context', run_context, 'max_concurrent', max_concurrent, ...
+    'num_started', 0, 'num_success', 0, 'num_failed', 0, ...
+    'num_cancelled', 0, 'cancelled', false, 'account', '', ...
+    'transport', [], 'show_subject_dialog', show_subject_dialog);
 
 switch config.mode
 
@@ -380,6 +393,9 @@ switch config.mode
             % Show the manager's stage 1 record before any submission.
             pseudo_CT_present_native_events(context, true);
         end
+
+        % Synchronize prepared MLSC inputs with the scheduler.
+        batch.jobs = jobs;
 
         account = '';
         mlsc_cancelled = false;
@@ -461,185 +477,20 @@ switch config.mode
                 error('run_pseudo_CT:MLSCTransportRequired', ...
                     'MLSC account selection requires an authenticated transport.');
             end
-                for ii = 1:length(jobs)
-                    % Stage rows are shown only from the native event file: stage 1
-                    % (input) above, stages 2-8 from the one pipeline invocation
-                    % (drained by mlsc_lifecycle), and stages 9-10 (finalization)
-                    % below. This block adds no numbered row.
-                    % Guard: one subject-scoped terminal line per subject (see local path).
-                    outcome_context = local_subject_context(jobs(ii), ii, length(jobs));
-                    outcome_context.console_profile = profile_name;
-                    outcome = pseudo_CT_subject_outcome( ...
-                        outcome_context, jobs(ii).subject_started);
-                    guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
-                    context = local_subject_context(jobs(ii), ii, length(jobs));
-                    output_context = local_subject_context(jobs(ii), ii, length(jobs));
-                    context.stage_map = pseudo_CT_stage_map(config);
-                    output_context.stage_map = context.stage_map;
-                    context.console_profile = profile_name;
-                    output_context.console_profile = profile_name;
-                    runtime = struct('profile', profile_name, 'account', account, ...
-                        'script_path', fullfile(jobs(ii).temp_dir, ...
-                        sprintf('.pseudo_CT_mlsc_%s_%d.sh', run_id, ii)), ...
-                        'evidence_dir', jobs(ii).processing_dir, ...
-                        'log_archive_dir', jobs(ii).processing_dir, ...
-                        'cleanup_script', true, 'output_context', output_context);
-                    subject = struct('subject_id', jobs(ii).mprage_fn, ...
-                        'shared_input', jobs(ii).seed_nii, ...
-                        'shared_temp', jobs(ii).temp_dir);
-                    % Credential-free per-job alias/recenter overrides travel
-                    % in the subject so the job manifest carries the
-                    % effective overrides (never profile defaults).
-                    subject.check_aliasing = jobs(ii).correct_aliasing;
-                    subject.recenter_before_normalization = ...
-                        jobs(ii).recenter_before_normalization;
-                    lifecycle = struct();
-                    try
-                        lifecycle = mlsc_lifecycle(subject, config, runtime, transport);
-                        if lifecycle.submitted
-                            num_started = num_started + 1;
-                        end
-                        mlsc_job_id = local_mlsc_job_id(lifecycle);
-                        if mlsc_job_id > 0
-                            report.job_ids(end + 1) = mlsc_job_id; %#ok<AGROW>
-                            report.submission_status = 'accepted';
-                            context.job_number = mlsc_job_id;
-                        elseif isfield(lifecycle, 'submission_attempted') && ...
-                                isequal(lifecycle.submission_attempted, true)
-                            if isfield(lifecycle, 'submission_outcome') && ...
-                                    ischar(lifecycle.submission_outcome) && ...
-                                    strcmp(lifecycle.submission_outcome, 'rejected')
-                                report.submission_status = 'rejected';
-                            else
-                                report.submission_status = 'unresolved';
-                            end
-                        end
-                        if ~lifecycle.eligible_for_finalization || ...
-                                ~lifecycle.copy_back.verified
-                            failure_detail = lifecycle.failure_detail;
-                            if isempty(failure_detail)
-                                failure_detail = ...
-                                    'MLSC output was not verified in the shared subject temporary directory.';
-                            end
-                            lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
-                                false, false, failure_detail);
-                            if local_mlsc_summary_evidence_ready(lifecycle)
-                                pseudo_CT_print_profile_summary(profile_name, ...
-                                    config, jobs(ii).processing_dir, context, ...
-                                    local_job_summary_options(jobs(ii)), lifecycle);
-                            end
-                            pseudo_CT_output('ERROR', context, ...
-                                'Subject failed before local finalization: %s', failure_detail);
-                            if ~(isfield(lifecycle, 'terminal') && ...
-                                    isequal(lifecycle.terminal, true))
-                                % Job state not observed terminal: a remote writer
-                                % may still be appending, so no native terminal line.
-                                outcome.markClosed();
-                            elseif isfield(lifecycle, 'cancel_requested') && ...
-                                    isequal(lifecycle.cancel_requested, true)
-                                outcome.markClosed('CANCELLED', 'mlsc-lifecycle');
-                            else
-                                outcome.markClosed('FAILED', 'mlsc-lifecycle');
-                            end
-                            if isfield(lifecycle, 'terminal') && ...
-                                    isequal(lifecycle.terminal, true)
-                                if pseudo_CT_completion_failure_observed(lifecycle)
-                                    report.completion_status = 'failed';
-                                end
-                            end
-                            num_failed = num_failed + 1;
-                            clear guard
-                            continue;
-                        end
-                        if mlsc_job_id > 0
-                            pseudo_CT_output('INFO', context, ...
-                                'MLSC verified return to shared temp for job %d; returning to local finalization.', ...
-                                mlsc_job_id);
-                        else
-                            pseudo_CT_output('INFO', context, ...
-                                'MLSC verified return to shared temp; returning to local finalization.');
-                        end
-                        finalization_context = local_subject_context(jobs(ii), ...
-                            ii, length(jobs));
-                        finalization_context = local_attach_mlsc_job( ...
-                            finalization_context, mlsc_job_id);
-                        finalization_context.console_profile = profile_name;
-                        finalization_context.stage_map = pseudo_CT_stage_map(config);
-                        [finalization_success, finalization_detail] = ...
-                            pseudo_CT_finalize_subject(jobs(ii), ...
-                            fullfile(jobs(ii).temp_dir, 'att_map.nii'), ...
-                            jobs(ii).temp_dir, jobs(ii).seed_nii, config, ...
-                            finalization_context, 'mlsc-lifecycle');
-                        % Stages 9-10 are shown from their native records after finalization.
-                        pseudo_CT_present_native_events(finalization_context, true);
-                        if finalization_success
-                            final_context = local_attach_mlsc_job( ...
-                                local_subject_context(jobs(ii), ii, length(jobs)), ...
-                                mlsc_job_id);
-                            final_context.completion_verified = true;
-                            pseudo_CT_output('SUCCESS', final_context, ...
-                                'Subject completed (elapsed %s).', ...
-                                local_elapsed(toc(jobs(ii).subject_started)));
-                        elseif isempty(finalization_detail)
-                            local_log_subject_failure(jobs(ii), context);
-                        else
-                            local_log_remote_failure(jobs(ii), context, ...
-                                finalization_detail);
-                        end
-                        lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
-                            true, logical(finalization_success), ...
-                            local_finalization_detail(finalization_success));
-                        if finalization_success
-                            outcome.markClosed('SUCCEEDED', 'mlsc-lifecycle');
-                        else
-                            outcome.markClosed('FAILED', 'mlsc-lifecycle');
-                        end
-                        if local_mlsc_summary_evidence_ready(lifecycle)
-                            pseudo_CT_print_profile_summary(profile_name, ...
-                                config, jobs(ii).processing_dir, context, ...
-                                local_job_summary_options(jobs(ii)), lifecycle);
-                        end
-                        if lifecycle.finalization_evidence_save_failed
-                            pseudo_CT_output('ERROR', context, ...
-                                'MLSC finalization evidence could not be saved.');
-                        end
-                        if finalization_success
-                            num_success = num_success + 1;
-                        else
-                            num_failed = num_failed + 1;
-                            report.completion_status = 'failed';
-                        end
-                    catch ME
-                        if exist('lifecycle', 'var') == 1 && ...
-                                isstruct(lifecycle) && isfield(lifecycle, 'terminal')
-                            lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
-                                true, false, ...
-                                'Local MLSC finalization raised an error.');
-                            if pseudo_CT_completion_failure_observed(lifecycle)
-                                report.completion_status = 'failed';
-                            end
-                            if local_mlsc_summary_evidence_ready(lifecycle)
-                                pseudo_CT_print_profile_summary(profile_name, ...
-                                    config, jobs(ii).processing_dir, context, ...
-                                    local_job_summary_options(jobs(ii)), lifecycle);
-                            end
-                        end
-                        pseudo_CT_output('ERROR', context, ...
-                            'Subject failed; see non-secret MLSC evidence (elapsed %s).', ...
-                            local_elapsed(toc(jobs(ii).subject_started)));
-                        if exist('lifecycle', 'var') == 1 && isstruct(lifecycle) && ...
-                                isfield(lifecycle, 'terminal') && ...
-                                isequal(lifecycle.terminal, true)
-                            outcome.markClosed('FAILED', 'mlsc-lifecycle');
-                        else
-                            % Exception before the job was observed terminal: a
-                            % remote writer may still append, so no native line.
-                            outcome.markClosed();
-                        end
-                        num_failed = num_failed + 1;
-                    end
-                    clear guard
-                end
+            % Stage rows are shown only from the native event file: stage 1
+            % (input) above, stages 2-8 from the one pipeline invocation
+            % (drained by mlsc_lifecycle), and stages 9-10 (finalization)
+            % in the shared batch loop. The loop adds no numbered row.
+            batch.report = report;
+            batch.account = account;
+            batch.transport = transport;
+            batch = local_run_batch(batch);
+            report = batch.report;
+            num_started = batch.num_started;
+            num_success = batch.num_success;
+            num_failed = batch.num_failed;
+            num_cancelled = batch.num_cancelled;
+            batch.transport = [];
         else
             num_started = 0;
             if mlsc_cancelled
@@ -652,40 +503,13 @@ switch config.mode
         % ============================================================
         % LOCAL EXECUTION PATH
         % ============================================================
-        show_subject_dialog = interactive_gui;
-        for jj = 1:length(jobs)
-            % Guard: writes one subject-scoped ERROR if this iteration exits
-            % without a closed outcome. The propagating error is not altered.
-            outcome_context = local_subject_context(jobs(jj), jj, length(jobs));
-            outcome_context.console_profile = profile_name;
-            outcome = pseudo_CT_subject_outcome( ...
-                outcome_context, jobs(jj).subject_started);
-            guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
-            try
-                subject_success = local_run_subject(jobs(jj), ...
-                    show_subject_dialog, profile_name, config, jj, length(jobs));
-                if subject_success
-                    num_success = num_success + 1;
-                else
-                    context = local_subject_context(jobs(jj), jj, length(jobs));
-                    pseudo_CT_output('ERROR', context, 'Subject failed (elapsed %s).', ...
-                        local_elapsed(toc(jobs(jj).subject_started)));
-                    num_failed = num_failed + 1;
-                end
-                if subject_success
-                    outcome.markClosed('SUCCEEDED', 'local-orchestrator');
-                else
-                    outcome.markClosed('FAILED', 'local-orchestrator');
-                end
-            catch ME
-                context = local_subject_context(jobs(jj), jj, length(jobs));
-                pseudo_CT_output('ERROR', context, 'Subject failed: %s (elapsed %s).', ...
-                    ME.message, local_elapsed(toc(jobs(jj).subject_started)));
-                outcome.markClosed('FAILED', 'local-orchestrator');
-                num_failed = num_failed + 1;
-            end
-            clear guard
-        end
+        batch.report = report;
+        batch = local_run_batch(batch);
+        report = batch.report;
+        num_started = batch.num_started;
+        num_success = batch.num_success;
+        num_failed = batch.num_failed;
+        num_cancelled = batch.num_cancelled;
 
     otherwise
         % ============================================================
@@ -717,11 +541,22 @@ summary_level = 'SUCCESS';
 if num_failed > 0
     summary_level = 'ERROR';
 end
-pseudo_CT_output(summary_level, run_context, ...
-    ['Run completed: requested %d, started %d, succeeded %d, failed %d, ', ...
-     'skipped %d (elapsed %s).'], collection_stats.requested, num_started, ...
-     num_success, num_failed, collection_stats.skipped, ...
-     local_elapsed(toc(run_started)));
+if num_cancelled > 0
+    if num_failed == 0
+        summary_level = 'WARN';
+    end
+    pseudo_CT_output(summary_level, run_context, ...
+        ['Run completed: requested %d, started %d, succeeded %d, failed %d, ', ...
+         'cancelled %d, skipped %d (elapsed %s).'], collection_stats.requested, ...
+         num_started, num_success, num_failed, num_cancelled, ...
+         collection_stats.skipped, local_elapsed(toc(run_started)));
+else
+    pseudo_CT_output(summary_level, run_context, ...
+        ['Run completed: requested %d, started %d, succeeded %d, failed %d, ', ...
+         'skipped %d (elapsed %s).'], collection_stats.requested, num_started, ...
+         num_success, num_failed, collection_stats.skipped, ...
+         local_elapsed(toc(run_started)));
+end
 report.run_status = 'returned';
 clear headless_credentials PASSWORD USERNAME gui_credentials
 
@@ -737,19 +572,299 @@ end
 
 
 %% ========================================================================
-%  LOCAL SUBJECT EXECUTION
+%  SHARED BATCH EXECUTION (local workers and MLSC Slurm jobs)
 %  ========================================================================
-function success = local_run_subject(job, ...
-    show_dialog, profile_name, config, subject_index, subject_count)
+function batch = local_run_batch(batch)
+%LOCAL_RUN_BATCH Shared scheduling loop for local workers and MLSC Slurm jobs.
+%   Starts up to BATCH.max_concurrent subjects, polls the active ones, runs
+%   each subject's finalization (stages 9-10) serially as it finishes, and
+%   fills the freed slot with the next subject in request order. A slot is
+%   held from start until the local worker exits or the Slurm job reaches a
+%   terminal state (submitted, queued and running jobs all count). One
+%   subject's failure never stops the others. With max_concurrent 1 the
+%   subjects run one after another exactly as before.
+%   Cancellation: the launcher creates PSEUDOCT_CANCEL_FILE; no further
+%   subject starts, active local workers are terminated, active Slurm jobs
+%   are cancelled with scancel, and the remaining subjects are reported as
+%   not started. An interruption that unwinds this loop terminates local
+%   workers and reports every still-active Slurm job with its scancel command.
+n = length(batch.jobs);
+tasks = cell(1, n);
+status = repmat({'queued'}, 1, n);
+cancel_file = getenv('PSEUDOCT_CANCEL_FILE');
+cancelling = false;
+registry = containers.Map('KeyType', 'double', 'ValueType', 'any');
+interrupt_guard = onCleanup(@() local_batch_interrupted(registry, cancel_file)); %#ok<NASGU>
+if strcmp(batch.mode, 'local')
+    tick = 0.1;
+else
+    tick = 1;
+end
+while any(~strcmp(status, 'done'))
+    progressed = false;
+    if ~cancelling && ~isempty(cancel_file) && exist(cancel_file, 'file') == 2
+        cancelling = true;
+        batch.cancelled = true;
+        pseudo_CT_output('WARN', batch.run_context, ...
+            ['Cancellation requested: no further subject will start; active ', ...
+             'subjects are being cancelled.']);
+        active = find(strcmp(status, 'active'));
+        for ii = active
+            tasks{ii} = local_task_cancel(batch, tasks{ii});
+        end
+        queued = find(strcmp(status, 'queued'));
+        for ii = queued
+            batch = local_task_not_started(batch, ii);
+            status{ii} = 'done';
+        end
+    end
+    % Fill free slots in request order (subject preparation is serial).
+    while ~cancelling && sum(strcmp(status, 'active')) < batch.max_concurrent && ...
+            any(strcmp(status, 'queued'))
+        ii = find(strcmp(status, 'queued'), 1);
+        [batch, task] = local_task_start(batch, ii);
+        progressed = true;
+        if task.done
+            batch = local_task_finish(batch, ii, task);
+            status{ii} = 'done';
+        else
+            tasks{ii} = task;
+            status{ii} = 'active';
+            registry(ii) = task;
+            local_write_active_jobs(registry, cancel_file);
+        end
+        clear task
+    end
+    % Poll every active subject once; finalize finished subjects serially.
+    active = find(strcmp(status, 'active'));
+    for ii = active
+        [tasks{ii}, done] = local_task_poll(tasks{ii});
+        if done
+            task = tasks{ii};
+            tasks{ii} = [];
+            remove(registry, ii);
+            local_write_active_jobs(registry, cancel_file);
+            batch = local_task_finish(batch, ii, task);
+            clear task
+            status{ii} = 'done';
+            progressed = true;
+        end
+    end
+    if ~progressed && any(strcmp(status, 'active'))
+        pause(tick);
+    end
+end
+end
 
-success = 0;
-context = local_subject_context(job, subject_index, subject_count);
-context.console_profile = profile_name;
+function local_batch_interrupted(registry, cancel_file)
+%LOCAL_BATCH_INTERRUPTED Never leave a worker or Slurm job silently orphaned.
+try
+    keys_list = keys(registry);
+    job_ids = [];
+    for kk = 1:length(keys_list)
+        task = registry(keys_list{kk});
+        if strcmp(task.mode, 'local') && isstruct(task.handle)
+            try
+                pseudo_CT_run_local_current_subject('cancel', task.handle);
+            catch %#ok<CTCH>
+            end
+        elseif strcmp(task.mode, 'mlsc') && task.job_id > 0
+            job_ids(end + 1) = task.job_id; %#ok<AGROW>
+        end
+    end
+    if ~isempty(job_ids)
+        id_text = sprintf(' %d', job_ids);
+        fprintf(2, ['pseudoct: the run was interrupted while Slurm job(s)%s were ' ...
+            'active; they were not cancelled. To cancel them, run: scancel%s\n'], ...
+            id_text, id_text);
+    end
+    remove(registry, keys_list);
+    local_write_active_jobs(registry, cancel_file);
+catch %#ok<CTCH>
+end
+end
+
+function local_write_active_jobs(registry, cancel_file)
+%LOCAL_WRITE_ACTIVE_JOBS Active Slurm job IDs beside the launcher cancel file.
+%   The launcher reads it only to name jobs that a forced abort leaves running.
+if isempty(cancel_file)
+    return;
+end
+try
+    keys_list = keys(registry);
+    fid = fopen([cancel_file '.jobs'], 'w');
+    if fid == -1
+        return;
+    end
+    for kk = 1:length(keys_list)
+        task = registry(keys_list{kk});
+        if strcmp(task.mode, 'mlsc') && task.job_id > 0
+            fprintf(fid, '%d\n', task.job_id);
+        end
+    end
+    fclose(fid);
+catch %#ok<CTCH>
+end
+end
+
+function task = local_new_task(batch, ii)
+job = batch.jobs(ii);
+n = length(batch.jobs);
+task = struct('mode', batch.mode, 'index', ii, 'done', false, 'error', [], ...
+    'handle', [], 'outcome', [], 'guard', [], 'context', struct(), ...
+    'runtime', struct(), 'job_id', 0, 'next_poll', now, ...
+    'user_cancelled', false, 'early_failure', false, 'P', '', ...
+    'started_at', now, 'exited_at', []);
+outcome_context = local_subject_context(job, ii, n);
+outcome_context.console_profile = batch.profile_name;
+% Guard: writes one subject-scoped ERROR if the subject ends without a closed
+% outcome. The propagating error is not altered.
+outcome = pseudo_CT_subject_outcome(outcome_context, job.subject_started);
+task.outcome = outcome;
+task.guard = onCleanup(@() pseudo_CT_subject_outcome.release(outcome));
+end
+
+function [batch, task] = local_task_start(batch, ii)
+% A subject's elapsed time starts when it takes a slot, not when the run log
+% was created, so time spent waiting for a free slot is never counted.
+batch.jobs(ii).subject_started = tic;
+task = local_new_task(batch, ii);
+if strcmp(batch.mode, 'local')
+    batch.num_started = batch.num_started + 1;
+    try
+        task = local_local_start(batch, task);
+    catch ME
+        task.error = ME;
+        task.done = true;
+    end
+    return;
+end
+job = batch.jobs(ii);
+n = length(batch.jobs);
+context = local_subject_context(job, ii, n);
+output_context = local_subject_context(job, ii, n);
+context.stage_map = pseudo_CT_stage_map(batch.config);
+output_context.stage_map = context.stage_map;
+context.console_profile = batch.profile_name;
+output_context.console_profile = batch.profile_name;
+runtime = struct('profile', batch.profile_name, 'account', batch.account, ...
+    'script_path', fullfile(job.temp_dir, ...
+    sprintf('.pseudo_CT_mlsc_%s_%d.sh', batch.run_id, ii)), ...
+    'evidence_dir', job.processing_dir, ...
+    'log_archive_dir', job.processing_dir, ...
+    'cleanup_script', true, 'output_context', output_context);
+if isfield(batch.config, 'mlsc') && isstruct(batch.config.mlsc) && ...
+        isfield(batch.config.mlsc, 'queue_timeout_seconds')
+    runtime.queue_timeout_seconds = batch.config.mlsc.queue_timeout_seconds;
+end
+subject = struct('subject_id', job.mprage_fn, ...
+    'shared_input', job.seed_nii, ...
+    'shared_temp', job.temp_dir);
+% Credential-free per-job alias/recenter overrides travel
+% in the subject so the job manifest carries the
+% effective overrides (never profile defaults).
+subject.check_aliasing = job.correct_aliasing;
+subject.recenter_before_normalization = job.recenter_before_normalization;
+task.context = context;
+task.runtime = runtime;
+try
+    task.handle = mlsc_lifecycle('start', subject, batch.config, runtime, ...
+        batch.transport);
+    lifecycle = task.handle.result;
+    if lifecycle.submitted
+        batch.num_started = batch.num_started + 1;
+    end
+    mlsc_job_id = local_mlsc_job_id(lifecycle);
+    if mlsc_job_id > 0
+        batch.report.job_ids(end + 1) = mlsc_job_id;
+        batch.report.submission_status = 'accepted';
+        task.context.job_number = mlsc_job_id;
+        task.job_id = mlsc_job_id;
+    elseif isfield(lifecycle, 'submission_attempted') && ...
+            isequal(lifecycle.submission_attempted, true)
+        if isfield(lifecycle, 'submission_outcome') && ...
+                ischar(lifecycle.submission_outcome) && ...
+                strcmp(lifecycle.submission_outcome, 'rejected')
+            batch.report.submission_status = 'rejected';
+        else
+            batch.report.submission_status = 'unresolved';
+        end
+    end
+    task.done = task.handle.done;
+catch ME
+    task.error = ME;
+    task.done = true;
+end
+end
+
+function [task, done] = local_task_poll(task)
+done = false;
+try
+    if strcmp(task.mode, 'local')
+        [task.handle, done] = pseudo_CT_run_local_current_subject('poll', task.handle);
+        if done
+            task.exited_at = now;
+        end
+    else
+        if now >= task.next_poll
+            task.handle = mlsc_lifecycle('step', task.handle);
+            task.next_poll = now + ...
+                task.handle.runtime.poll_interval_seconds / 86400;
+        end
+        done = task.handle.done;
+    end
+catch ME
+    task.error = ME;
+    done = true;
+end
+task.done = done;
+end
+
+function task = local_task_cancel(batch, task)
+task.user_cancelled = true;
+try
+    if strcmp(task.mode, 'local')
+        if isstruct(task.handle)
+            task.handle = pseudo_CT_run_local_current_subject('cancel', task.handle);
+        end
+    else
+        task.handle = mlsc_lifecycle('cancel', task.handle);
+        task.next_poll = now;
+    end
+    pseudo_CT_output('WARN', local_subject_context(batch.jobs(task.index), ...
+        task.index, length(batch.jobs)), 'Subject cancellation requested.');
+catch %#ok<CTCH>
+end
+end
+
+function batch = local_task_not_started(batch, ii)
+context = local_subject_context(batch.jobs(ii), ii, length(batch.jobs));
+pseudo_CT_output('WARN', context, ...
+    'Subject not started: the run was cancelled before it was scheduled.');
+batch.num_cancelled = batch.num_cancelled + 1;
+batch.report.subjects(ii).outcome = 'NOT_STARTED';
+batch.report.subjects(ii).detail = 'The run was cancelled before this subject started.';
+end
+
+function batch = local_task_finish(batch, ii, task)
+if strcmp(task.mode, 'local')
+    batch = local_local_finish(batch, ii, task);
+else
+    batch = local_mlsc_finish(batch, ii, task);
+end
+end
+
+function task = local_local_start(batch, task)
+%LOCAL_LOCAL_START Stage 1 input preparation, then launch the compiled worker.
+job = batch.jobs(task.index);
+config = batch.config;
+context = local_subject_context(job, task.index, length(batch.jobs));
+context.console_profile = batch.profile_name;
 context.stage_map = pseudo_CT_stage_map(config);
 if context.stage_map.total > 0
     context.public_stage_total = context.stage_map.total;
 end
-subject_started = job.subject_started;
+task.context = context;
 
 [pathr, ~, ~] = fileparts(deblank(job.mprage_fn));
 [processing_dir, temp_dir, save_dir] = pseudo_CT_resolve_output_dirs(pathr);
@@ -763,6 +878,8 @@ for ii = 1:length(dir_list)
         if ~mkdir_success
             pseudo_CT_output('ERROR', context, 'Could not create directory: %s', msg);
             pseudo_CT_output('INFO', context, '    %s', dir_list{ii});
+            task.early_failure = true;
+            task.done = true;
             return;
         end
     end
@@ -774,13 +891,72 @@ P = pseudo_CT_prepare_input(job.mprage_fn, fullfile(temp_dir, 'mprage.nii'), ...
 % Show the manager's stage 1 record before the pipeline starts.
 pseudo_CT_present_native_events(context, ...
     strcmp(getenv('PSEUDOCT_CLI_OUTPUT'), '1'));
-
-[temp_working_dir, ~, ~] = fileparts(deblank(P));
-
+task.P = P;
+task.started_at = now;
 % Run the pseudo-CT code. The compiled pipeline runs stages 2-8 once for this
-% subject; FreeSurfer normalization is inside it, as on MLSC.
-Pf = pseudo_CT_run_local_current_subject(P, temp_dir, config, ...
+% subject; FreeSurfer normalization is inside it, as on MLSC. The worker runs
+% in the background; the batch loop polls it.
+task.handle = pseudo_CT_run_local_current_subject('start', P, temp_dir, config, ...
     job.correct_aliasing, job.recenter_before_normalization, context);
+end
+
+function batch = local_local_finish(batch, ii, task)
+%LOCAL_LOCAL_FINISH Worker result, then stages 9-10 finalization (serial).
+job = batch.jobs(ii);
+n = length(batch.jobs);
+outcome = task.outcome;
+if ~isempty(task.exited_at)
+    batch.report.subjects(ii).execution_seconds = ...
+        round((task.exited_at - task.started_at) * 86400);
+end
+try
+    if ~isempty(task.error)
+        rethrow(task.error);
+    end
+    subject_success = 0;
+    if ~task.early_failure
+        subject_success = local_local_finalize(batch, job, task);
+    end
+    if subject_success
+        batch.num_success = batch.num_success + 1;
+        outcome.markClosed('SUCCEEDED', 'local-orchestrator');
+        batch.report.subjects(ii).outcome = 'SUCCEEDED';
+    else
+        context = local_subject_context(job, ii, n);
+        pseudo_CT_output('ERROR', context, 'Subject failed (elapsed %s).', ...
+            local_elapsed(toc(job.subject_started)));
+        batch.num_failed = batch.num_failed + 1;
+        outcome.markClosed('FAILED', 'local-orchestrator');
+        batch.report.subjects(ii).outcome = 'FAILED';
+    end
+catch ME
+    context = local_subject_context(job, ii, n);
+    if task.user_cancelled
+        pseudo_CT_output('WARN', context, 'Subject cancelled (elapsed %s).', ...
+            local_elapsed(toc(job.subject_started)));
+        outcome.markClosed('CANCELLED', 'local-orchestrator');
+        batch.num_cancelled = batch.num_cancelled + 1;
+        batch.report.subjects(ii).outcome = 'CANCELLED';
+    else
+        pseudo_CT_output('ERROR', context, 'Subject failed: %s (elapsed %s).', ...
+            ME.message, local_elapsed(toc(job.subject_started)));
+        outcome.markClosed('FAILED', 'local-orchestrator');
+        batch.num_failed = batch.num_failed + 1;
+        batch.report.subjects(ii).outcome = 'FAILED';
+    end
+    batch.report.subjects(ii).detail = ME.message;
+end
+end
+
+function success = local_local_finalize(batch, job, task)
+success = 0;
+config = batch.config;
+context = task.context;
+subject_started = job.subject_started;
+[pathr, ~, ~] = fileparts(deblank(job.mprage_fn));
+[processing_dir, temp_dir, save_dir] = pseudo_CT_resolve_output_dirs(pathr);
+P = task.P;
+Pf = pseudo_CT_run_local_current_subject('finish', task.handle);
 if ~ischar(Pf) || isempty(strtrim(Pf))
     pseudo_CT_output('ERROR', context, 'Processing stopped before atlas outputs were generated.');
     return;
@@ -802,16 +978,196 @@ if ~success
     return;
 end
 
-if show_dialog && ~isdeployed
+if batch.show_subject_dialog && ~isdeployed
     warndlg('Pseudo-CT processing completed.', 'Pseudo-CT completed');
 end
 
 success = 1;
-completion_context = local_subject_context(job, subject_index, subject_count);
+completion_context = local_subject_context(job, task.index, length(batch.jobs));
 completion_context.completion_verified = true;
 pseudo_CT_output('SUCCESS', completion_context, ...
     'Subject completed (elapsed %s).', local_elapsed(toc(subject_started)));
+end
 
+function batch = local_mlsc_finish(batch, ii, task)
+%LOCAL_MLSC_FINISH Copy-back check, then stages 9-10 finalization (serial).
+%   The per-subject body of the former sequential MLSC loop, unchanged.
+jobs = batch.jobs;
+config = batch.config;
+profile_name = batch.profile_name;
+context = task.context;
+runtime = task.runtime;
+outcome = task.outcome;
+lifecycle = struct();
+if isstruct(task.handle) && isfield(task.handle, 'result') && ...
+        isstruct(task.handle.result)
+    lifecycle = task.handle.result;
+end
+if isfield(lifecycle, 'queue_seconds')
+    batch.report.subjects(ii).queue_seconds = round(lifecycle.queue_seconds);
+end
+if isfield(lifecycle, 'execution_seconds')
+    batch.report.subjects(ii).execution_seconds = round(lifecycle.execution_seconds);
+end
+batch.report.subjects(ii).job_id = task.job_id;
+try
+    if ~isempty(task.error)
+        rethrow(task.error);
+    end
+    mlsc_job_id = local_mlsc_job_id(lifecycle);
+    if ~lifecycle.eligible_for_finalization || ...
+            ~lifecycle.copy_back.verified
+        failure_detail = lifecycle.failure_detail;
+        if isempty(failure_detail)
+            failure_detail = ...
+                'MLSC output was not verified in the shared subject temporary directory.';
+        end
+        lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
+            false, false, failure_detail);
+        if local_mlsc_summary_evidence_ready(lifecycle)
+            pseudo_CT_print_profile_summary(profile_name, ...
+                config, jobs(ii).processing_dir, context, ...
+                local_job_summary_options(jobs(ii)), lifecycle);
+        end
+        pseudo_CT_output('ERROR', context, ...
+            'Subject failed before local finalization: %s', failure_detail);
+        subject_outcome = 'FAILED';
+        if ~(isfield(lifecycle, 'terminal') && ...
+                isequal(lifecycle.terminal, true))
+            % Job state not observed terminal: a remote writer
+            % may still be appending, so no native terminal line.
+            outcome.markClosed();
+        elseif isfield(lifecycle, 'cancel_requested') && ...
+                isequal(lifecycle.cancel_requested, true)
+            outcome.markClosed('CANCELLED', 'mlsc-lifecycle');
+            if task.user_cancelled
+                subject_outcome = 'CANCELLED';
+            else
+                subject_outcome = 'TIMED_OUT';
+            end
+        else
+            outcome.markClosed('FAILED', 'mlsc-lifecycle');
+        end
+        if isfield(lifecycle, 'terminal') && ...
+                isequal(lifecycle.terminal, true)
+            if pseudo_CT_completion_failure_observed(lifecycle)
+                batch.report.completion_status = 'failed';
+            end
+        end
+        if strcmp(subject_outcome, 'CANCELLED')
+            batch.num_cancelled = batch.num_cancelled + 1;
+        else
+            batch.num_failed = batch.num_failed + 1;
+        end
+        batch.report.subjects(ii).outcome = subject_outcome;
+        batch.report.subjects(ii).detail = failure_detail;
+        return;
+    end
+    if mlsc_job_id > 0
+        pseudo_CT_output('INFO', context, ...
+            'MLSC verified return to shared temp for job %d; returning to local finalization.', ...
+            mlsc_job_id);
+    else
+        pseudo_CT_output('INFO', context, ...
+            'MLSC verified return to shared temp; returning to local finalization.');
+    end
+    finalization_context = local_subject_context(jobs(ii), ...
+        ii, length(jobs));
+    finalization_context = local_attach_mlsc_job( ...
+        finalization_context, mlsc_job_id);
+    finalization_context.console_profile = profile_name;
+    finalization_context.stage_map = pseudo_CT_stage_map(config);
+    [finalization_success, finalization_detail] = ...
+        pseudo_CT_finalize_subject(jobs(ii), ...
+        fullfile(jobs(ii).temp_dir, 'att_map.nii'), ...
+        jobs(ii).temp_dir, jobs(ii).seed_nii, config, ...
+        finalization_context, 'mlsc-lifecycle');
+    % Stages 9-10 are shown from their native records after finalization.
+    pseudo_CT_present_native_events(finalization_context, true);
+    if finalization_success
+        final_context = local_attach_mlsc_job( ...
+            local_subject_context(jobs(ii), ii, length(jobs)), ...
+            mlsc_job_id);
+        final_context.completion_verified = true;
+        pseudo_CT_output('SUCCESS', final_context, ...
+            'Subject completed (elapsed %s).', ...
+            local_elapsed(toc(jobs(ii).subject_started)));
+    elseif isempty(finalization_detail)
+        local_log_subject_failure(jobs(ii), context);
+    else
+        local_log_remote_failure(jobs(ii), context, ...
+            finalization_detail);
+    end
+    lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
+        true, logical(finalization_success), ...
+        local_finalization_detail(finalization_success));
+    if finalization_success
+        outcome.markClosed('SUCCEEDED', 'mlsc-lifecycle');
+    else
+        outcome.markClosed('FAILED', 'mlsc-lifecycle');
+    end
+    if local_mlsc_summary_evidence_ready(lifecycle)
+        pseudo_CT_print_profile_summary(profile_name, ...
+            config, jobs(ii).processing_dir, context, ...
+            local_job_summary_options(jobs(ii)), lifecycle);
+    end
+    if lifecycle.finalization_evidence_save_failed
+        pseudo_CT_output('ERROR', context, ...
+            'MLSC finalization evidence could not be saved.');
+    end
+    if finalization_success
+        batch.num_success = batch.num_success + 1;
+        batch.report.subjects(ii).outcome = 'SUCCEEDED';
+    else
+        batch.num_failed = batch.num_failed + 1;
+        batch.report.completion_status = 'failed';
+        batch.report.subjects(ii).outcome = 'FAILED';
+        batch.report.subjects(ii).detail = finalization_detail;
+    end
+catch ME %#ok<NASGU>
+    if isstruct(lifecycle) && isfield(lifecycle, 'terminal')
+        lifecycle = mlsc_record_finalization(lifecycle, runtime, ...
+            true, false, ...
+            'Local MLSC finalization raised an error.');
+        if pseudo_CT_completion_failure_observed(lifecycle)
+            batch.report.completion_status = 'failed';
+        end
+        if local_mlsc_summary_evidence_ready(lifecycle)
+            pseudo_CT_print_profile_summary(profile_name, ...
+                config, jobs(ii).processing_dir, context, ...
+                local_job_summary_options(jobs(ii)), lifecycle);
+        end
+    end
+    pseudo_CT_output('ERROR', context, ...
+        'Subject failed; see non-secret MLSC evidence (elapsed %s).', ...
+        local_elapsed(toc(jobs(ii).subject_started)));
+    if isstruct(lifecycle) && ...
+            isfield(lifecycle, 'terminal') && ...
+            isequal(lifecycle.terminal, true)
+        outcome.markClosed('FAILED', 'mlsc-lifecycle');
+    else
+        % Exception before the job was observed terminal: a
+        % remote writer may still append, so no native line.
+        outcome.markClosed();
+    end
+    batch.num_failed = batch.num_failed + 1;
+    batch.report.subjects(ii).outcome = 'FAILED';
+    batch.report.subjects(ii).detail = 'Local MLSC finalization raised an error.';
+end
+end
+
+function records = local_subject_records(jobs)
+%LOCAL_SUBJECT_RECORDS One non-secret outcome record per requested subject.
+records = struct('index', {}, 'outcome', {}, 'job_id', {}, ...
+    'queue_seconds', {}, 'execution_seconds', {}, 'detail', {});
+for ii = 1:length(jobs)
+    records(ii).index = ii;
+    records(ii).outcome = 'NOT_STARTED';
+    records(ii).job_id = 0;
+    records(ii).queue_seconds = [];
+    records(ii).execution_seconds = [];
+    records(ii).detail = '';
+end
 end
 
 
@@ -1035,7 +1391,8 @@ end
 
 function [profile_name, subjects_arg, aliasing_arg, recenter_arg, headless_mode, ...
         headless_credentials, group_account, host_key_provider, ...
-        artifact_root, umap_files_arg, resolved_jobs, cleanup_on_success_arg] = ...
+        artifact_root, umap_files_arg, resolved_jobs, max_concurrent, ...
+        cleanup_on_success_arg] = ...
     parse_deployed_arguments(varargin)
 %PARSE_DEPLOYED_ARGUMENTS Require an explicit profile in deployed mode.
 
@@ -1050,6 +1407,7 @@ artifact_root = '';
 umap_files_arg = [];
 resolved_jobs = struct([]);
 cleanup_on_success_arg = [];
+max_concurrent = 1;
 
 if nargin == 1 && ischar(varargin{1}) && exist(varargin{1}, 'file') == 2
     loaded = load(varargin{1});
@@ -1079,6 +1437,7 @@ group_account = args.group_account;
 umap_files_arg = args.umap_files;
 resolved_jobs = args.resolved_jobs;
 cleanup_on_success_arg = args.cleanup_on_success;
+max_concurrent = args.max_concurrent;
 if isempty(profile_name)
     error('run_pseudo_CT:DeployedProfileRequired', ...
         'Deployed invocation requires an explicit profile selection.');

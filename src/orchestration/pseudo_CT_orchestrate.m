@@ -58,6 +58,9 @@ end
 if isfield(request, 'host_key_provider')
     submit_request.host_key_provider = request.host_key_provider;
 end
+if isfield(request, 'max_concurrent')
+    submit_request.max_concurrent = request.max_concurrent;
+end
 report = local_submit(submit_request, root_dir, false);
 end
 
@@ -71,6 +74,14 @@ end
 forbidden = {'username'; 'password'; 'credentials'; 'credential'; ...
     'credential_file'; 'credential_handoff'; 'group_account'; ...
     'host_key_file'; 'transport'; 'token'; 'secret'};
+if isfield(request, 'max_concurrent') && ~isempty(request.max_concurrent)
+    value = request.max_concurrent;
+    if ~isnumeric(value) || ~isscalar(value) || ~isreal(value) || ...
+            ~isfinite(value) || value ~= fix(value) || value < 1 || value > 32
+        error('pseudo_CT:OrchestrationParameter', ...
+            'max_concurrent must be an integer from 1 to 32.');
+    end
+end
 for ii = 1:length(forbidden)
     if isfield(request, forbidden{ii})
         error('pseudo_CT:OrchestrationRequest', ...
@@ -247,6 +258,8 @@ for ii = 1:length(subjects)
     end
     jobs(ii).umap_resolution = resolution;
 end
+local_require_distinct_outputs(jobs, ...
+    strcmp(config.io_policy.output, 'nifti-and-dicom'));
 
 if full_preflight
     artifact_identity = local_artifact_identity(config, profile_name, root_dir);
@@ -344,6 +357,11 @@ args = {'profile', resolved.profile, 'subjects', subjects, ...
 if isfield(resolved.options, 'cleanup_on_success')
     args = [args {'cleanup_on_success', ...
         resolved.options.cleanup_on_success}]; %#ok<AGROW>
+end
+% Scheduling only: how many subjects execute at once (default 1). It is not
+% part of the resolved job, whose inputs, outputs and options it never changes.
+if isfield(request, 'max_concurrent') && ~isempty(request.max_concurrent)
+    args = [args {'max_concurrent', double(request.max_concurrent)}]; %#ok<AGROW>
 end
 if isfield(resolved, 'current_artifact_root') && ...
         ~isempty(resolved.current_artifact_root)
@@ -661,6 +679,46 @@ end
 if ~ischar(hash) || isempty(hash)
     error('pseudo_CT:OrchestrationArtifact', ...
         'A local input or artifact could not be fingerprinted.');
+end
+end
+
+function local_require_distinct_outputs(jobs, check_dicom)
+%LOCAL_REQUIRE_DISTINCT_OUTPUTS Refuse subjects that would share an output folder.
+%   Two subjects resolving to the same MR_PET folder (or, for DICOM profiles,
+%   the same MR/pseudo_muMAP folder) would overwrite each other's files and
+%   temporary folder, whether they run one after another or at the same time.
+%   Paths are compared after resolving symbolic links of their existing
+%   components. The whole request is refused before anything is created,
+%   authenticated or submitted; no output is relocated.
+seen_dirs = {};
+seen_subjects = [];
+for ii = 1:length(jobs)
+    candidates = {jobs(ii).processing_dir};
+    if check_dicom
+        candidates{end + 1} = jobs(ii).save_dir; %#ok<AGROW>
+    end
+    for jj = 1:length(candidates)
+        canonical = local_canonical_path(candidates{jj});
+        match = find(strcmp(seen_dirs, canonical), 1);
+        if ~isempty(match) && seen_subjects(match) ~= ii
+            error('pseudo_CT:OutputCollision', ...
+                ['Subjects %d and %d resolve to the same output folder %s; ' ...
+                 'every subject needs its own subject folder. Nothing was started.'], ...
+                seen_subjects(match), ii, canonical);
+        end
+        seen_dirs{end + 1} = canonical; %#ok<AGROW>
+        seen_subjects(end + 1) = ii; %#ok<AGROW>
+    end
+end
+end
+
+function canonical = local_canonical_path(path_name)
+canonical = path_name;
+quoted = ['''' strrep(path_name, '''', '''"''"''') ''''];
+[status, text] = system(['readlink -m -- ' quoted]);
+text = strtrim(text);
+if status == 0 && ~isempty(text) && isempty(strfind(text, char(10)))
+    canonical = text;
 end
 end
 

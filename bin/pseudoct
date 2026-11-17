@@ -74,6 +74,10 @@ Options (run, validate):
   --correct-aliasing yes|no       Override profile default
   --recenter-before-normalization yes|no
   --cleanup-on-success yes|no
+  --max-concurrent N              Subjects executing at once, 1-32 (default 1: one after
+                                  another). Local: compiled workers running at once; MLSC:
+                                  submitted, queued and running Slurm jobs. Each subject
+                                  still needs its own subject folder (MR_PET).
   --current-artifact-root PATH    Development-only override; MLSC profiles only
   --group-account ACCOUNT        MLSC account selection for run (blank/omitted: first discovered)
   --check-account                validate only, MLSC: authenticate, select the account, stop before submission
@@ -1208,6 +1212,7 @@ op_run() {
     recenter=''
     cleanup_success=''
     artifact_root=''
+    max_concurrent=''
     group_account=''
     host_key_file=''
     credential_handoff=''
@@ -1228,6 +1233,7 @@ op_run() {
             --check-account) check_account=1; continue ;;
             --profile|--mprage|--umap|--config|--subjects|--correct-aliasing|\
             --recenter-before-normalization|--cleanup-on-success|\
+            --max-concurrent|\
             --current-artifact-root|--group-account|--host-key-file|\
             --credential-handoff|--format|--result-file)
                 need_value "$option" "$@"
@@ -1242,6 +1248,7 @@ op_run() {
             --correct-aliasing=*) value=${option#*=}; option=--correct-aliasing ;;
             --recenter-before-normalization=*) value=${option#*=}; option=--recenter-before-normalization ;;
             --cleanup-on-success=*) value=${option#*=}; option=--cleanup-on-success ;;
+            --max-concurrent=*) value=${option#*=}; option=--max-concurrent ;;
             --current-artifact-root=*) value=${option#*=}; option=--current-artifact-root ;;
             --group-account=*) value=${option#*=}; option=--group-account ;;
             --host-key-file=*) value=${option#*=}; option=--host-key-file ;;
@@ -1260,6 +1267,7 @@ op_run() {
             --correct-aliasing) correct_aliasing=$value ;;
             --recenter-before-normalization) recenter=$value ;;
             --cleanup-on-success) cleanup_success=$value ;;
+            --max-concurrent) [ -z "$max_concurrent" ] || error_record "$EXIT_USAGE" 'Specify --max-concurrent only once.'; max_concurrent=$value ;;
             --current-artifact-root) artifact_root=$value ;;
             --group-account) group_account=$value; seen_group_account=1 ;;
             --host-key-file) host_key_file=$value ;;
@@ -1291,7 +1299,7 @@ op_run() {
         # authenticate takes no inputs or processing options: refused before any work.
         [ "$seen_mprage" -eq 0 ] && [ "$seen_umap" -eq 0 ] && [ "$seen_config" -eq 0 ] &&
             [ "$seen_subjects" -eq 0 ] &&
-            [ -z "$correct_aliasing$recenter$cleanup_success$artifact_root" ] ||
+            [ -z "$correct_aliasing$recenter$cleanup_success$artifact_root$max_concurrent" ] ||
             error_record "$EXIT_USAGE" 'authenticate takes only --profile, --credential-handoff, --group-account, --host-key-file, --mcr/--mcr-root, --result-file and --format.'
         case "$profile" in mlsc|mlsc-mprage-only) ;; *) error_record "$EXIT_USAGE" 'authenticate requires a remote MLSC profile.' ;; esac
         [ -n "$credential_handoff" ] || error_record "$EXIT_USAGE" 'authenticate requires --credential-handoff.'
@@ -1312,6 +1320,12 @@ op_run() {
     for flag_value in "$correct_aliasing" "$recenter" "$cleanup_success"; do
         case "$flag_value" in ''|yes|no) ;; *) error_record "$EXIT_USAGE" 'Processing options accept only yes or no.' ;; esac
     done
+    if [ -n "$max_concurrent" ]; then
+        case "$max_concurrent" in
+            *[!0-9]*|0*) error_record "$EXIT_USAGE" '--max-concurrent must be an integer from 1 to 32.' ;;
+        esac
+        [ "$max_concurrent" -le 32 ] || error_record "$EXIT_USAGE" '--max-concurrent must be an integer from 1 to 32.'
+    fi
     case "$profile" in
         local|local-mprage-only) backend=local ;;
         mlsc|mlsc-mprage-only) backend=mlsc ;;
@@ -1521,6 +1535,19 @@ export PSEUDOCT_RUNTIME_DIR="$tmp_dir"
 # pseudoct-run-*.log files are never deleted by the CLI.
 run_log_index=$tmp_dir/run-logs.txt
 : > "$run_log_index" || error_record "$EXIT_RUNTIME" 'Cannot create the private run-log index.'
+# Subject IDs in request order for the per-subject result rows: the [SubjectID]
+# sections of --subjects; other input forms are numbered subject-<n> later.
+subject_ids_file=$tmp_dir/subject-ids.txt
+: > "$subject_ids_file" || error_record "$EXIT_RUNTIME" 'Cannot create the private subject index.'
+if [ "$seen_subjects" -eq 1 ]; then
+    printf '%s\n' "$subjects_resolved" | awk 'NR > 1 && (NR - 2) % 3 == 0 && $0 != "end"' > "$subject_ids_file" ||
+        error_record "$EXIT_RUNTIME" 'Cannot create the private subject index.'
+fi
+# Graceful cancellation of a run: the transport creates this file on the first
+# interrupt; the MATLAB batch loop then starts no further subject and cancels
+# the active ones. It lives in this private directory and is removed with it.
+cancel_file=$tmp_dir/cancel.request
+run_interrupted=0
 input_file=$tmp_dir/cli-input.txt
 validate_request=$tmp_dir/validate-request.mat
 validate_result=$tmp_dir/validate-result.mat
@@ -1548,9 +1575,9 @@ fi
 if [ "$action" != authenticate ] && ! pyrun - "$input_file" "$profile" "$invocation_id" "$config" \
     "$mprage" "$umap" "$seen_config" "$seen_umap" "$correct_aliasing" \
     "$recenter" "$cleanup_success" "$artifact_root" "$group_account" \
-    "$host_key_file" "$seen_subjects" 3<<<"$subjects_resolved" <<'PY'
+    "$host_key_file" "$seen_subjects" "$max_concurrent" 3<<<"$subjects_resolved" <<'PY'
 import json, os, sys
-output, profile, invocation, config_path, mprage, umap, has_config, has_umap, aliasing, recenter, cleanup, artifact_root, account, host_key, has_subjects = sys.argv[1:]
+output, profile, invocation, config_path, mprage, umap, has_config, has_umap, aliasing, recenter, cleanup, artifact_root, account, host_key, has_subjects, max_concurrent = sys.argv[1:]
 
 def fail(message):
     print("pseudoct: " + message, file=sys.stderr)
@@ -1616,7 +1643,7 @@ if umaps is not None:
 values.extend(["1" if aliasing == "yes" else "0" if aliasing == "no" else "",
                "1" if recenter == "yes" else "0" if recenter == "no" else "",
                "1" if cleanup == "yes" else "0" if cleanup == "no" else "",
-               artifact_root, account, host_key])
+               artifact_root, account, host_key, max_concurrent])
 with open(output, "x", encoding="utf-8", newline="\n") as f:
     f.write("\n".join(values) + "\n")
 os.chmod(output, 0o600)
@@ -1697,7 +1724,11 @@ run_headless() {
     request_path=$2
     result_path=$3
     set +e
-    pyrun - "$self" "$request_path" \
+    # The transport runs in the background so this shell can take TERM/HUP while
+    # it waits and forward them as an interrupt; a terminal interrupt reaches the
+    # transport directly (same process group). The headless child runs in its
+    # own session and is signalled only by the transport.
+    { exec "$python_bin" -I -B - "$self" "$request_path" \
         "$result_path" "$format" "$tmp_dir/matlab-diagnostics-${4:-$phase}.log" \
         "$invocation_id" "$run_log_index" "$profile" \
         ${headless_args[@]+"${headless_args[@]}"} <<'PY'
@@ -1705,6 +1736,7 @@ import json
 import os
 import re
 import selectors
+import signal
 import subprocess
 import sys
 
@@ -1719,6 +1751,49 @@ environment["PSEUDOCT_CLI_OUTPUT"] = "1"
 # subject's own run log never is).
 environment["PSEUDOCT_CLI_INVOCATION_ID"] = invocation_id
 environment["PSEUDOCT_CLI_LOG_INDEX"] = run_log_index
+# Run phase only: the MATLAB batch loop watches this file. The child runs in
+# its own session, so a terminal interrupt reaches this transport, not MATLAB
+# or its local workers. First interrupt: request a graceful cancellation (no
+# new subject starts; active local workers are stopped and active Slurm jobs
+# cancelled with scancel). A further interrupt aborts the child at once and
+# names any Slurm job it may leave running.
+cancel_file = os.environ.get("PSEUDOCT_TRANSPORT_CANCEL_FILE", "")
+graceful = bool(cancel_file)
+if graceful:
+    environment["PSEUDOCT_CANCEL_FILE"] = cancel_file
+interrupts = {"count": 0, "process": None}
+
+def on_interrupt(signum, frame):
+    process = interrupts["process"]
+    interrupts["count"] += 1
+    if process is None:
+        return
+    if graceful and interrupts["count"] == 1:
+        try:
+            os.close(os.open(cancel_file, os.O_WRONLY | os.O_CREAT, 0o600))
+        except OSError:
+            pass
+        print("pseudoct: cancellation requested; no further subject will start and "
+              "active subjects are being cancelled (interrupt again to abort at once).",
+              file=sys.stderr, flush=True)
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM if graceful else signum)
+    except OSError:
+        pass
+    if graceful:
+        jobs = []
+        try:
+            with open(cancel_file + ".jobs", encoding="utf-8") as handle:
+                jobs = [line.strip() for line in handle if line.strip().isdigit()]
+        except OSError:
+            pass
+        if jobs:
+            print("pseudoct: run aborted; Slurm job(s) %s may still be running. "
+                  "To cancel them, run: scancel %s" % (" ".join(jobs), " ".join(jobs)),
+                  file=sys.stderr, flush=True)
+        else:
+            print("pseudoct: run aborted.", file=sys.stderr, flush=True)
 
 # The public stage of a Local Current event (10 stages with DICOM output, 9
 # for NIfTI-only) is assigned by the Local Current adapter/orchestrator and
@@ -2013,7 +2088,10 @@ selector = None
 try:
     process = subprocess.Popen([launcher] + launcher_args + [request_path, result_path], env=environment,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               bufsize=0)
+                               bufsize=0, start_new_session=True)
+    interrupts["process"] = process
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, on_interrupt)
     selector = selectors.DefaultSelector()
     streams = {}
     for channel, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
@@ -2056,7 +2134,29 @@ finally:
         pass
 raise SystemExit(run_status)
 PY
-    run_status=$?
+    } &
+    transport_pid=$!
+    trap 'run_interrupted=1' INT
+    trap 'run_interrupted=1; kill -INT "$transport_pid" 2>/dev/null' TERM HUP
+    while :; do
+        wait "$transport_pid"
+        run_status=$?
+        kill -0 "$transport_pid" 2>/dev/null || break
+    done
+    if [ "$run_status" -gt 128 ]; then
+        # The last wait may have been cut short by a trapped signal: collect the
+        # transport's own status when the shell still holds it.
+        wait "$transport_pid" 2>/dev/null
+        reaped_status=$?
+        [ "$reaped_status" -eq 127 ] || run_status=$reaped_status
+    fi
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+    # Outside the run phase an interrupt still ends the launcher (as before);
+    # the run phase reports its per-subject outcomes first.
+    if [ "$run_interrupted" -eq 1 ] && [ -z "${PSEUDOCT_TRANSPORT_CANCEL_FILE:-}" ]; then
+        exit 130
+    fi
     set -u
     return "$run_status"
 }
@@ -2109,6 +2209,8 @@ stage_handoff() {
         error_record "$EXIT_AUTH" 'Credential staging failed.'
     chmod 600 "$secret_dir/login" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
     handoff_output=$handoff_registry
+    # The reference left by an earlier store (already consumed); a store must replace it.
+    previous_handoff=$(cat "$handoff_output" 2>/dev/null) || previous_handoff=''
     if ! (cd -- "$tmp_dir" || exit 69
         export PSEUDOCT_CLI_ROOT="$root_dir" PSEUDOCT_CLI_MODE=store_credentials \
         PSEUDOCT_CLI_SECRET_FILE="$secret_dir/login" \
@@ -2145,8 +2247,20 @@ MATLAB
     then
         error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.' AUTHENTICATION_FAILED
     fi
-    credential_handoff=$(cat "$handoff_output")
-    [ -n "$credential_handoff" ] || error_record "$EXIT_AUTH" 'Secure single-use credential handoff could not be created.'
+    # The compiled R2010b job manager exits 0 even when the store fails, so the exit
+    # status is not evidence. Success requires a new, non-empty reference naming a
+    # private /dev/shm handoff; otherwise report the store's non-secret error
+    # identifier (the job manager prints identifiers only, never credentials).
+    credential_handoff=$(cat "$handoff_output" 2>/dev/null) || credential_handoff=''
+    case "$credential_handoff" in
+        /dev/shm/pseudo_CT_credentials_*/credentials.mat) ;;
+        *) credential_handoff='' ;;
+    esac
+    if [ -z "$credential_handoff" ] || [ "$credential_handoff" = "$previous_handoff" ]; then
+        credential_handoff=''
+        store_cause=$(grep -o 'pseudo_CT:[A-Za-z]*' "$tmp_dir/matlab-diagnostics-store-credentials.log" 2>/dev/null | head -n 1)
+        error_record "$EXIT_AUTH" "Secure single-use credential handoff could not be created (${store_cause:-no error identifier reported by the job manager}); no submission was attempted." AUTHENTICATION_FAILED
+    fi
     pyrun - "$secret_dir/login" <<'PY' >/dev/null 2>&1 || true
 import os, sys
 try:
@@ -2357,9 +2471,15 @@ if [ "$action" = run ]; then
     [ -s "$submit_request" ] ||
         error_record "$EXIT_RUNTIME" 'Direct run preparation produced no request MAT.'
     operation_phase=submit_called
+    PSEUDOCT_TRANSPORT_CANCEL_FILE=$cancel_file
+    export PSEUDOCT_TRANSPORT_CANCEL_FILE
     run_headless submit "$submit_request" "$submit_result"
     submit_launcher_status=$?
+    unset PSEUDOCT_TRANSPORT_CANCEL_FILE
     if [ ! -s "$submit_result" ]; then
+        if [ "$run_interrupted" -eq 1 ]; then
+            error_record 130 "The run was aborted before a result was recorded (status $submit_launcher_status); see the subject run logs." RUN_CANCELLED
+        fi
         error_record "$EXIT_RUNTIME" "Submit launcher returned no result MAT (status $submit_launcher_status)."
     fi
     if ! matlab_support verify_result '' "$submit_result" "$summary_file" submit; then
@@ -2496,9 +2616,17 @@ PY
 fi
 fi
 
+# Run-only inputs of the result block (subject IDs, interruption, concurrency).
+PSEUDOCT_RESULT_SUBJECT_IDS=$subject_ids_file
+PSEUDOCT_RESULT_INTERRUPTED=$run_interrupted
+PSEUDOCT_RESULT_MAX_CONCURRENT=${max_concurrent:-1}
+export PSEUDOCT_RESULT_SUBJECT_IDS PSEUDOCT_RESULT_INTERRUPTED PSEUDOCT_RESULT_MAX_CONCURRENT
 pyrun - "$summary_file" "$invocation_id" "$profile" "$action" "$format" "$backend" "$run_log_index" "${result_file:-}" "$subject_temp" <<'PY'
 import datetime, json, os, re, sys, tempfile
 summary, invocation, profile, action, output_format, backend, log_index, result_path, subject_temp = sys.argv[1:]
+subject_ids_path = os.environ.get("PSEUDOCT_RESULT_SUBJECT_IDS", "")
+interrupted = os.environ.get("PSEUDOCT_RESULT_INTERRUPTED", "0")
+max_concurrent = os.environ.get("PSEUDOCT_RESULT_MAX_CONCURRENT", "1")
 
 def write_validation_file(mr_pet, invocation, text):
     # Validate-only record: one exclusive JSONL file in the subject MR_PET folder. A
@@ -2547,6 +2675,32 @@ if len(values) < 10:
     raise SystemExit(69)
 status, error_code, auth, submission, result_backend, science, dispatch, ids, result_action, message = values[:10]
 account = values[10] if len(values) > 10 and values[10] != "-" else ""
+# Per-subject rows written after the fixed summary lines (run only).
+subject_ids = []
+try:
+    if subject_ids_path:
+        with open(subject_ids_path, encoding="utf-8") as handle:
+            subject_ids = handle.read().splitlines()
+except OSError:
+    pass
+def summary_number(text):
+    return int(text) if text.isdigit() else None
+subjects = []
+for line in values[11:]:
+    fields = line.split("\t")
+    if len(fields) != 6 or fields[0] != "subject" or not fields[1].isdigit():
+        continue
+    number = int(fields[1])
+    job = summary_number(fields[3])
+    subjects.append({
+        "index": number,
+        "subject_id": subject_ids[number - 1] if 0 < number <= len(subject_ids) else "subject-%d" % number,
+        "outcome": fields[2] if fields[2] != "-" else None,
+        "job_id": job if job else None,
+        "queue_seconds": summary_number(fields[4]),
+        "execution_seconds": summary_number(fields[5]),
+        "run_log": None,
+    })
 error_code = "" if error_code == "-" else error_code
 ids = "" if ids == "-" else ids
 message = "" if message == "-" else message
@@ -2559,8 +2713,10 @@ elif result_action == "validate":
     outcome = "validation_succeeded" if status == "ready" else "validation_failed"
 elif error_code in AUTH_CODES:
     outcome = "authentication_failed"
-elif error_code in {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB"}:
+elif error_code in {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB", "OUTPUT_COLLISION"}:
     outcome = "validation_failed"
+elif interrupted == "1" and action != "validate":
+    outcome = "run_cancelled"
 elif science == "completed":
     outcome = "scientific_completed"
 elif science == "failed":
@@ -2599,13 +2755,21 @@ record = {
     "error_code": error_code or None,
     "error_message": message or None,
 }
+if action != "validate":
+    for item in run_logs:
+        if 0 < item["subject"] <= len(subjects) and subjects[item["subject"] - 1]["index"] == item["subject"]:
+            subjects[item["subject"] - 1]["run_log"] = item["path"]
+    record["max_concurrent"] = int(max_concurrent) if max_concurrent.isdigit() else 1
+    record["subjects"] = subjects
 
 if result_action == "validate" and error_code not in AUTH_CODES:
     code = 0 if status == "ready" else 65
 elif error_code in AUTH_CODES:
     code = 66
-elif error_code in {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB"}:
+elif error_code in {"INVALID_REQUEST", "PROFILE_NOT_ALLOWED", "STALE_RESOLVED_JOB", "OUTPUT_COLLISION"}:
     code = 65
+elif interrupted == "1" and action != "validate":
+    code = 130
 elif status == "submitted" and not error_code and science == "completed":
     code = 0
 elif result_backend == "local" or science == "failed":
@@ -2650,6 +2814,14 @@ else:
         print("  scientific completion: " + science_value)
     if account: print("  MLSC account: " + account)
     if job_ids: print("  scheduler job IDs: " + ", ".join(str(v) for v in job_ids))
+    if subjects and (len(subjects) > 1 or record.get("max_concurrent", 1) > 1):
+        print("  subjects (max concurrent %d):" % record["max_concurrent"])
+        for item in subjects:
+            parts = [item["outcome"] or "unknown"]
+            if item["job_id"]: parts.append("job %d" % item["job_id"])
+            if item["queue_seconds"] is not None: parts.append("queued %ds" % item["queue_seconds"])
+            if item["execution_seconds"] is not None: parts.append("ran %ds" % item["execution_seconds"])
+            print("    [%s] %s" % (item["subject_id"], ", ".join(parts)))
     for item in run_logs:
         print("  run log" + (" (subject %d)" % item["subject"] if len(run_logs) > 1 else "") + ": " + item["path"])
     if not run_logs and outcome in {"scientific_failed", "submission_failed"}:

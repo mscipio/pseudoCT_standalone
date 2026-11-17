@@ -82,6 +82,9 @@ in [Releases](releases.md#release-and-matlab-runtime-root-selection).
 
 - `--correct-aliasing yes|no`, `--recenter-before-normalization yes|no`,
   `--cleanup-on-success yes|no`: override the profile defaults.
+- `--max-concurrent N` (`run`, `validate`): how many subjects execute at once, an integer from 1
+  to 32. The default 1 runs the subjects one after another. See
+  [Concurrent subjects](#concurrent-subjects).
 - `--group-account ACCOUNT` (MLSC): the account to use. Blank or omitted: the first discovered
   account is selected, or, at a terminal prompt, you are asked for one.
 - `--check-account` (MLSC, `validate` only): logs in, discovers the MLSC accounts and applies
@@ -289,19 +292,57 @@ Each requested subject gets a set of files in its `MR_PET` folder. Their names s
 | `68` | Scientific failure, or completion not verified. |
 | `69` | Launcher or runtime failure. |
 | `70` | MATLAB dispatch or runtime failure (listed in `--help`): the MATLAB CLI support, diagnostics or headless bootstrap could not start or returned no valid result. |
+| `130` | `run` was cancelled (interrupt); the result record still lists every subject's outcome. |
 
 A scheduler acceptance or a submitted job is not completion. Exit `0` for `run` requires verified
 completion.
 
+## Concurrent subjects
+
+`--max-concurrent N` (MATLAB: `'MaxConcurrent', N`; window: **Subjects at once**) lets up to `N`
+subjects of one request execute at the same time. One shared loop runs both backends: it starts
+subjects in request order until `N` are active, polls them, finalizes each finished subject, and
+starts the next one in the freed slot.
+
+- **Local:** each active subject runs its own compiled worker (`pseudoct_pipeline` under the MATLAB
+  Runtime, no MATLAB licence), with its own private temporary and Runtime cache folders.
+- **MLSC:** each subject is its own Slurm job. A slot is held from submission until the job is
+  terminal, so submitted, queued and running jobs all count against `N`. One login (one prompt or
+  one handoff) and one SSH connection serve the whole request.
+- Input preparation (stage 1) and finalization (stages 9 and 10: DICOM writing and promotion into
+  `MR_PET`) stay serial, in the launcher's MATLAB process. The scientific pipeline is unchanged and
+  every subject uses the same processing options.
+- **Output folders:** every subject must resolve to its own `MR_PET` (and, for DICOM profiles, its
+  own `MR/pseudo_muMAP`). Two subjects sharing one, after symbolic links are resolved, make
+  `validate` and `run` fail with `OUTPUT_COLLISION` (exit `65`) before anything is created,
+  authenticated or submitted. Outputs are never relocated. This applies with `N = 1` as well.
+- **Failures:** one subject's failure does not stop the others. The run exits `0` only when every
+  subject completed with verified results.
+- **Result:** the `run` record carries `max_concurrent` and `subjects`, one entry per subject in
+  request order: `index`, `subject_id` (the subjects-file `[SubjectID]`, else `subject-<n>`),
+  `outcome` (`SUCCEEDED`, `FAILED`, `CANCELLED`, `TIMED_OUT` or `NOT_STARTED`), `job_id` (MLSC),
+  `queue_seconds` (MLSC: time waiting in the Slurm queue), `execution_seconds` and `run_log`. The
+  per-subject run logs and event files in each `MR_PET` are unchanged.
+
 ## Cancellation and interruption
 
-- **Timeout:** when polling reaches the configured timeout before terminal accounting, the lifecycle
-  requests cancellation (`scancel`) and then reports the outcome from accounting. If terminal accounting is
-  still unavailable, the result is a timeout failure, not a completion.
+- **Cancelling a run:** the first interrupt (Ctrl-C, or `SIGTERM`/`SIGHUP` sent to the launcher)
+  during `run` requests a graceful cancellation: no further subject starts, active local workers
+  are terminated, active Slurm jobs are cancelled with `scancel` over the existing connection,
+  subjects not yet started are reported `NOT_STARTED`, and the launcher exits `130` after printing
+  every subject's outcome. A second interrupt aborts at once and prints the `scancel` command for any
+  Slurm job that may still be running.
+- **Timeouts (MLSC):** queue waiting and execution are bounded separately. A job still pending after
+  the queue timeout (unlimited by default; optional profile field `mlsc.queue_timeout_seconds`), or still running
+  after the execution timeout measured from its first observed `RUNNING` state (default 7200 seconds,
+  the profile's Slurm wall time), is cancelled with `scancel`; the outcome is then read from
+  accounting. If terminal accounting is still unavailable, the result is a timeout failure, not a
+  completion.
 - **Interruption after submission:** a polling error or a lost connection after the Slurm job was accepted
   never cancels the job. The result is reported as unverified (exit `68`). The job ID and the command
-  `scancel <job id>` are printed. The job keeps running until it is cancelled by hand. Interrupting the
-  launcher (for example Ctrl-C) is not a cancellation: the launcher does not call `scancel`.
+  `scancel <job id>` are printed. The job keeps running until it is cancelled by hand. An error that
+  stops the MATLAB process also stops its local workers and prints the `scancel` command for every
+  Slurm job still active.
 - **Before submission:** nothing was accepted by the scheduler, so there is nothing to cancel. Cancelling
   the MLSC login dialog submits nothing.
 - **Window:** the window has no cancel control for a running request. **Close** and the window close button

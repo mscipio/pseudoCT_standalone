@@ -38,6 +38,10 @@ p.addParamValue('headless_mode', false, ...
 p.addParamValue('headless_credentials', struct(), ...
     @(x) isstruct(x) && numel(x) == 1);
 p.addParamValue('group_account', '', @(x) ischar(x));
+% Maximum number of subjects executing at once (local workers or submitted,
+% queued and running Slurm jobs). Default 1 keeps the sequential behavior.
+p.addParamValue('max_concurrent', 1, @(x) isnumeric(x) && isscalar(x) && ...
+    isreal(x) && isfinite(x) && x == fix(x) && x >= 1 && x <= 32);
 p.parse(varargin{:});
 args = p.Results;
 end
