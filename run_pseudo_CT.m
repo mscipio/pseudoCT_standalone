@@ -45,10 +45,11 @@ function report = run_pseudo_CT(varargin)
 %   in bin/pseudoct, the frontend and the headless API.
 %
 %   RUN_PSEUDO_CT() with no arguments opens the pseudoCT window: profile
-%   selection, then the MPRAGE/UMAP window. Run checks the inputs and, when they
-%   pass, executes the request (for MLSC it asks for the login after the check),
-%   through the same launcher path as the arguments above. No separate validate
-%   step is required. The
+%   selection, then the subjects window (pseudo_CT_input_window): subjects entered
+%   manually or loaded from a subjects file, and the processing options. Run checks
+%   the whole subject list and, when it passes, executes the request as one subjects
+%   file (for MLSC it asks for the login after the check), through the same launcher
+%   path as the arguments above. No separate validate step is required. The
 %   window stays open after each request, but MATLAB is busy while Run runs: the
 %   launcher runs synchronously through system() (frontend/pseudo_CT_launch_request.m).
 %   Minimum supported MATLAB: R2010b.
@@ -93,7 +94,7 @@ profiles = pseudo_CT_profile_choices();
 config = profiles(strcmp({profiles.name}, selection.profile)).config;
 context = struct('root_dir', root_dir, 'launcher', launcher, ...
     'runtime', selection.runtime, 'mcr_root', '');
-load_mr_4_AC(config.io_policy.gui, config, context);
+pseudo_CT_input_window(config.io_policy.gui, config, context);
 report.ok = true;
 report.outcome = 'window_opened';
 report.profile = selection.profile;

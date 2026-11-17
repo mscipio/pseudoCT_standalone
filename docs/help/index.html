@@ -89,11 +89,16 @@
 run_pseudo_CT</code></pre>
               <p>A profile selector opens first. Choose one of the four profiles.</p>
             </li>
-            <li><strong>Select the MPRAGE.</strong> Use <em>Browse MPRAGE</em> to select one MPRAGE file (DICOM or NIfTI) for the subject.</li>
-            <li><strong>Check the UMAP reference</strong> (standard profiles only). The window looks for a matching UMAP beside the MPRAGE and shows it. If none is found, select the UMAP yourself. MPRAGE-only profiles do not use a UMAP.</li>
+            <li><strong>Choose how to give the subjects.</strong> The window has two sources; only the selected one is used, and the two are never merged. One subject or many are handled the same way.
+              <ul class="checklist">
+                <li><em>Enter subjects manually:</em> click <em>Add subject</em> for each subject. Each subject has an ID (pre-filled, editable), an MPRAGE and, for the standard profiles, a UMAP. Use <em>File...</em> to choose a NIfTI or DICOM file, or <em>Folder...</em> to choose the folder that holds one DICOM series. You can also type or paste a path. <em>Remove subject</em> removes the selected subject. <em>Export subjects file...</em> saves the list as a subjects file you can reuse.</li>
+                <li><em>Load a subjects file:</em> choose an existing subjects file (format in the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/headless-cli.md#subjects-file">reference</a>). It is checked at once. The list shows the paths as written in the file, and the box below shows the file or DICOM series each path resolves to, or every error found. The file is read-only in the window; edit it in a text editor and press <em>Check again</em>.</li>
+              </ul>
+            </li>
+            <li><strong>Check the UMAP references</strong> (standard profiles only). When you set an MPRAGE and the subject's UMAP is still empty, the window looks for a matching UMAP beside the MPRAGE and suggests it (marked <em>(suggested)</em> in the list). It never replaces a UMAP you chose. If none is found, select the UMAP yourself. MPRAGE-only profiles do not use a UMAP.</li>
             <li><strong>Check the processing options.</strong> The defaults come from the profile.</li>
             <li>
-              <strong>Click Run.</strong> Run validates the profile, the inputs, the outputs and the dependencies. Validation does not log in, contact remote services or run processing.
+              <strong>Click Run.</strong> Run first checks the whole subject list (paths and DICOM series; <em>Check subjects</em> does the same without running) and lists every error if it is not valid. It then validates the profile, the inputs, the outputs and the dependencies. Validation does not log in, contact remote services or run processing. Subjects are processed one after another.
               <ul class="checklist">
                 <li>Local profiles: Run submits the request as soon as validation passes.</li>
                 <li>MLSC profiles: Run validates first. Only after validation passes does a login dialog ask for your username, your password and an optional group account. Then the job is submitted once.</li>
@@ -169,7 +174,7 @@ bin/pseudoct run --profile local \
           <h2>Preparing input data</h2>
           <div class="profile-card">
             <div class="profile-title"><h3>Standard profiles</h3><span class="badge good">MPRAGE + UMAP</span></div>
-            <p>Provide an MPRAGE (DICOM or NIfTI) and its matched UMAP reference. The window looks for the UMAP in the subject's <code>MR</code> folder: it searches for a sub-folder whose name contains <code>umap</code>, <code>ute</code>, <code>mu_map</code> or <code>mumap</code>, and uses the first file in that folder whose name contains <code>0001</code>. If nothing is found, select the UMAP yourself. Confirm the selected files before you click Run.</p>
+            <p>Provide an MPRAGE (DICOM or NIfTI) and its matched UMAP reference. The window looks for the UMAP in the subject's <code>MR</code> folder: it searches for a sub-folder whose name contains <code>umap</code>, <code>ute</code>, <code>mu_map</code> or <code>mumap</code>, and uses the first file in that folder whose name contains <code>0001</code>. The suggestion is made only while the subject's UMAP is empty. If nothing is found, select the UMAP yourself. An MPRAGE or UMAP can also be a folder that holds exactly one DICOM series. Confirm the selected inputs before you click Run.</p>
           </div>
           <div class="profile-card">
             <div class="profile-title"><h3>MPRAGE-only profiles</h3><span class="badge">MPRAGE only</span></div>

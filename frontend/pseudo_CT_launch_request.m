@@ -32,6 +32,15 @@ function out = pseudo_CT_launch_request(action, varargin)
 %   identifies the inputs and options of one validation. Compare it with the
 %   fingerprint stored at validation time to detect changed inputs.
 %
+%   CHECK = PSEUDO_CT_LAUNCH_REQUEST('check-subjects', LAUNCHER, PROFILE, FILE) runs the
+%   read-only 'LAUNCHER check-subjects --profile PROFILE --subjects FILE --format tsv'
+%   (the launcher's subjects-file parser; MATLAB does not parse the file) and returns a
+%   struct with ok (true when the file is valid), exit_code, subjects (struct array: id,
+%   and for MPRAGE and UMAP the value as written, the absolute path, the resolved file
+%   and the detail; fields mprage, mprage_path, mprage_resolved, mprage_detail, umap,
+%   umap_path, umap_resolved, umap_detail), errors (struct array: line, subject,
+%   message) and message (text when the launcher printed no table).
+%
 %   Credentials are never accepted as parameters or placed on a command line.
 %   The only credential-related input is CredentialHandoff, a path to an
 %   existing single-use handoff created by the launcher's own mechanism.
@@ -64,6 +73,12 @@ switch lower(action)
         out = local_resolve_launcher(local_abs(varargin{1}), varargin{2});
     case 'releases'
         out = local_releases(varargin{1});
+    case 'check-subjects'
+        if nargin ~= 4
+            error('pseudo_CT:FrontendUsage', ...
+                'check-subjects needs the launcher, the profile and the subjects file.');
+        end
+        out = local_check_subjects(varargin{1}, varargin{2}, varargin{3});
     otherwise
         error('pseudo_CT:FrontendUsage', 'Unknown frontend request action.');
 end
@@ -314,19 +329,149 @@ end
 end
 
 function text = local_subjects_text(pairs)
-%LOCAL_SUBJECTS_TEXT Subjects-file text for SUBJECT pairs {MPRAGE, UMAP} ('' UMAP: none).
-%   Values are double-quoted; the format reads the text between the quotes literally,
-%   and the paths are absolute single lines (local_subject_value).
-lines = {'# pseudoCT subjects v1'; '# Written by run_pseudo_CT from its Subject argument.'};
+%LOCAL_SUBJECTS_TEXT Subjects-file text for SUBJECT pairs {MPRAGE, UMAP} ('' UMAP: none),
+%   with identifiers Subject_001, Subject_002, ... The quoting rules are those of
+%   pseudo_CT_subjects_file (shared with the window's export); the paths are absolute
+%   single lines (local_subject_value).
+ids = cell(1, numel(pairs));
+mprage = cell(1, numel(pairs));
+umap = cell(1, numel(pairs));
 for kk = 1:numel(pairs)
-    lines{end + 1, 1} = ''; %#ok<AGROW>
-    lines{end + 1, 1} = sprintf('[Subject_%03d]', kk); %#ok<AGROW>
-    lines{end + 1, 1} = ['MPRAGE = "' pairs{kk}{1} '"']; %#ok<AGROW>
-    if ~isempty(pairs{kk}{2})
-        lines{end + 1, 1} = ['UMAP = "' pairs{kk}{2} '"']; %#ok<AGROW>
+    ids{kk} = sprintf('Subject_%03d', kk);
+    mprage{kk} = pairs{kk}{1};
+    umap{kk} = pairs{kk}{2};
+end
+text = pseudo_CT_subjects_file('text', ids, mprage, umap);
+end
+
+function check = local_check_subjects(launcher, profile, file)
+%LOCAL_CHECK_SUBJECTS One read-only 'check-subjects --format tsv' launcher call; the table
+%   contract (header, subject, error and end rows, escapes) is in docs/headless-cli.md.
+check = struct('ok', false, 'exit_code', -1, 'subjects', local_empty_subjects(), ...
+    'errors', struct('line', {}, 'subject', {}, 'message', {}), 'message', '');
+if ~ischar(launcher) || exist(launcher, 'file') ~= 2
+    error('pseudo_CT:FrontendLauncher', 'The launcher is unavailable: %s', launcher);
+end
+out_file = tempname;
+err_file = tempname;
+cleanup_files = onCleanup(@() local_delete({out_file; err_file})); %#ok<NASGU>
+argv = {'check-subjects', '--profile', local_text(profile, 'Profile'), ...
+    '--subjects', local_text(file, 'Subject file'), '--format', 'tsv'};
+status = system([local_clean_prefix() local_sh(launcher) local_join_sh(argv) ...
+    ' >' local_sh(out_file) ' 2>' local_sh(err_file)]);
+check.exit_code = status;
+text = local_read_utf8(out_file);
+lines = regexp(text, '\n', 'split');
+if isempty(lines) || ~strcmp(lines{1}, sprintf('pseudoct-subjects-tsv\t1'))
+    message = strtrim([text char(10) local_read(err_file)]);
+    if isempty(message)
+        message = sprintf('check-subjects exit status %d', status);
+    end
+    check.message = local_tail(strrep(message, 'pseudoct: ', ''), 4000);
+    return;
+end
+ended = false;
+for kk = 2:numel(lines)
+    if isempty(lines{kk})
+        continue;
+    end
+    fields = regexp(lines{kk}, '\t', 'split');
+    switch fields{1}
+        case 'subject'
+            if numel(fields) ~= 10
+                check.message = 'check-subjects printed a malformed subject row.';
+                return;
+            end
+            values = cell(1, 9);
+            for jj = 1:9
+                values{jj} = local_tsv_unescape(fields{jj + 1});
+            end
+            check.subjects(end + 1) = struct('id', values{1}, ...
+                'mprage', values{2}, 'mprage_path', values{3}, ...
+                'mprage_resolved', values{4}, 'mprage_detail', values{5}, ...
+                'umap', values{6}, 'umap_path', values{7}, ...
+                'umap_resolved', values{8}, 'umap_detail', values{9});
+        case 'error'
+            if numel(fields) ~= 4
+                check.message = 'check-subjects printed a malformed error row.';
+                return;
+            end
+            check.errors(end + 1) = struct('line', str2double(fields{2}), ...
+                'subject', local_tsv_unescape(fields{3}), ...
+                'message', local_tsv_unescape(fields{4}));
+        case 'end'
+            ended = true;
+            break;
+        otherwise
+            check.message = 'check-subjects printed an unknown row.';
+            return;
     end
 end
-text = [local_join(lines, char(10)) char(10)];
+if ~ended
+    check.message = 'check-subjects output is incomplete.';
+    return;
+end
+check.ok = status == 0 && isempty(check.errors) && ~isempty(check.subjects);
+end
+
+function subjects = local_empty_subjects()
+subjects = struct('id', {}, 'mprage', {}, 'mprage_path', {}, 'mprage_resolved', {}, ...
+    'mprage_detail', {}, 'umap', {}, 'umap_path', {}, 'umap_resolved', {}, ...
+    'umap_detail', {});
+end
+
+function value = local_tsv_unescape(text)
+%LOCAL_TSV_UNESCAPE Reverse of the launcher's escapes: \\ \t \n \r and \xHH.
+value = '';
+if isempty(strfind(text, char(92))) %#ok<STREMP>
+    value = text;
+    return;
+end
+kk = 1;
+while kk <= length(text)
+    ch = text(kk);
+    if ch ~= char(92) || kk == length(text)
+        value = [value ch]; %#ok<AGROW>
+        kk = kk + 1;
+        continue;
+    end
+    next = text(kk + 1);
+    switch next
+        case char(92)
+            value = [value char(92)]; %#ok<AGROW>
+            kk = kk + 2;
+        case 't'
+            value = [value char(9)]; %#ok<AGROW>
+            kk = kk + 2;
+        case 'n'
+            value = [value char(10)]; %#ok<AGROW>
+            kk = kk + 2;
+        case 'r'
+            value = [value char(13)]; %#ok<AGROW>
+            kk = kk + 2;
+        case 'x'
+            if kk + 3 <= length(text)
+                value = [value char(hex2dec(text(kk + 2:kk + 3)))]; %#ok<AGROW>
+                kk = kk + 4;
+            else
+                value = [value ch]; %#ok<AGROW>
+                kk = kk + 1;
+            end
+        otherwise
+            value = [value ch]; %#ok<AGROW>
+            kk = kk + 1;
+    end
+end
+end
+
+function text = local_read_utf8(path_text)
+text = '';
+fid = fopen(path_text, 'r', 'n', 'UTF-8');
+if fid < 0
+    return;
+end
+text = fread(fid, '*char')';
+fclose(fid);
 end
 
 function [file, pairs] = local_subject_value(value)

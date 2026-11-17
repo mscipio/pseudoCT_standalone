@@ -5,17 +5,25 @@ function args = pseudo_CT_gui_args(values, context, action)
 %   argument mode build identical launcher requests.
 %     VALUES: profile, mprage, umap ('' when none), aliasing, recenter,
 %             cleanup (logical), gui_mode ('mMR' or 'mprage-only'),
-%             group_account, credential_handoff (path, '' when none).
+%             group_account, credential_handoff (path, '' when none), and optionally
+%             subjects_file: a subjects-file path. When subjects_file is present and
+%             not empty it is passed as 'Subject', FILE and mprage/umap are not used
+%             (the window always runs through a subjects file).
 %     CONTEXT: launcher, runtime, mcr_root ('' when not installed).
-%     ACTION: 'validate' or 'submit'.
+%     ACTION: 'validate', 'submit' or 'authenticate'.
 %   Minimum supported MATLAB: R2010b.
 
-args = {'Profile', values.profile, 'MPRAGE', values.mprage, ...
-    'Action', action, 'Launcher', context.launcher, ...
+if isfield(values, 'subjects_file') && ~isempty(values.subjects_file)
+    args = {'Profile', values.profile, 'Subject', values.subjects_file};
+else
+    args = {'Profile', values.profile, 'MPRAGE', values.mprage};
+end
+args = [args, {'Action', action, 'Launcher', context.launcher, ...
     'CorrectAliasing', logical(values.aliasing), ...
     'RecenterBeforeNormalization', logical(values.recenter), ...
-    'CleanupOnSuccess', logical(values.cleanup)};
-if ~strcmp(values.gui_mode, 'mprage-only') && ischar(values.umap) && ...
+    'CleanupOnSuccess', logical(values.cleanup)}];
+if ~(isfield(values, 'subjects_file') && ~isempty(values.subjects_file)) && ...
+        ~strcmp(values.gui_mode, 'mprage-only') && ischar(values.umap) && ...
         ~isempty(values.umap)
     args = [args, {'UMAP', values.umap}];
 end

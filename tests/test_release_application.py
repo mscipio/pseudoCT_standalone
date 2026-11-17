@@ -187,7 +187,7 @@ class FrontendAllowlistTest(unittest.TestCase):
                     'app/run_pseudo_CT', 'frontend/evil.m', 'frontend/passwordTools/x.m',
                     'runtimes/R2010b/app/run_pseudo_CT', 'config/releases.json'):
             self.assertFalse(ra.path_allowed(rel, labels), rel)
-        self.assertTrue(ra.path_allowed('frontend/load_mr_4_AC.m', labels))
+        self.assertTrue(ra.path_allowed('frontend/pseudo_CT_input_window.m', labels))
         self.assertTrue(ra.path_allowed('run_pseudo_CT.m', labels))
         self.assertTrue(ra.path_allowed('runtimes/R2010b/pseudoct_job_manager', labels))
         self.assertFalse(ra.path_allowed('runtimes/R2010b/standalone/pseudoct_job_manager', labels))
@@ -246,9 +246,9 @@ class VerifyTest(unittest.TestCase):
 
     def test_tampered_frontend_file_is_detected(self):
         pkg = make_package(self.base, version=FIXTURE_VERSION)
-        write(os.path.join(pkg, 'frontend', 'load_mr_4_AC.m'), 'changed\n')
+        write(os.path.join(pkg, 'frontend', 'pseudo_CT_input_window.m'), 'changed\n')
         problems = ra.verify_package(pkg)
-        self.assertTrue(any('load_mr_4_AC.m' in p for p in problems), problems)
+        self.assertTrue(any('pseudo_CT_input_window.m' in p for p in problems), problems)
 
     def test_source_external_and_app_additions_are_refused(self):
         pkg = make_package(self.base, version=FIXTURE_VERSION)

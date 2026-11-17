@@ -125,12 +125,13 @@ FRONTEND_DIR = os.path.join(REPO_ROOT, 'frontend')
 # to hold exactly these files). The credential store and the password dialog are shared
 # with the compiled CLI and the lifecycle, so they are shipped from src/ instead.
 FRONTEND_OWN = (
-    'load_mr_4_AC.fig', 'load_mr_4_AC.m', 'pseudo_CT_discover_umap.m',
-    'pseudo_CT_gui_args.m', 'pseudo_CT_gui_state.m', 'pseudo_CT_launch_request.m',
+    'pseudo_CT_discover_umap.m',
+    'pseudo_CT_gui_args.m', 'pseudo_CT_gui_state.m', 'pseudo_CT_input_window.m',
+    'pseudo_CT_launch_request.m',
     'pseudo_CT_prepare_profile_choices.m', 'pseudo_CT_prepare_routine_profile_choices.m',
     'pseudo_CT_profile_choices.m', 'pseudo_CT_profile_selector.m',
     'pseudo_CT_profile_selector_label.m', 'pseudo_CT_profile_selector_layout.m',
-    'pseudo_CT_result_fields.py', 'pseudo_CT_select_file.m')
+    'pseudo_CT_result_fields.py', 'pseudo_CT_select_file.m', 'pseudo_CT_subjects_file.m')
 FRONTEND_FROM_SRC = {
     'pseudo_CT_credentials.m': os.path.join(REPO_ROOT, 'src', 'api', 'pseudo_CT_credentials.m'),
     'pseudo_CT_password_entry_dialog.m': os.path.join(REPO_ROOT, 'src', 'gui', 'pseudo_CT_password_entry_dialog.m'),

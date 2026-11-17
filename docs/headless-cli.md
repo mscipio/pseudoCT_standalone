@@ -34,10 +34,12 @@ bin/pseudoct run --profile mlsc --subjects subjects.txt --mcr R2019b
 
 `check-subjects` is read-only: it checks the file, its paths and its DICOM series, and starts no
 MATLAB Runtime, authentication or processing. `validate` additionally checks output folders and
-runtime dependencies.
+runtime dependencies. `check-subjects --format tsv` prints the
+[machine-readable table](#check-subjects-table) instead of the readable report.
 
-The window (`run_pseudo_CT`) and the launcher share the same rules. The window runs
-`bin/pseudoct run` with a text result and reads the final result record from a file.
+The window (`run_pseudo_CT`) and the launcher share the same rules. The window checks its
+subject list with `check-subjects --format tsv`, then runs `bin/pseudoct run --subjects FILE`
+with a text result and reads the final result record from a file.
 
 ## Release selection (installed distribution)
 
@@ -158,6 +160,33 @@ pseudoct: the subjects file subjects.txt is invalid (2 errors); nothing was star
   subjects.txt:7: subject Subject_002: unmatched double quote in the MPRAGE value
   subjects.txt:12: subject Subject_003: MPRAGE directory /data/s3/MR: the directory contains 2 DICOM series (...)
 ```
+
+### Check-subjects table
+
+`bin/pseudoct check-subjects --profile P --subjects FILE --format tsv` performs the same check
+as the readable report and prints a table on standard output, UTF-8, one record per line
+(`\n`), fields separated by one tab. This contract is stable; version 1:
+
+- First line: `pseudoct-subjects-tsv<TAB>1` (format name and version). A consumer refuses
+  any other first line.
+- Valid file: one `subject` row per subject, in file order, with 10 fields:
+  `subject`, ID, then for MPRAGE and then for UMAP four fields each: the value as written
+  in the file, its absolute path (relative values resolved against the folder of the
+  subjects file), the resolved input file passed to the pipeline (for a DICOM series
+  directory, its representative file) and a detail text (`NIfTI file`, `DICOM file`, or
+  `DICOM series directory: N image files, series S 'description'`). The four UMAP fields
+  are empty for MPRAGE-only profiles.
+- Invalid file: no `subject` rows; one `error` row per error, ordered by line, with 4 fields:
+  `error`, the line number (empty when the error concerns the whole file), the subject ID
+  (empty when none), and the message.
+- Last line: `end<TAB>SUBJECTS<TAB>ERRORS` with the number of `subject` and `error` rows.
+  A table without it is incomplete.
+- Escapes in every field: `\` is written `\\`, tab `\t`, line feed `\n`, carriage return
+  `\r`, and any other control character (below U+0020, and U+007F) `\xHH` with two hex
+  digits. No other escape is used; all other text is written unchanged.
+- Exit status: `0` valid (table printed), `64` invalid file (table with error rows printed)
+  or usage error (no table; message on standard error), `69` the file could not be checked
+  (no table; a one-line message).
 
 Subjects run one after another, as with `--config`. In MATLAB, `run_pseudo_CT('Profile', P,
 'Subject', 'subjects.txt')` passes the file to the launcher, and `'Subject', {{MPRAGE, UMAP},

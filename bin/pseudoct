@@ -39,7 +39,7 @@ usage() {
 Usage:
   pseudoct run      --profile PROFILE (--subjects FILE | --mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
   pseudoct validate --profile PROFILE (--subjects FILE | --mprage FILE [--umap FILE] | --config job.json) [--mcr LABEL] [--mcr-root DIR] [options]
-  pseudoct check-subjects --profile PROFILE --subjects FILE
+  pseudoct check-subjects --profile PROFILE --subjects FILE [--format text|tsv]
   pseudoct headless REQUEST.mat RESULT.mat [--mcr LABEL] [--mcr-root DIR]
   pseudoct resolve  [--mcr LABEL] [--mcr-root DIR]
   pseudoct --list-releases
@@ -50,7 +50,8 @@ Operations:
   validate            Optional check of a request; nothing is submitted (CLI options below).
   check-subjects      Check a subjects file for PROFILE: syntax, paths and DICOM series.
                       Read-only: no MATLAB Runtime, authentication or processing.
-  authenticate       MLSC only: authenticate and select the account without processing
+                      --format tsv prints the machine-readable table (headless-cli.md).
+  authenticate      MLSC only: authenticate and select the account without processing
                       (used by the window; needs --credential-handoff).
   headless            Run one v2 headless request MAT into a result MAT.
   resolve             Validate one MATLAB Runtime and print sourceable PSEUDOCT_* lines.
@@ -286,13 +287,15 @@ catalog_query() {
     pyrun -c "$CATALOG_PY" "$catalog" "$catalog_key" "$1" "${2-}" "$root_dir" "$catalog_mode"
 }
 
-# Subject-file reader: subjects_tool resolve|report PROFILE SUBJECTS_FILE.
+# Subject-file reader: subjects_tool resolve|report|table PROFILE SUBJECTS_FILE.
 # Parses the INI-like subjects file (grammar in docs/headless-cli.md), checks every
 # subject against PROFILE, and resolves each DICOM series directory to one
 # representative file of its single series. Nothing is written and no MATLAB runs.
 # Exit 0: resolve prints "COUNT", then ID, MPRAGE, UMAP ("" when absent) per subject,
-# then "end"; report prints a readable summary. Exit 1: stdout holds every error found,
-# each with file, line and subject. Exit 2: the file could not be checked at all.
+# then "end"; report prints a readable summary; table prints the tab-separated table of
+# check-subjects --format tsv (contract in docs/headless-cli.md). Exit 1: stdout holds
+# every error found, each with file, line and subject (table: as error rows). Exit 2: the
+# file could not be checked at all.
 subjects_tool() {
     pyrun - "$@" <<'PY'
 import os, re, struct, sys
@@ -539,6 +542,7 @@ class Subject(object):
         self.unusable = set()
         self.resolved = {}
         self.details = {}
+        self.targets = {}
 
 
 def describe_file(path):
@@ -691,6 +695,7 @@ def check(profile, path):
                 continue
             subject.resolved[name] = resolved
             subject.details[name] = detail
+            subject.targets[name] = target
             if name == "MPRAGE":
                 key = os.path.realpath(resolved)
                 other = used_mprage.get(key)
@@ -718,12 +723,65 @@ def error_text(errors, display):
     return "\n".join(lines)
 
 
+TSV_HEADER = "pseudoct-subjects-tsv\t1"
+
+
+def tsv_escape(value):
+    # Backslash, tab, line feed and carriage return become \\ \t \n \r; any other control
+    # character becomes \xHH. Everything else (UTF-8 text) is written unchanged.
+    out = []
+    for ch in value:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append("\\x%02x" % ord(ch))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def table(subjects, errors):
+    rows = [TSV_HEADER]
+    count = 0
+    if errors:
+        for number, subject, message in sorted(errors, key=lambda item: (item[0] or 0)):
+            rows.append("\t".join(["error", "" if number is None else str(number),
+                                   tsv_escape(subject or ""), tsv_escape(message)]))
+    else:
+        for subject in subjects:
+            fields = ["subject", tsv_escape(subject.ident)]
+            for name in FIELDS:
+                if name in subject.resolved:
+                    fields.extend([tsv_escape(subject.fields[name][0]),
+                                   tsv_escape(subject.targets[name]),
+                                   tsv_escape(subject.resolved[name]),
+                                   tsv_escape(subject.details[name])])
+                else:
+                    fields.extend(["", "", "", ""])
+            rows.append("\t".join(fields))
+            count += 1
+    rows.append("end\t%d\t%d" % (count, len(errors)))
+    data = ("\n".join(rows) + "\n").encode("utf-8", "surrogateescape")
+    sys.stdout.flush()
+    sys.stdout.buffer.write(data)
+    sys.stdout.flush()
+
+
 def main():
-    if len(sys.argv) != 4 or sys.argv[1] not in ("resolve", "report"):
+    if len(sys.argv) != 4 or sys.argv[1] not in ("resolve", "report", "table"):
         print("internal subjects_tool usage error")
         return 2
     mode, profile, path = sys.argv[1:]
     subjects, errors, display = check(profile, path)
+    if mode == "table":
+        table(subjects, errors)
+        return 1 if errors else 0
     if errors:
         print(error_text(errors, display))
         return 1
@@ -758,34 +816,48 @@ except Exception as error:
 PY
 }
 
-# check-subjects --profile PROFILE --subjects FILE: read-only subjects-file check. No
-# MATLAB Runtime, authentication, temporary folder or result record is involved.
+# check-subjects --profile PROFILE --subjects FILE [--format text|tsv]: read-only
+# subjects-file check. No MATLAB Runtime, authentication, temporary folder or result record
+# is involved. --format tsv prints the machine-readable table on stdout, also for an invalid
+# file (error rows, exit 64); the table contract is in docs/headless-cli.md.
 op_check_subjects() {
     profile=''
     subjects=''
     seen_subjects=0
+    format=''
     while [ "$#" -gt 0 ]; do
         option=$1
         shift
         case "$option" in
-            --profile|--subjects)
+            --profile|--subjects|--format)
                 [ "$#" -ge 1 ] || fail_op "$option is missing its value" "$EXIT_USAGE"
                 value=$1
                 shift
                 ;;
             --profile=*) value=${option#*=}; option=--profile ;;
             --subjects=*) value=${option#*=}; option=--subjects ;;
+            --format=*) value=${option#*=}; option=--format ;;
             -h|--help) usage; exit 0 ;;
             *) fail_op "check-subjects does not accept $option (see --help)" "$EXIT_USAGE" ;;
         esac
         case "$option" in
             --profile) [ -z "$profile" ] || fail_op 'specify --profile only once' "$EXIT_USAGE"; profile=$value ;;
             --subjects) [ "$seen_subjects" -eq 0 ] || fail_op 'specify --subjects only once' "$EXIT_USAGE"; subjects=$value; seen_subjects=1 ;;
+            --format) [ -z "$format" ] || fail_op 'specify --format only once' "$EXIT_USAGE"; format=$value ;;
         esac
     done
+    case "${format:-text}" in text|tsv) ;; *) fail_op 'check-subjects --format must be text or tsv' "$EXIT_USAGE" ;; esac
     case " $profiles " in *" $profile "*) ;; *) fail_op 'check-subjects requires a supported --profile' "$EXIT_USAGE" ;; esac
     [ "$seen_subjects" -eq 1 ] && [ -n "$subjects" ] || fail_op 'check-subjects requires --subjects FILE' "$EXIT_USAGE"
     rc=0
+    if [ "$format" = tsv ]; then
+        subjects_tool table "$profile" "$subjects" || rc=$?
+        case "$rc" in
+            0) exit 0 ;;
+            1) exit "$EXIT_USAGE" ;;
+            *) exit "$EXIT_RUNTIME" ;;
+        esac
+    fi
     report=$(subjects_tool report "$profile" "$subjects") || rc=$?
     if [ "$rc" -eq 0 ]; then
         printf '%s\n' "$report"
