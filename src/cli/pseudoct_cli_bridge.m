@@ -355,19 +355,24 @@ if isempty(secret_path) || isempty(handoff_output) || ...
         '^/dev/shm/pseudoct-cli-credentials-[A-Za-z0-9_.-]+/login$', 'once'))
     error('pseudo_CT:CLISecretPath', 'Private credential input is unavailable.');
 end
-fid = fopen(secret_path, 'r');
+fid = fopen(secret_path, 'rb');
 if fid == -1
     error('pseudo_CT:CLISecretPath', 'Private credential input is unavailable.');
 end
-username = fgetl(fid);
-password = fgetl(fid);
-extra = fgetl(fid);
+% Exactly two nonempty NUL-terminated fields. Never parse credentials as lines:
+% fgetl can misinterpret characters in a password and is not binary-safe.
+payload = fread(fid, Inf, '*uint8')';
 fclose(fid);
-if ~ischar(username) || isempty(username) || ~ischar(password) || ...
-        isempty(password) || ischar(extra)
-    clear username password
+separators = find(payload == 0);
+if length(separators) ~= 2 || separators(1) <= 1 || ...
+        separators(2) <= separators(1) + 1 || ...
+        separators(2) ~= length(payload)
+    clear payload separators
     error('pseudo_CT:CLISecretShape', 'Private credential input is invalid.');
 end
+username = char(payload(1:separators(1)-1));
+password = char(payload(separators(1)+1:separators(2)-1));
+clear payload separators
 % Remove the terminal staging file before writing the approved one-use MAT.
 local_erase_secret(secret_path);
 handoff = pseudo_CT_credentials('store', username, password);

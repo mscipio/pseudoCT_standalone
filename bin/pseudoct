@@ -2205,7 +2205,9 @@ stage_handoff() {
     secret_dir=$(mktemp -d /dev/shm/pseudoct-cli-credentials-XXXXXX 2>/dev/null) || \
         error_record "$EXIT_AUTH" 'Private memory-backed credential staging is unavailable.'
     chmod 00700 "$secret_dir" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
-    (umask 077; printf '%s\n%s\n' "$username" "$password" > "$secret_dir/login") || \
+    # NUL-delimited fields avoid fgetl/line-ending ambiguity in the R2010b bridge.
+    # Bash variables cannot contain NUL, so this yields exactly two fields.
+    (umask 077; printf '%s\0%s\0' "$username" "$password" > "$secret_dir/login") || \
         error_record "$EXIT_AUTH" 'Credential staging failed.'
     chmod 600 "$secret_dir/login" || error_record "$EXIT_AUTH" 'Credential staging permissions are unsafe.'
     handoff_output=$handoff_registry
