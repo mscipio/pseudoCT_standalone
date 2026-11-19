@@ -351,6 +351,8 @@ sees `ACTIVE`.
 - **Run outcome** (on-disk run record): `SUCCEEDED`, `FAILED` or `CANCELLED`.
 - **Cancellation:** `CANCELLED` appears when a scheduled job is cancelled by the timeout path. An
   interrupted launcher does not cancel an accepted Slurm job (see [Cancellation](#cancellation-and-interruption)).
+- **Progress cancellation:** a subject that has stopped after a user cancellation request is reported with progress
+  `status` `CANCELLED`. The request itself is a `WARN` record, and it does not mark the subject cancelled.
 - **Skipped:** `SKIPPED` carries the reason in `message` (on disk) and in `reason` or `message` (stdout).
 - **Heartbeats:** text output shows `still running` lines. The on-disk file has no heartbeat
   records. Do not use progress frequency as evidence of progress.

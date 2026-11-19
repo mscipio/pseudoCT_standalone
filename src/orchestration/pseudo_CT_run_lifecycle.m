@@ -932,6 +932,9 @@ try
 catch ME
     context = local_subject_context(job, ii, n);
     if task.user_cancelled
+        % The subject has stopped: this is the cancellation outcome. The earlier request
+        % and not-started messages are not terminal and keep their WARN level.
+        context.event_kind = 'cancelled';
         pseudo_CT_output('WARN', context, 'Subject cancelled (elapsed %s).', ...
             local_elapsed(toc(job.subject_started)));
         outcome.markClosed('CANCELLED', 'local-orchestrator');

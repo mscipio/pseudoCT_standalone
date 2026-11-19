@@ -61,7 +61,7 @@ if isfield(context, 'console_profile') && ischar(context.console_profile) && ...
 end
 S = local_source_context(S, context);
 S.context = context;
-S = local_subject_slot(S, local_subject_index(context));
+S = local_subject_slot(S, local_subject_key(context));
 if isfield(context, 'stage_map') && isstruct(context.stage_map) && isscalar(context.stage_map)
     S.stage_map = context.stage_map;
 end
@@ -102,6 +102,24 @@ if isfield(context, 'subject_index') && isnumeric(context.subject_index) && ...
         isscalar(context.subject_index) && isfinite(context.subject_index) && ...
         context.subject_index >= 1 && context.subject_index == floor(context.subject_index)
     idx = context.subject_index;
+end
+end
+
+function idx = local_subject_key(context)
+% Slot key: 0 is the batch (run-level) pseudo-subject. Its state is kept apart from
+% every subject, so a batch line never marks subject 1 terminal or dedupes against it.
+idx = 0;
+if isfield(context, 'subject_index') && ~isempty(context.subject_index)
+    idx = local_subject_index(context);
+end
+end
+
+function label = local_row_subject(context)
+% Table subject column: S<n> for a subject, RUN for a batch-level line.
+if isfield(context, 'subject_index') && ~isempty(context.subject_index)
+    label = sprintf('S%02d', local_subject_index(context));
+else
+    label = 'RUN';
 end
 end
 
@@ -1151,7 +1169,7 @@ if length(c.ts) >= 19
     stamp = c.ts(12:19);
 end
 prefix = sprintf('%-8s %-7s %-7s %-9s ', stamp, ...
-    sprintf('S%02d', local_subject_index(c.context)), label, c.status);
+    local_row_subject(c.context), label, c.status);
 continuation = sprintf('%-8s %-7s %-7s %-9s ', '', '', '', c.status);
 lead = '';
 body = c.text;
