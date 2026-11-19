@@ -1730,7 +1730,7 @@ run_headless() {
     # own session and is signalled only by the transport.
     { exec "$python_bin" -I -B - "$self" "$request_path" \
         "$result_path" "$format" "$tmp_dir/matlab-diagnostics-${4:-$phase}.log" \
-        "$invocation_id" "$run_log_index" "$profile" \
+        "$invocation_id" "$run_log_index" "$profile" "$phase" \
         ${headless_args[@]+"${headless_args[@]}"} <<'PY'
 import json
 import os
@@ -1739,11 +1739,13 @@ import selectors
 import signal
 import subprocess
 import sys
+import time
 
 launcher, request_path, result_path, output_format, diagnostics_path, \
     invocation_id, run_log_index, run_profile = sys.argv[1:9]
+phase = sys.argv[9] if len(sys.argv) > 9 else ""
 # Optional installed-standalone selection (--mcr / --mcr-root) follows the fixed arguments.
-launcher_args = sys.argv[9:]
+launcher_args = sys.argv[10:]
 environment = os.environ.copy()
 environment["PSEUDOCT_CLI_OUTPUT"] = "1"
 # Non-secret correlation only: names the per-run log and a private index of
@@ -1761,7 +1763,7 @@ cancel_file = os.environ.get("PSEUDOCT_TRANSPORT_CANCEL_FILE", "")
 graceful = bool(cancel_file)
 if graceful:
     environment["PSEUDOCT_CANCEL_FILE"] = cancel_file
-interrupts = {"count": 0, "process": None}
+interrupts = {"count": 0, "process": None, "notices": []}
 
 def on_interrupt(signum, frame):
     process = interrupts["process"]
@@ -1773,9 +1775,9 @@ def on_interrupt(signum, frame):
             os.close(os.open(cancel_file, os.O_WRONLY | os.O_CREAT, 0o600))
         except OSError:
             pass
-        print("pseudoct: cancellation requested; no further subject will start and "
-              "active subjects are being cancelled (interrupt again to abort at once).",
-              file=sys.stderr, flush=True)
+        interrupts["notices"].append(
+            "pseudoct: cancellation requested; no further subject will start and "
+            "active subjects are being cancelled (interrupt again to abort at once).")
         return
     try:
         os.killpg(process.pid, signal.SIGTERM if graceful else signum)
@@ -1789,11 +1791,11 @@ def on_interrupt(signum, frame):
         except OSError:
             pass
         if jobs:
-            print("pseudoct: run aborted; Slurm job(s) %s may still be running. "
-                  "To cancel them, run: scancel %s" % (" ".join(jobs), " ".join(jobs)),
-                  file=sys.stderr, flush=True)
+            interrupts["notices"].append(
+                "pseudoct: run aborted; Slurm job(s) %s may still be running. "
+                "To cancel them, run: scancel %s" % (" ".join(jobs), " ".join(jobs)))
         else:
-            print("pseudoct: run aborted.", file=sys.stderr, flush=True)
+            interrupts["notices"].append("pseudoct: run aborted.")
 
 # The public stage of a Local Current event (10 stages with DICOM output, 9
 # for NIfTI-only) is assigned by the Local Current adapter/orchestrator and
@@ -1903,6 +1905,11 @@ def sanitize_console_line(text):
 
 def forward_line(text, channel):
     safe_text = sanitize_console_line(text)
+    # Child/runtime control sequences are not useful in a redirected text log.
+    # This does not query the terminal or alter the JSONL event stream.
+    if output_format == "text" and channel == "stdout" and not sys.stdout.isatty():
+        safe_text = re.sub(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))",
+                           "", safe_text)
     print(safe_text, end="" if text.endswith(("\n", "\r")) else "\n",
           file=sys.stderr if channel == "stderr" else sys.stdout, flush=True)
 
@@ -1946,6 +1953,289 @@ def is_header_continuation(text):
                                            "TIME      SUBJECT STAGE")) or
             value == "-" * 67)
 
+# Presentation only. MATLAB continues to own the per-subject .log/.jsonl event
+# pipeline; no file logging or scientific-event generation changes here.
+class BatchProgress:
+    ROW = re.compile(
+        r"^(\d\d:\d\d:\d\d|--:--:--)\s+(S\d+)\s+"
+        r"(?:\[(\d+)/(\d+)\]\s+)?"
+        r"(ACTIVE|DONE|SKIPPED|INFO|WARN|ERROR|CANCELLED|VERIFIED)\s+(.*)$")
+    STAGES = {
+        1: "Input MPRAGE", 2: "Recentering", 3: "Aliasing correction",
+        4: "FreeSurfer", 5: "Alignment / mask", 6: "SPM New Segment",
+        7: "DARTEL", 8: "Attenuation map", 9: "DICOM output",
+        10: "Final outputs",
+    }
+
+    def __init__(self):
+        names = []
+        try:
+            with open(os.environ["PSEUDOCT_PROGRESS_IDS"], encoding="utf-8") as f:
+                names = ["".join(c if c.isprintable() else "?" for c in line.strip())
+                         for line in f if line.strip()]
+        except (KeyError, OSError, UnicodeError):
+            pass
+        count = len(names)
+        try:
+            with open(os.environ["PSEUDOCT_PROGRESS_REQUEST"], encoding="utf-8") as f:
+                for line in (f.readline(), f.readline()):
+                    pass
+                count = int(f.readline().strip())
+        except (KeyError, OSError, ValueError):
+            count = max(1, len(names))
+        count = max(count, len(names), 1)
+        self.names = names + ["subject-%d" % i for i in range(len(names) + 1, count + 1)]
+        self.rows = [dict(stage="-", state="QUEUED", start=None, stop=None,
+                          stage_no=None, stage_start=None, durations={})
+                     for _ in self.names]
+        self.name_width = min(22, max(12, max(map(len, self.names))))
+        self.profile = run_profile
+        self.limit = max(1, int(os.environ.get("PSEUDOCT_PROGRESS_MAX", "1") or "1"))
+        self.since = time.monotonic()
+        self.last = 0.0
+        self.last_frame = 0
+        self.frame_size = None
+        self.dirty = True
+        self.finished = False
+        self.suppress_continuation = False
+        requested = os.environ.get("PSEUDOCT_PROGRESS_MODE", "").lower()
+        if requested not in ("live", "append", "events", ""):
+            requested = ""
+        self.live = (requested != "append" and sys.stdout.isatty() and
+                     os.environ.get("TERM", "") != "dumb")
+        if requested == "events":
+            self.live = False
+        self.interval = 10 if self.live else 180
+
+    def consume(self, candidate, raw_text):
+        if TABLE_CONTINUATION.match(raw_text.rstrip("\r\n")):
+            return self.suppress_continuation
+        self.suppress_continuation = False
+        line = candidate.rstrip("\r\n")
+        if TABLE_HEADER.match(line) or TABLE_RULE.match(line):
+            return True
+        match = self.ROW.match(line)
+        if match is None:
+            return False
+        _timestamp, subject, stage, total, level, message = match.groups()
+        index = int(subject[1:]) - 1
+        if index < 0 or index >= len(self.rows):
+            return False
+        row = self.rows[index]
+        now = time.monotonic()
+        prev_state = row["state"]
+        prev_stage = row["stage"]
+        if stage is not None:
+            number = int(stage)
+            if number != row["stage_no"]:
+                # Stage time restarts only on a stage transition. Heartbeats
+                # and INFO rows carry no stage label, so they never reset it.
+                self.end_stage(row, now)
+                row["stage_no"] = number
+                row["stage_start"] = now if level == "ACTIVE" else None
+            elif level == "ACTIVE" and row["stage_start"] is None:
+                row["stage_start"] = now
+            row["stage"] = "%s/%s %s" % (
+                stage, total, self.STAGES.get(number, "Processing"))
+        if level == "ACTIVE":
+            if row["start"] is None:
+                row["start"] = now
+            row["state"] = "PREPARING" if stage == "1" else "RUNNING"
+        elif level == "VERIFIED" and "subject completed" in message.lower():
+            row["state"] = "SUCCEEDED"
+            self.end_stage(row, now)
+            row["stop"] = now
+        elif level == "ERROR" and ("subject did not complete" in message.lower() or
+                                   "subject failed" in message.lower()):
+            row["state"] = "FAILED"
+            row["stop"] = now
+        elif level == "CANCELLED":
+            row["state"] = "CANCELLED"
+            row["stop"] = now
+        elif level == "INFO" and "state pending" in message.lower():
+            row["state"] = "PENDING"
+        elif level == "INFO" and "state running" in message.lower():
+            row["state"] = "RUNNING"
+            if row["start"] is None:
+                row["start"] = now
+        if row["state"] != prev_state or row["stage"] != prev_stage:
+            self.dirty = True
+        self.tick()
+        # Warnings and errors remain individually visible, rather than being
+        # hidden by the batch summary. The upstream file logs are untouched.
+        keep = level in ("WARN", "ERROR") or \
+            "subject completed" in message.lower() or \
+            "run completed" in message.lower()
+        self.suppress_continuation = not keep
+        return not keep
+
+    @staticmethod
+    def elapsed(seconds):
+        seconds = int(max(0, seconds))
+        return "%02d:%02d:%02d" % (seconds // 3600, (seconds // 60) % 60,
+                                     seconds % 60)
+
+    @staticmethod
+    def end_stage(row, now):
+        # Record a completed stage only when its start was observed and the
+        # subject has not stopped. Nothing is inferred for other stages.
+        if row["stage_no"] is not None and row["stage_start"] is not None \
+                and row["stop"] is None:
+            row["durations"][row["stage_no"]] = now - row["stage_start"]
+
+    def frame(self):
+        now = time.monotonic()
+        counts = {state: sum(r["state"] == state for r in self.rows)
+                  for state in ("SUCCEEDED", "FAILED", "CANCELLED", "QUEUED")}
+        running = len(self.rows) - sum(counts.values())
+        header = "pseudoCT | %s | %d subjects | max %d | Batch elapsed %s" % (
+            self.profile, len(self.rows), self.limit, self.elapsed(now - self.since))
+        nw = self.name_width
+        head = "%-*s %-24s %-11s %10s %8s" % (
+            nw, "SUBJECT", "STAGE", "STATUS", "STAGE TIME", "TOTAL")
+        lines = ["", header, head, "-" * len(head)]
+        selected = list(range(len(self.rows)))
+        if self.live and len(selected) > 12:
+            # Keep active work visible on smaller terminals.
+            active = [i for i in selected if self.rows[i]["state"] not in
+                      ("QUEUED", "SUCCEEDED", "FAILED", "CANCELLED")]
+            selected = (active + [i for i in selected if i not in active])[:12]
+        for index in selected:
+            row = self.rows[index]
+            stage_time = "-" if row["stage_start"] is None else self.elapsed(
+                (row["stop"] or now) - row["stage_start"])
+            total = "-" if row["start"] is None else self.elapsed(
+                (row["stop"] or now) - row["start"])
+            lines.append("%-*.*s %-24.24s %-11.11s %10s %8s" % (
+                nw, nw, self.names[index], row["stage"], row["state"],
+                stage_time, total))
+        if len(selected) < len(self.rows):
+            lines.append("... %d more subjects" % (len(self.rows) - len(selected)))
+        lines.append("Active %d | Queued %d | Completed %d/%d | Failed %d | Cancelled %d" % (
+            running, counts["QUEUED"], counts["SUCCEEDED"], len(self.rows),
+            counts["FAILED"], counts["CANCELLED"]))
+        lines.append("-" * len(head))
+        if self.finished:
+            lines.append("Batch process exited; consult the final result for verification.")
+        lines.append("")
+        return lines
+
+    def summary_lines(self):
+        # Per-subject totals and completed-stage durations. A duration is shown
+        # only when its start and end were both observed; otherwise "-".
+        nw = self.name_width
+        head = "%-*s %-11s %8s %8s %8s" % (
+            nw, "SUBJECT", "STATUS", "TOTAL", "SPM", "DARTEL")
+        lines = ["Subject summary (SPM = stage 6 SPM New Segment; DARTEL = stage 7)",
+                 head, "-" * len(head)]
+        shown = self.rows[:20]
+        for index, row in enumerate(shown):
+            total = "-" if row["start"] is None or row["stop"] is None else \
+                self.elapsed(row["stop"] - row["start"])
+            spm = self.elapsed(row["durations"][6]) if 6 in row["durations"] else "-"
+            dartel = self.elapsed(row["durations"][7]) if 7 in row["durations"] else "-"
+            lines.append("%-*.*s %-11.11s %8s %8s %8s" % (
+                nw, nw, self.names[index], row["state"], total, spm, dartel))
+        if len(self.rows) > len(shown):
+            lines.append("... %d more subjects; see the per-subject logs" % (
+                len(self.rows) - len(shown)))
+        return lines
+
+    def clear_display(self):
+        if self.live and self.last_frame:
+            try:
+                size = os.get_terminal_size(sys.stdout.fileno())
+            except OSError:
+                size = None
+            if size != self.frame_size:
+                # A resized terminal can reflow the old frame. Its physical
+                # height is unknowable without a cursor query: never erase it.
+                self.last_frame = 0
+                self.live = False
+                self.interval = 180
+                sys.stdout.write("\n")
+                return
+            sys.stdout.write("\x1b[%dA\r\x1b[J" % self.last_frame)
+            self.last_frame = 0
+
+    def tick(self, force=False):
+        now = time.monotonic()
+        if not force and self.last and now - self.last < self.interval and \
+                (not self.live or not self.dirty):
+            return
+        if not force and self.last and not self.live and now - self.last < self.interval:
+            return
+        lines = self.frame()
+        if self.live:
+            # Never guess wrapped physical line counts: fall back to snapshots
+            # if the complete frame cannot fit in the current terminal.
+            try:
+                size = os.get_terminal_size(sys.stdout.fileno())
+                # The frame is normally ASCII (manifest identifiers are
+                # restricted to ASCII). Fall back rather than guessing cell
+                # widths if any unexpected wide or combining character occurs.
+                fits = len(lines) < size.lines and all(
+                    line.isascii() and len(line) < size.columns for line in lines)
+            except OSError:
+                fits = False
+            if not fits:
+                self.clear_display()
+                self.live = False
+                self.interval = 180
+                lines = self.frame()
+        if self.live:
+            self.clear_display()
+            if not self.live:
+                lines = self.frame()
+        if not self.live:
+            lines = lines[:-1]
+        sys.stdout.write("\n".join(lines) + "\n")
+        sys.stdout.flush()
+        self.last_frame = len(lines) if self.live else 0
+        self.frame_size = size if self.live else None
+        self.last = now
+        self.dirty = False
+
+    def before_external_line(self):
+        self.clear_display()
+        sys.stdout.flush()
+
+    def after_external_line(self):
+        if self.live and self.last:
+            self.tick(force=True)
+
+    def finish(self):
+        if self.last:
+            self.finished = True
+            self.tick(force=True)
+            # The last table stays as a static record; the summary follows it.
+            # A live frame already ends with a blank line; a snapshot does not.
+            block = self.summary_lines()
+            if not self.live:
+                block = [""] + block
+            self.live = False
+            self.last_frame = 0
+            sys.stdout.write("\n".join(block) + "\n")
+            sys.stdout.flush()
+
+# Only the submit text stream is summarized. JSONL stays machine-readable,
+# authenticate/validate output and all on-disk scientific logs are unchanged.
+progress = None
+if phase == "submit" and output_format == "text" and \
+        os.environ.get("PSEUDOCT_PROGRESS_MODE", "").lower() != "events":
+    progress = BatchProgress()
+
+def stderr_notice(message):
+    if progress is not None:
+        progress.before_external_line()
+    print(message, file=sys.stderr, flush=True)
+    if progress is not None:
+        progress.after_external_line()
+
+def flush_notices():
+    while interrupts["notices"]:
+        stderr_notice(interrupts["notices"].pop(0))
+
 class RedactingWriter:
     def __init__(self, stream):
         self.stream = stream
@@ -1967,12 +2257,18 @@ def write_line(channel, raw, diagnostics):
         # The headless exception identifier, message and stack are the only
         # diagnostics for a failed operation; keep them on the caller's stderr.
         if text.startswith("pseudoct-headless:"):
+            if progress is not None:
+                progress.before_external_line()
             forward_line(text, "stderr")
+            if progress is not None:
+                progress.after_external_line()
         return
     candidate = strip_prompts(text)
     if matlab_noise(candidate):
         diagnostics.write("[" + channel + "] " + text)
         diagnostics.flush()
+        return
+    if channel == "stdout" and progress is not None and progress.consume(candidate, text):
         return
     if channel == "stdout" and BARE_COMPILED_MARKER.search(candidate) and \
             not candidate.lstrip().startswith("{") and \
@@ -2056,11 +2352,15 @@ def write_line(channel, raw, diagnostics):
         try:
             value = json.loads(candidate)
         except Exception:
+            if progress is not None:
+                progress.before_external_line()
             if TABLE_CONTINUATION.match(text.rstrip("\r\n")):
                 forward_line(text, "stdout")
-                return
-            body = candidate.rstrip("\r\n")
-            forward_line(remap_table_row(body) + candidate[len(body):], "stdout")
+            else:
+                body = candidate.rstrip("\r\n")
+                forward_line(remap_table_row(body) + candidate[len(body):], "stdout")
+            if progress is not None:
+                progress.after_external_line()
         else:
             if isinstance(value, dict) and value.get("type") == "progress":
                 message = remap_stage_markers(
@@ -2098,7 +2398,7 @@ try:
         selector.register(stream, selectors.EVENT_READ, channel)
         streams[stream.fileno()] = {"channel": channel, "stream": stream, "pending": b""}
     while selector.get_map():
-        for key, _ in selector.select():
+        for key, _ in selector.select(timeout=1.0):
             stream = key.fileobj
             state = streams[stream.fileno()]
             chunk = os.read(stream.fileno(), 4096)
@@ -2112,7 +2412,11 @@ try:
             while b"\n" in state["pending"]:
                 line, state["pending"] = state["pending"].split(b"\n", 1)
                 write_line(state["channel"], line + b"\n", diagnostics)
+        if progress is not None:
+            progress.tick() if progress.last else None
+        flush_notices()
     run_status = process.wait()
+    flush_notices()
 except Exception as error:
     try:
         diagnostics.write("[transport] launcher=" + repr(launcher) +
@@ -2123,6 +2427,9 @@ except Exception as error:
     # The caller maps launch/transport failure to the documented runtime code 69.
     run_status = 69
 finally:
+    flush_notices()
+    if progress is not None:
+        progress.finish()
     if selector is not None:
         try:
             selector.close()
@@ -2474,7 +2781,11 @@ if [ "$action" = run ]; then
         error_record "$EXIT_RUNTIME" 'Direct run preparation produced no request MAT.'
     operation_phase=submit_called
     PSEUDOCT_TRANSPORT_CANCEL_FILE=$cancel_file
-    export PSEUDOCT_TRANSPORT_CANCEL_FILE
+    PSEUDOCT_PROGRESS_IDS=$subject_ids_file
+    PSEUDOCT_PROGRESS_REQUEST=$input_file
+    PSEUDOCT_PROGRESS_MAX=${max_concurrent:-1}
+    export PSEUDOCT_TRANSPORT_CANCEL_FILE PSEUDOCT_PROGRESS_IDS \
+        PSEUDOCT_PROGRESS_REQUEST PSEUDOCT_PROGRESS_MAX
     run_headless submit "$submit_request" "$submit_result"
     submit_launcher_status=$?
     unset PSEUDOCT_TRANSPORT_CANCEL_FILE
@@ -2804,6 +3115,8 @@ if result_path:
 if output_format == "jsonl":
     print(text)
 else:
+    if action == "run":
+        print()
     print("pseudoct " + ("validation" if action == "validate" else "run") + ": " + outcome)
     print("  profile: " + profile)
     print("  headless dispatch returned: yes")

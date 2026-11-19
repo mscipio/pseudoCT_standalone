@@ -263,11 +263,18 @@ Each requested subject gets a set of files in its `MR_PET` folder. Their names s
 
 **Progress**:
 
-- `--format text` (default): progress rows are printed to the console. Each stage row carries the subject
-  index, the stage number `[n/10]` (printed once per stage) and the `STATUS`. Stages that did not run are
-  shown as `SKIPPED` with the reason where known (MPRAGE-only profiles skip stages 9 and 10 by policy);
-  otherwise the reason is `not run`. `WARN` and `ERROR` rows report problems. A `still running (elapsed …)`
-  line shows that a long step is progressing. The final summary gives the outcome, the dispatch and
+- `--format text` (default): during submission, an interactive terminal shows a refreshed batch table with
+  subject identifiers, stage, status and elapsed time. Redirected output, including `| tee`, receives
+  complete snapshots approximately every three minutes and at exit, without terminal refresh codes.
+  In Bash, use `set -o pipefail` or inspect `${PIPESTATUS[0]}` immediately after the pipeline to
+  retain the pseudoct exit status instead of relying on `tee`'s exit status.
+  Warnings and errors remain visible; repetitive heartbeat rows are suppressed. A terminal too small
+  for the table falls back to snapshots. `PSEUDOCT_PROGRESS_MODE=events` retains the original event rows;
+  `PSEUDOCT_PROGRESS_MODE=append` requests snapshots even on a terminal. Full per-subject logs remain
+  available. Batch-level lines, such as a cancellation request or the run summary, are labelled `RUN`,
+  not a subject. A subject that stops after a cancellation request shows `CANCELLED` once it has stopped;
+  a subject that never started is `NOT_STARTED` in the final result. The MATLAB GUI runs this launcher with
+  its output piped, so it receives the same non-terminal snapshots. The final summary gives the outcome, the dispatch and
   submission status, the scientific completion status, the MLSC account and job IDs, and the run-log paths.
   - **Known limitation (MLSC):** post-processing for stage 5 is not reported as a numbered stage. Its work
     appears as `not reported`.
