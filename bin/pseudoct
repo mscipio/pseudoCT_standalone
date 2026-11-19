@@ -1953,11 +1953,29 @@ def is_header_continuation(text):
                                            "TIME      SUBJECT STAGE")) or
             value == "-" * 67)
 
+def clean_run_completion(level, message):
+    # "Run completed" with every requested subject succeeded and nothing failed,
+    # skipped or cancelled. The table and the final summary already show it.
+    text = message.strip().lower()
+    if level not in ("INFO", "VERIFIED") or not text.startswith("run completed:"):
+        return False
+    counts = {}
+    for number, name in re.findall(
+            r"(\d+)\s+(requested|started|succeeded|failed|cancelled|skipped)\b", text):
+        counts[name] = int(number)
+    for name, number in re.findall(
+            r"\b(requested|started|succeeded|failed|cancelled|skipped)\s+(\d+)", text):
+        counts[name] = int(number)
+    requested = counts.get("requested", 0)
+    return (requested > 0 and counts.get("succeeded") == requested and
+            counts.get("failed", 0) == 0 and counts.get("cancelled", 0) == 0 and
+            counts.get("skipped", 0) == 0)
+
 # Presentation only. MATLAB continues to own the per-subject .log/.jsonl event
 # pipeline; no file logging or scientific-event generation changes here.
 class BatchProgress:
     ROW = re.compile(
-        r"^(\d\d:\d\d:\d\d|--:--:--)\s+(S\d+)\s+"
+        r"^(\d\d:\d\d:\d\d|--:--:--)\s+(S\d+|RUN)\s+"
         r"(?:\[(\d+)/(\d+)\]\s+)?"
         r"(ACTIVE|DONE|SKIPPED|INFO|WARN|ERROR|CANCELLED|VERIFIED)\s+(.*)$")
     STAGES = {
@@ -2018,6 +2036,9 @@ class BatchProgress:
         if match is None:
             return False
         _timestamp, subject, stage, total, level, message = match.groups()
+        if subject == "RUN":
+            self.suppress_continuation = clean_run_completion(level, message)
+            return self.suppress_continuation
         index = int(subject[1:]) - 1
         if index < 0 or index >= len(self.rows):
             return False
@@ -2063,9 +2084,11 @@ class BatchProgress:
         self.tick()
         # Warnings and errors remain individually visible, rather than being
         # hidden by the batch summary. The upstream file logs are untouched.
-        keep = level in ("WARN", "ERROR") or \
-            "subject completed" in message.lower() or \
-            "run completed" in message.lower()
+        # A batch completion that is not clean is kept wherever its row is attributed,
+        # including rows an older presenter still labels with a subject.
+        batch_text = message.lower().startswith("run completed:")
+        keep = level in ("WARN", "ERROR", "CANCELLED") or \
+            (batch_text and not clean_run_completion(level, message))
         self.suppress_continuation = not keep
         return not keep
 

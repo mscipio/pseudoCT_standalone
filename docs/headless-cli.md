@@ -268,7 +268,8 @@ Each requested subject gets a set of files in its `MR_PET` folder. Their names s
   complete snapshots approximately every three minutes and at exit, without terminal refresh codes.
   In Bash, use `set -o pipefail` or inspect `${PIPESTATUS[0]}` immediately after the pipeline to
   retain the pseudoct exit status instead of relying on `tee`'s exit status.
-  Warnings and errors remain visible; repetitive heartbeat rows are suppressed. A terminal too small
+  Warnings and errors remain visible; repetitive heartbeat rows are suppressed. A successful subject or
+  batch completion is shown by the table and the final summary rather than repeated. A terminal too small
   for the table falls back to snapshots. `PSEUDOCT_PROGRESS_MODE=events` retains the original event rows;
   `PSEUDOCT_PROGRESS_MODE=append` requests snapshots even on a terminal. Full per-subject logs remain
   available. Batch-level lines, such as a cancellation request or the run summary, are labelled `RUN`,
