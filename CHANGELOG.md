@@ -1,10 +1,10 @@
-3.2.0
+3.3.0
 
 # pseudoCT — Version History
 
 This concise history identifies the major change associated with each version. The complete technical and development history is maintained in `docs/CHANGELOG_DETAILED.md` in the source repository. Exact processing provenance is recorded separately in the application's version metadata, logs, and package manifest.
 
-- **3.3.0 (unreleased)** — Added multi-subject GUI/CLI inputs, concurrent local and MLSC processing, per-subject progress and results, and a bundled Python runtime.
+- **3.3.0** — Added multi-subject GUI/CLI inputs, concurrent local and MLSC processing, per-subject progress and results, and a bundled Python runtime.
 - **3.2.0 (unpublished)** — Consolidated scientific worker naming, cleaned up the standalone architecture, and clarified build and deployment requirements.
 - **3.2.0-rc2 (prerelease)** — Corrected the MLSC MPRAGE-only workflow and validated reuse of its retained compiled artifact.
 - **3.2.0-rc1 (prerelease)** — Introduced unified standalone release-archive assembly around the retained compiled payload.

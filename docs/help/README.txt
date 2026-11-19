@@ -1,4 +1,4 @@
-PseudoCT help page (pseudoCT 3.2.0, unpublished prerelease source)
+PseudoCT help page (pseudoCT 3.3.0, unpublished source)
 ====================================================================
 
 This folder is a dependency-free static website. It documents the repository
