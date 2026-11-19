@@ -11,5 +11,6 @@ deprecated export-ignore
 deprecated/Makefile export-ignore
 docs/AGENTS.md export-ignore
 docs/TODO.md export-ignore
+docs/CHANGELOG_DETAILED.md export-ignore
 aria.json export-ignore
 .codegraph/ export-ignore
