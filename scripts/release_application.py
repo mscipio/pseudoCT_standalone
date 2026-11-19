@@ -1099,6 +1099,7 @@ def manifest_shape_problems(manifest):
 
 def verify_package(pkg):
     """Return a list of problems; an empty list means the distribution is valid."""
+    pkg = os.path.abspath(pkg)
     if not os.path.isdir(pkg):
         return ['not a directory: %s' % pkg]
     manifest_path = os.path.join(pkg, MANIFEST_NAME)
