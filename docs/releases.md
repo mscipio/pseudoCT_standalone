@@ -83,6 +83,7 @@ Each `--mcr` value must be one of these exact labels.
 pseudoct-<version>/
   bin/pseudoct                                       the only public launcher (copied)
   run_pseudo_CT.m                                    MATLAB frontend (copied from the repository)
+  CHANGELOG.md                                       concise version history (copied from the repository root; line 1 is the bare version)
   frontend/                                          MATLAB frontend files (copied verbatim)
   help/index.html, help/style.css                    help documents from docs/help (docs/help/assets/ is never shipped)
   runtimes/<LABEL>/pseudoct_pipeline                   compiled science pipeline (shared by local and MLSC)

@@ -9,6 +9,8 @@ assembles one distribution directory from the verified build output only:
       bin/pseudoct                                  (the public launcher, copied)
       run_pseudo_CT.m                               (MATLAB frontend, copied)
       README.md                                     (user README, copied from the repo root)
+      CHANGELOG.md                                  (concise version history, copied from the repo root;
+                                                     line 1 is the bare version that processing reads)
       frontend/<allowlisted files>                  (MATLAB frontend, copied verbatim)
       help/index.html, help/style.css               (help documents from docs/help/;
                                                      docs/help/assets/ is never shipped)
@@ -110,6 +112,11 @@ FRONTEND_ENTRY_SOURCE = os.path.join(REPO_ROOT, FRONTEND_ENTRY)
 # User README, shipped at the package root from the repository root.
 README_NAME = 'README.md'
 README_SOURCE = os.path.join(REPO_ROOT, README_NAME)
+# Concise version history, shipped at the package root. Processing copies it into each
+# output folder and reads its line 1 (the bare version). docs/CHANGELOG_DETAILED.md is
+# repository-only and is never listed here.
+CHANGELOG_NAME = 'CHANGELOG.md'
+CHANGELOG_SOURCE = os.path.join(REPO_ROOT, CHANGELOG_NAME)
 BUNDLED_LOCK_NAME = 'dependencies.lock.json'
 BUNDLED_LOCK_SOURCE = os.path.join(REPO_ROOT, BUNDLED_LOCK_NAME)
 DOC_FILES = (
@@ -343,7 +350,7 @@ def frontend_files_on_disk():
 def check_sources():
     """Raise unless the launcher, runner, entry point, build script and copied sources exist
     and frontend/ holds exactly the FRONTEND_OWN files."""
-    for path in (LAUNCHER_SOURCE, RUNNER_SOURCE, FRONTEND_ENTRY_SOURCE, README_SOURCE, BUILDER_SCRIPT, BUNDLED_LOCK_SOURCE,
+    for path in (LAUNCHER_SOURCE, RUNNER_SOURCE, FRONTEND_ENTRY_SOURCE, README_SOURCE, CHANGELOG_SOURCE, BUILDER_SCRIPT, BUNDLED_LOCK_SOURCE,
                  *[os.path.join(DOC_DIR, name) for name in DOC_FILES],
                  *FRONTEND_FROM_SRC.values(), *[os.path.join(HELP_DIR, name) for name in HELP_FILES],
                  *[os.path.join(SSH2_SOURCE_ROOT, *rel.split('/')) for rel in SSH2_FILES]):
@@ -711,6 +718,7 @@ def assemble(version, selected, roots, default, catalog_entries, output_dir, pyt
         copy_file(LAUNCHER_SOURCE, os.path.join(pkg, *LAUNCHER_REL.split('/')), 0o755)
         copy_file(FRONTEND_ENTRY_SOURCE, os.path.join(pkg, FRONTEND_ENTRY), 0o644)
         copy_file(README_SOURCE, os.path.join(pkg, README_NAME), 0o644)
+        copy_file(CHANGELOG_SOURCE, os.path.join(pkg, CHANGELOG_NAME), 0o644)
         copy_file(BUNDLED_LOCK_SOURCE, os.path.join(pkg, BUNDLED_LOCK_NAME), 0o644)
         for name in DOC_FILES:
             copy_file(os.path.join(DOC_DIR, name),
@@ -790,9 +798,9 @@ def print_plan(version, selected, roots, output_dir, python_runtime):
             print('PLAN %s static Java classpath: %s/p/javaclasspath.txt -> %s'
                   % (label, temp_root, SSH2_JAR))
         print('PLAN %s cleanup: remove only its private environment directory on exit' % label)
-    print('PLAN ship: %s, %s, %s, %s, docs/ (%d files), frontend/ (%d files), help/ (%d files), %s/ (%d files), resources/, '
+    print('PLAN ship: %s, %s, %s, %s, %s, docs/ (%d files), frontend/ (%d files), help/ (%d files), %s/ (%d files), resources/, '
           'manifest.json, SHA256SUMS'
-          % (LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, BUNDLED_LOCK_NAME,
+          % (LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, CHANGELOG_NAME, BUNDLED_LOCK_NAME,
              len(DOC_FILES), len(FRONTEND_FILES), len(HELP_FILES),
              SSH2_ROOT_REL, len(SSH2_FILES)))
     python_pin, python_archive = python_runtime
@@ -1015,7 +1023,7 @@ def forbidden(rel):
 def path_allowed(rel, labels):
     """The shipped allowlist: launcher, entry point, frontend files, help documents, the
     release runtime files of the listed labels, and the atlas resources."""
-    if rel in (LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, BUNDLED_LOCK_NAME):
+    if rel in (LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, CHANGELOG_NAME, BUNDLED_LOCK_NAME):
         return True
     if rel.startswith('docs/') and rel[len('docs/'):] in DOC_FILES:
         return True
@@ -1037,7 +1045,7 @@ def path_allowed(rel, labels):
 
 
 def required_paths(labels):
-    paths = [LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, BUNDLED_LOCK_NAME]
+    paths = [LAUNCHER_REL, FRONTEND_ENTRY, README_NAME, CHANGELOG_NAME, BUNDLED_LOCK_NAME]
     paths += ['docs/' + name for name in DOC_FILES]
     paths += ['frontend/' + rel for rel in FRONTEND_FILES]
     paths += ['help/' + name for name in HELP_FILES]
