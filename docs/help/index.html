@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PseudoCT — Martinos PET/MR Help</title>
-    <meta name="description" content="Operator guide for pseudoCT 3.3.0 PET/MR attenuation correction (unpublished source)." />
+    <meta name="description" content="Operator guide for pseudoCT v3.3.0 PET/MR attenuation-correction operator guide." />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -57,10 +57,10 @@
             at the Athinoula A. Martinos Center for Biomedical Imaging.
           </p>
           <div class="callout info">
-            <strong>Version and verification status</strong>
-            <p>This page describes pseudoCT 3.3.0 as documented in the repository. Version 3.3.0 has not yet been published. This page is not a release, deployment or certification statement.</p>
-            <p>A compiled R2010b local run is reported as verified by the maintainer against v3.0.2. No evidence file for that run is included in the repository.</p>
-            <p>The MLSC submission path is implemented and tested offline. It has <strong>not</strong> been independently verified against a live scheduler.</p>
+            <strong>Version and scientific validation</strong>
+            <p><a href="https://github.com/mscipio/pseudoCT_standalone/releases/tag/v3.3.0">pseudoCT v3.3.0 was published on November 20, 2026</a>. Compiled Linux x86-64 backends are included for R2010b, R2019b, R2022a and R2026a.</p>
+            <p>The final installed R2010b distribution completed an end-to-end local reconstruction in 32:12, produced NIfTI and DICOM output, and matched the accepted reference attenuation map exactly across 4,832,774 active voxels. This is a dataset-specific regression result, not general clinical validation.</p>
+            <p>MLSC batch processing was accepted on an earlier integration build; full end-to-end scientific validation of the final release archive was performed on R2010b local only. The other three MATLAB backends were compiled and package-verified, not independently reconstructed end to end.</p>
           </div>
           <div class="callout recommendation">
             <strong>Before processing</strong>
@@ -77,15 +77,29 @@
           <p class="small-note">When using the method, cite the publication, and acknowledge the software and its maintainers as appropriate. See <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/scientific-notes.md#method-and-attribution">Scientific notes</a>.</p>
 
           <h3>Requirements and distribution</h3>
-          <p>An installed release runs on its own MATLAB Runtime. The default release, R2010b, runs on MATLAB Runtime 7.14. The other releases (R2014a to R2026a) are listed in the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md#supported-exact-release-labels">release catalog</a>. A source checkout is for development only.</p>
+          <p>An installed release runs on its own MATLAB Runtime. The default release, R2010b, runs on MATLAB Runtime 7.14. This v3.3.0 archive also includes R2019b, R2022a and R2026a. The full release catalog is in the <a href="https://github.com/mscipio/pseudoCT_standalone/blob/main/docs/releases.md#supported-exact-release-labels">release catalog</a>. A source checkout is for development only.</p>
         </section>
 
         <section id="quick-start">
           <h2>Quick start</h2>
+<div class="doc-shot-gallery">
+  <figure class="doc-shot">
+    <a href="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/input-empty.png" target="_blank" rel="noopener noreferrer" aria-label="Open screenshot: Actual empty v3.3.0 subject-entry window"><img src="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/input-empty.png" alt="Actual empty v3.3.0 subject-entry window" loading="lazy" decoding="async" /></a>
+    <figcaption>The subject-entry window before adding inputs; processing options appear below.</figcaption>
+  </figure>
+  <figure class="doc-shot">
+    <a href="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/manual-subjects.png" target="_blank" rel="noopener noreferrer" aria-label="Open screenshot: De-identified subject-entry example with two subjects and suggested UMAPs"><img src="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/manual-subjects.png" alt="De-identified subject-entry example with two subjects and suggested UMAPs" loading="lazy" decoding="async" /></a>
+    <figcaption>Manual entry with two generic subjects. Original file paths and DICOM identifiers were replaced for publication.</figcaption>
+  </figure>
+  <figure class="doc-shot">
+    <a href="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/subjects-file-mode.png" target="_blank" rel="noopener noreferrer" aria-label="Open screenshot: Actual subjects-file input mode before a file is selected"><img src="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/subjects-file-mode.png" alt="Actual subjects-file input mode before a file is selected" loading="lazy" decoding="async" /></a>
+    <figcaption>Switch to a subjects file to import a reusable multi-subject list.</figcaption>
+  </figure>
+</div>
           <ol class="steps">
             <li>
               <strong>Load the installed application.</strong>
-              <pre><code>addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-latest')
+              <pre><code>addpath('/usr/pubsw/packages/mrpet/standalone_apps/PseudoCT/pseudoCT_standalone-3.3.0')
 run_pseudo_CT</code></pre>
               <p>A profile selector opens first. Choose one of the four profiles.</p>
             </li>
@@ -98,7 +112,7 @@ run_pseudo_CT</code></pre>
             <li><strong>Check the UMAP references</strong> (standard profiles only). When you set an MPRAGE and the subject's UMAP is still empty, the window looks for a matching UMAP beside the MPRAGE and suggests it (marked <em>(suggested)</em> in the list). It never replaces a UMAP you chose. If none is found, select the UMAP yourself. MPRAGE-only profiles do not use a UMAP.</li>
             <li><strong>Check the processing options.</strong> The defaults come from the profile.</li>
             <li>
-              <strong>Click Run.</strong> Run first checks the whole subject list (paths and DICOM series; <em>Check subjects</em> does the same without running) and lists every error if it is not valid. It then validates the profile, the inputs, the outputs and the dependencies. Validation does not log in, contact remote services or run processing. Subjects are processed one after another.
+              <strong>Click Run.</strong> Run first checks the whole subject list (paths and DICOM series; <em>Check subjects</em> does the same without running) and lists every error if it is not valid. It then validates the profile, the inputs, the outputs and the dependencies. Validation does not log in, contact remote services or run processing. By default one subject runs at a time; increase <em>Subjects at once</em> (or <code>--max-concurrent</code>) to process multiple subjects concurrently, subject to available computing resources.
               <ul class="checklist">
                 <li>Local profiles: Run submits the request as soon as validation passes.</li>
                 <li>MLSC profiles: Run validates first. Only after validation passes does a login dialog ask for your username, your password and an optional group account. Then the job is submitted once.</li>
@@ -114,6 +128,20 @@ run_pseudo_CT</code></pre>
 
         <section id="profiles">
           <h2>Choosing a profile</h2>
+<div class="doc-shot-gallery">
+  <figure class="doc-shot">
+    <a href="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/profile-standard.png" target="_blank" rel="noopener noreferrer" aria-label="Open screenshot: Actual v3.3.0 profile selector with standard MLSC and local choices"><img src="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/profile-standard.png" alt="Actual v3.3.0 profile selector with standard MLSC and local choices" loading="lazy" decoding="async" /></a>
+    <figcaption>Actual v3.3.0 profile selection: standard MPRAGE + UMAP processing.</figcaption>
+  </figure>
+  <figure class="doc-shot">
+    <a href="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/profile-expanded.png" target="_blank" rel="noopener noreferrer" aria-label="Open screenshot: Expanded MPRAGE-only profile choices"><img src="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/profile-expanded.png" alt="Expanded MPRAGE-only profile choices" loading="lazy" decoding="async" /></a>
+    <figcaption>MPRAGE-only modes expanded for NIfTI-only output.</figcaption>
+  </figure>
+  <figure class="doc-shot">
+    <a href="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/runtime-selector.png" target="_blank" rel="noopener noreferrer" aria-label="Open screenshot: Runtime selector showing the four compiled MATLAB backends"><img src="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/runtime-selector.png" alt="Runtime selector showing the four compiled MATLAB backends" loading="lazy" decoding="async" /></a>
+    <figcaption>Runtime selection: R2010b, R2019b, R2022a and R2026a.</figcaption>
+  </figure>
+</div>
           <p>The window shows the profile names. The command line uses exactly these canonical keys:</p>
           <div class="table-scroll" role="region" aria-label="Supported profile policies" tabindex="0">
             <table>
@@ -132,6 +160,12 @@ run_pseudo_CT</code></pre>
 
         <section id="interfaces">
           <h2>Interfaces</h2>
+<div class="doc-shot-gallery">
+  <figure class="doc-shot">
+    <a href="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/concurrency-options.png" target="_blank" rel="noopener noreferrer" aria-label="Open screenshot: De-identified processing options with Subjects at once menu opened"><img src="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/concurrency-options.png" alt="De-identified processing options with Subjects at once menu opened" loading="lazy" decoding="async" /></a>
+    <figcaption>Set the maximum number of simultaneous subjects (1–32). The image shows the menu; selecting a value does not start processing.</figcaption>
+  </figure>
+</div>
           <div class="table-scroll" role="region" aria-label="PseudoCT interfaces" tabindex="0">
             <table>
               <thead><tr><th>Entry point</th><th>Use</th><th>Notes</th></tr></thead>
@@ -146,6 +180,17 @@ run_pseudo_CT</code></pre>
 
         <section id="cli">
           <h2>Command line</h2>
+          <p>For multi-subject v3.3.0 runs, use a <code>[SubjectID]</code> subjects file with an MPRAGE and optional UMAP per subject. For example:</p>
+          <pre><code>[Subject_001]
+MPRAGE = /data/Subject_001/MR/MPRAGE/one.dcm
+UMAP = /data/Subject_001/MR/UMAP/one.dcm
+
+[Subject_002]
+MPRAGE = /data/Subject_002/MR/MPRAGE/one.dcm
+UMAP = /data/Subject_002/MR/UMAP/one.dcm</code></pre>
+          <pre><code>bin/pseudoct run --profile local --subjects subjects.txt \
+  --max-concurrent 2 --format text</code></pre>
+          <p>For a single subject, the <code>--mprage</code>/<code>--umap</code> form below is also supported. A concurrency setting of 1 preserves sequential execution.</p>
           <p><code>bin/pseudoct validate</code> checks a request and is optional. <code>bin/pseudoct run</code> validates the same request and then submits it; it does not need a prior <code>validate</code>. Only <code>--check-account</code> logs in during validation.</p>
           <pre><code>bin/pseudoct validate --profile local \
   --mprage /subject/MR/MPRAGE/one.dcm \
@@ -196,7 +241,7 @@ bin/pseudoct run --profile local \
           </ul>
           <div class="callout warning">
             <strong>Verification status</strong>
-            <p>MLSC submission is implemented and tested offline. It has <strong>not</strong> been independently verified against a live scheduler or cluster.</p>
+            <p>Live MLSC scientific batch acceptance was completed with an earlier v3.3.0 integration build, including multi-subject tests. It was not repeated using the final published archive; the final archive was reconstructed end-to-end on local R2010b.</p>
           </div>
         </section>
 
@@ -234,12 +279,18 @@ bin/pseudoct run --profile local \
 
         <section id="logs">
           <h2>Progress and exit codes</h2>
+<div class="doc-shot-gallery">
+  <figure class="doc-shot">
+    <a href="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/progress-illustrative.png" target="_blank" rel="noopener noreferrer" aria-label="Open screenshot: Clearly labeled synthetic example of the compact two-subject progress view"><img src="https://raw.githubusercontent.com/mscipio/pseudoCT_standalone/main/docs/help/media/progress-illustrative.png" alt="Clearly labeled synthetic example of the compact two-subject progress view" loading="lazy" decoding="async" /></a>
+    <figcaption>Synthetic illustration based on the v3.3.0 output format. Subjects and timing entries are examples, not records of a real reconstruction.</figcaption>
+  </figure>
+</div>
           <ul class="checklist">
-            <li><strong>Text</strong> (command line default): progress is printed to the terminal, one row per stage and event. <code>[n/10]</code> is the stage number. <code>SKIPPED</code> shows a stage that does not apply to the profile, with its reason. Stages 2 and 3 show <code>ACTIVE</code> only once the operation has run, and <code>SKIPPED</code> with a reason otherwise. For MPRAGE-only profiles, stages 9 and 10 are <code>SKIPPED</code> by policy, because no DICOM output is written and the output is not finalized as a full run.</li>
+            <li><strong>Text</strong> (command line default): a compact per-subject progress table reports each subject, its stage, status, stage time, total elapsed time and aggregate counts. Interactive terminals update the display in place; redirected output and the MATLAB Command Window use append-only snapshots. <code>[n/10]</code> is the stage number. <code>SKIPPED</code> shows a stage that does not apply to the profile, with its reason. Stages 2 and 3 show <code>ACTIVE</code> only once the operation has run, and <code>SKIPPED</code> with a reason otherwise. For MPRAGE-only profiles, stages 9 and 10 are <code>SKIPPED</code> by policy, because no DICOM output is written and the output is not finalized as a full run.</li>
             <li><strong>Warnings and errors</strong> are shown as <code>WARN</code> and <code>ERROR</code> rows during the run. A <em>still running</em> line shows that a long step is in progress.</li>
             <li><strong>JSONL</strong> (<code>--format jsonl</code>): one JSON record per line. The final record carries the outcome and the exit code, the submission and scientific-completion fields and, for MLSC, the job IDs. It does not carry run-log paths: these are printed in the text summary. Each run&#39;s files carry the same invocation ID as the result record.</li>
             <li><strong>Completion</strong> is reported when the scientific processing is complete and verified. Only then is the exit code <code>0</code>.</li>
-            <li><strong>In the window</strong>, the progress text is sent to the MATLAB Command Window. Whether it appears live during the run has not yet been confirmed on the installed MATLAB. The files in <a href="#files">Files written by a run</a> are the complete record either way.</li>
+            <li><strong>In the window</strong>, the progress text is sent to the MATLAB Command Window. The MATLAB Command Window uses periodic append-only progress snapshots, rather than interactive in-place redraws. The files in <a href="#files">Files written by a run</a> are the complete record either way.</li>
           </ul>
           <p><code>bin/pseudoct validate</code> and <code>bin/pseudoct run</code> return:</p>
           <div class="table-scroll" role="region" aria-label="Exit codes" tabindex="0">

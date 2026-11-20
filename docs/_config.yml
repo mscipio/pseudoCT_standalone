@@ -1,2 +1,4 @@
 exclude:
   - CHANGELOG_DETAILED.md
+
+  - help/assets

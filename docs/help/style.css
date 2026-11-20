@@ -362,3 +362,20 @@ th { background: var(--surface-soft); }
     letter-spacing: .04em;
   }
 }
+
+
+/* pseudoCT v3.3.0 operator-guide screenshots (optional online assets) */
+.doc-shot-gallery {
+  display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,350px),1fr));
+  gap: 18px; margin: 16px 0 24px; align-items: start;
+}
+.doc-shot {
+  margin: 0; border: 1px solid #cbd5e1; border-radius: 11px;
+  overflow: hidden; background: #f8fafc; box-shadow: 0 2px 8px rgba(15,23,42,.07);
+}
+.doc-shot img {display:block; width:100%; max-height:525px; object-fit:contain;
+  background:#eff3f6; border-bottom:1px solid #dbe3ea; height:auto;}
+.doc-shot figcaption {padding: 10px 13px; font-size: .88rem; color: #475569; line-height: 1.45;}
+.doc-shot a {display:block; text-decoration:none;}
+.doc-shot a:focus-visible {outline:3px solid #2563eb; outline-offset:-3px;}
+@media (max-width:540px) { .doc-shot-gallery {grid-template-columns:1fr;} }

@@ -1,4 +1,4 @@
-PseudoCT help page (pseudoCT 3.3.0, unpublished source)
+PseudoCT help page (published pseudoCT v3.3.0 documentation)
 ====================================================================
 
 This folder is a dependency-free static website. It documents the repository
@@ -80,3 +80,18 @@ The file names containing "deidentified" are NOT a de-identification guarantee. 
 processing-log screenshot above shows a workstation username and workspace path. The
 other screenshots were checked only visually for the items named in the list. No
 screenshot has been checked for every possible identifier.
+
+
+2026-11-20 visual refresh
+-------------------------
+Eight sanitized/example images live under docs/help/media/. All paths and file names
+in manual-entry screenshots were replaced with generic values. The progress image
+is a labeled synthetic illustration, not experimental evidence. The original QC
+head image was NOT published because it includes facial anatomy; the cropped
+review candidate remains outside the media/ folder and must not be committed.
+
+Help page image links use absolute HTTPS GitHub raw URLs deliberately: the
+already-published v3.3.0 standalone release ships only index.html and style.css.
+These images are optional online enhancements; the textual help works offline.
+Historical docs/help/assets/ is excluded from GitHub Pages but remains in Git
+history and can still be retrieved via GitHub raw URLs.
